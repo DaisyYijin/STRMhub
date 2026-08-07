@@ -140,7 +140,8 @@ onMounted(async () => {
       </div>
     </aside>
     <main class="main">
-      <component :is="current.comp" :driver-type="current.driver || ''" />
+      <component :is="current.comp" :driver-type="current.driver || ''"
+                 :key="current.driver || 'all'" />
     </main>
 
     <!-- 右上角: 实时日志入口 -->

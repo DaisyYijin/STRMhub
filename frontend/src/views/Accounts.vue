@@ -39,7 +39,18 @@ async function load() {
 
 onMounted(load)
 
-watch(() => props.driverType, load)
+// 驱动切换: 完全重置本地状态(组件可能被复用, 防止 123 的提示/表单串到 115)
+watch(() => props.driverType, () => {
+  msg.value = ''
+  qrError.value = ''
+  qrShow.value = false
+  orgMsg.value = ''
+  orgResult.value = null
+  form.value = { driver_type: props.driverType, name: '', credential: '', config_json: '' }
+  accTab.value = localStorage.getItem('strmhub_acctab') || 'info'
+  load()
+  loadRules()
+})
 
 const filtered = computed(() =>
   props.driverType
@@ -556,7 +567,7 @@ function delCategoryRule(i) {
   rules.value.category_rules.splice(i, 1)
 }
 
-watch(() => props.driverType, () => loadRules())
+
 
 watch(accTab, (t) => {
   if (t === 'rename') refreshAllPreviews()  // 进入 tab 直接显示示例(一次性并行)

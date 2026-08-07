@@ -56,6 +56,17 @@ describe('Accounts.vue mount repro', () => {
     const infoIdx = html.indexOf('测试昵称')
     expect(infoIdx).toBeGreaterThan(tabIdx)
   })
+  it('驱动切换重置本地状态(123 的提示不串到 115)', async () => {
+    accountApi.list.mockResolvedValue([])
+    const w = mount(Accounts, { props: { driverType: 'p123' } })
+    await new Promise((r) => setTimeout(r, 30))
+    // 模拟 123 页面保存成功提示
+    w.vm.msg = { type: 'ok', text: '规则已保存' }
+    await w.setProps({ driverType: 'p115' })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(w.vm.msg).toBe('')
+    expect(w.vm.qrError).toBe('')
+  })
   it('已登录(local 有账户)渲染不报错', async () => {
     accountApi.list.mockResolvedValue([{ ...loggedAccount, driver_type: 'local' }])
     const w = mount(Accounts, { props: { driverType: 'local' } })
