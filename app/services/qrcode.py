@@ -175,19 +175,27 @@ class P123QrcodeLoginService:
 
     @staticmethod
     def start() -> dict:
+        import logging
         from p123client import P123Client
         resp = P123Client.login_qrcode_generate()
+        logging.getLogger("strmhub.api").info(
+            "123 qrcode generate 返回: %s", resp)
         data = resp.get("data") or {}
         uni_id = str(data.get("uniID") or data.get("uniId") or "")
         qr = (data.get("qrCode") or data.get("qrCodeUrl")
               or data.get("url") or "")
         if not uni_id:
             raise RuntimeError(f"123 二维码生成失败: {resp}")
-        content = qr or uni_id
+        if str(qr).startswith("data:image"):
+            # 接口直接返回二维码图片(base64), 原样透传
+            qr_image = qr
+        else:
+            # 否则用返回内容(或 uniID 兜底)生成 SVG 二维码
+            qr_image = QrcodeLoginService._svg_data_uri(qr or uni_id)
         return {
             "driver_type": "p123",
             "uni_id": uni_id,
-            "qr_image": QrcodeLoginService._svg_data_uri(content),
+            "qr_image": qr_image,
             "apps": [],
         }
 

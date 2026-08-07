@@ -1032,8 +1032,8 @@ function closeQrcode() {
       <h2 style="margin-top: 0">115 扫码登录</h2>
       <div style="text-align: center">
         <img :src="qrImg" alt="二维码" style="width: 220px; height: 220px; border: 1px solid var(--line); border-radius: 8px" />
-        <p class="muted">打开 115 手机 App → 扫一扫 登录</p>
-        <p style="margin: 6px 0">
+        <p class="muted">{{ props.driverType === 'p123' ? '打开 123 云盘 App → 扫一扫 登录' : '打开 115 手机 App → 扫一扫 登录' }}</p>
+        <p v-if="qrApps.length" style="margin: 6px 0">
           <label for="qr-app">登录设备:</label>
           <select id="qr-app" v-model="qrApp" style="margin-left: 8px">
             <option v-for="a in qrApps" :key="a.key" :value="a.key">{{ a.label }}</option>
