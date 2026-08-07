@@ -35,7 +35,10 @@ def has_frontend() -> bool:
 @router.get("/", include_in_schema=False)
 def index():
     if has_frontend():
-        return FileResponse(INDEX_HTML)
+        response = FileResponse(INDEX_HTML)
+        # 防浏览器缓存旧版 index.html(JS 带 hash, 静态资源不受影响)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
     return HTMLResponse(_PLACEHOLDER)
 
 

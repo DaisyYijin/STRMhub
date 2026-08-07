@@ -14,6 +14,7 @@ const driverFilter = ref(localStorage.getItem('strmhub_driver') || '')
 const authed = ref(isAuthed())
 const health = ref('...')
 const drivers = ref([])
+const driversError = ref('')
 
 // 基础菜单(与网盘无关)
 const baseViews = [
@@ -32,19 +33,36 @@ const accountViews = computed(() => drivers.value.map((d) => ({
   driver: d.name,
 })))
 
+// 兜底: 驱动列表加载失败时仍提供"全部账户"入口
+const fallbackAccountView = {
+  id: 'accounts:all',
+  label: '全部账户',
+  comp: Accounts,
+  driver: '',
+}
+
 const current = computed(() => {
   if (view.value.startsWith('accounts:')) {
-    return accountViews.value.find((v) => v.id === view.value)
-      || { id: 'accounts', label: '网盘账户', comp: Accounts, driver: driverFilter.value }
+    const found = accountViews.value.find((v) => v.id === view.value)
+    if (found) return found
+    if (view.value === 'accounts:all') return fallbackAccountView
+    return { ...fallbackAccountView, driver: driverFilter.value }
   }
   return baseViews.find((v) => v.id === view.value) || baseViews[0]
 })
 
 async function loadDrivers() {
   if (!authed.value) return
+  driversError.value = ''
   try {
     drivers.value = await accountApi.drivers()
-  } catch { /* 忽略 */ }
+    if (!drivers.value.length) {
+      driversError.value = '驱动列表为空'
+    }
+  } catch (e) {
+    driversError.value = `驱动列表加载失败: ${e.message}`
+    console.error('[STRMhub]', driversError.value)
+  }
 }
 
 function switchView(id) {
@@ -84,9 +102,12 @@ onMounted(async () => {
       <nav>
         <a v-for="v in baseViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
-        <div v-if="accountViews.length" class="nav-group">网盘管理</div>
+        <div v-if="accountViews.length || driversError" class="nav-group">网盘管理</div>
+        <div v-if="driversError" class="nav-error">{{ driversError }}</div>
         <a v-for="v in accountViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
+        <a v-if="driversError" :class="{ active: view === 'accounts:all' }"
+           href="#" @click.prevent="switchView('accounts:all')">{{ fallbackAccountView.label }}</a>
       </nav>
       <div class="side-foot">
         <span class="muted">后端: {{ health }}</span>
@@ -113,6 +134,7 @@ onMounted(async () => {
 .side nav a:hover { background: var(--hover); color: var(--text); }
 .side nav a.active { background: var(--accent); color: #fff; }
 .side nav .nav-group { font-size: 11px; color: var(--muted); padding: 10px 10px 2px; }
+.side nav .nav-error { font-size: 11px; color: var(--bad); padding: 4px 10px; word-break: break-all; }
 .side-foot { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .main { flex: 1; padding: 22px 26px; max-width: 1100px; }
 </style>
