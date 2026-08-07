@@ -282,13 +282,30 @@ function pickerBack() {
   loadPickerDirs()
 }
 async function selectThisDir() {
-  orgDirs.value[picker.value.field] = { ...picker.value.current }
+  const field = picker.value.field
+  orgDirs.value[field] = { ...picker.value.current }
   picker.value = null
-  orgMsg.value = { type: 'ok', text: '目录已选择并自动保存' }
+  orgMsg.value = ''
   // 选择即保存, 防止用户忘记点"保存目录"刷新后丢失
+  // 等保存完成后再提示, 避免保存失败却显示"已自动保存"
   await saveRules('organize', ['organize_dirs'])
+  if (tabMsg.value.organize?.type === 'ok') {
+    orgMsg.value = { type: 'ok', text: '目录已选择并自动保存' }
+  } else {
+    orgMsg.value = { type: 'err', text: '目录保存失败, 请点击"保存目录"重试' }
+  }
 }
 function closePicker() { picker.value = null }
+
+async function clearOrgDir(field) {
+  orgDirs.value[field] = {}
+  orgMsg.value = ''
+  // 清除也自动保存, 与选择目录行为一致
+  await saveRules('organize', ['organize_dirs'])
+  if (tabMsg.value.organize?.type === 'ok') {
+    orgMsg.value = { type: 'ok', text: '目录已清除并保存' }
+  }
+}
 
 async function startOrganize() {
   orgMsg.value = ''
@@ -557,7 +574,9 @@ async function loadRules() {
       existing: pickDir(od.existing),
       redundant: pickDir(od.redundant),
     }
-  } catch { /* 忽略 */ }
+  } catch (e) {
+    console.error('[STRMhub] 加载驱动规则失败:', e)
+  }
 }
 
 
@@ -773,8 +792,9 @@ function closeQrcode() {
                  readonly :value="orgDirs[f.key]?.name || (acct.id ? '点击选择目录...' : '请先创建/登录账户')"
                  :disabled="!acct.id"
                  @click="acct.id && openPicker(f.key)" />
-          <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
+          <button v-if="orgDirs[f.key]?.id" class="danger" @click="clearOrgDir(f.key)">清除</button>
         </div>
+        <div v-if="orgMsg" class="msg" :class="orgMsg.type" style="margin-top: 8px">{{ orgMsg.text }}</div>
         <div class="row" style="margin-top: 12px">
           <button class="primary" @click="saveRules('organize', ['organize_dirs'])">保存目录</button>
           <button class="primary" :disabled="orgBusy" @click="startOrganize">
