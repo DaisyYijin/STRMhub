@@ -236,3 +236,16 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 .rename-preview {
   margin-top: 4px; font-size: 12.5px; color: var(--good);
 }
+
+/* 识别规则输入统一宽度 + YAML 编辑器 */
+.rules-input { max-width: 720px; width: 100%; }
+textarea.rules-input, .yaml-editor {
+  width: 100%; max-width: 720px; min-height: 68px; resize: vertical;
+  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+  line-height: 1.6; overflow: hidden;
+}
+.yaml-editor { max-width: none; min-height: 320px; }
+.full-preview {
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+  background: var(--code-bg);
+}

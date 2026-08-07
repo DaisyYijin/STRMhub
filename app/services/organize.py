@@ -175,6 +175,76 @@ def _first_letter(title: str) -> str:
     return ""
 
 
+def parse_category_yaml(text: str) -> dict:
+    """解析二级分类策略 YAML -> {"movie": {分类名: {...}}, "tv": {...}}。
+
+    格式(MoviePilot 风格):
+      movie:
+        大陆动画: {cid: "342...", cid123: "123", genre_ids: "16", origin_country: "CN"}
+        ...
+      tv:
+        ...
+    返回空 dict 表示无配置; 解析失败抛 ValueError。
+    """
+    text = (text or "").strip()
+    if not text:
+        return {}
+    try:
+        import yaml
+        data = yaml.safe_load(text)
+    except Exception as exc:
+        raise ValueError(f"YAML 解析失败: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("YAML 顶层必须是 movie/tv 映射")
+    out = {}
+    for kind in ("movie", "tv"):
+        section = data.get(kind)
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            raise ValueError(f"YAML 的 {kind} 必须是分类映射")
+        items = {}
+        for name, rule in section.items():
+            if not isinstance(rule, dict):
+                raise ValueError(f"分类 [{kind}] {name} 的配置必须是映射")
+            items[str(name)] = {
+                "cid": str(rule.get("cid") or ""),
+                "cid123": str(rule.get("cid123") or ""),
+                "genre_ids": str(rule.get("genre_ids") or ""),
+                "origin_country": str(rule.get("origin_country") or ""),
+            }
+        out[kind] = items
+    return out
+
+
+def match_category(categories: dict, kind: str, meta: dict | None) -> str:
+    """按 TMDB 元数据匹配分类名; 无元数据/未命中时返回"其他"类。
+
+    meta: {"genre_ids": [16], "origin_country": ["CN"]}(TMDB 刮削后传入)
+    规则按 YAML 顺序优先; genre_ids/origin_country 均为空的条件视为兜底类。
+    """
+    items = (categories or {}).get(kind) or {}
+    if not items:
+        return ""
+    meta_genres = {str(g) for g in (meta or {}).get("genre_ids") or []}
+    meta_countries = {str(c).upper() for c in (meta or {}).get("origin_country") or []}
+    fallback = ""
+    for name, rule in items.items():
+        genres = {g.strip() for g in rule.get("genre_ids", "").split(",") if g.strip()}
+        countries = {c.strip().upper() for c in rule.get("origin_country", "").split(",") if c.strip()}
+        if not genres and not countries:
+            fallback = name  # 兜底类(如 其他电影)
+            continue
+        if genres and not (genres & meta_genres):
+            continue
+        if countries and not (countries & meta_countries):
+            continue
+        return name
+    return fallback
+
+
 def build_context(parsed: ParsedMedia, original_name: str) -> dict:
     ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
     season_episode = ""
@@ -256,6 +326,11 @@ class OrganizeService:
         if (rules.get("rename_template")
                 and templates["movie_file"] == DEFAULT_TEMPLATES["movie_file"]):
             templates["movie_file"] = rules["rename_template"]
+        # 二级分类策略(YAML, 含目标 cid; TMDB 元数据缺失时归"其他"类)
+        try:
+            categories = parse_category_yaml(rules.get("category_yaml") or "")
+        except ValueError:
+            categories = {}
 
         items = driver.list_files(pending)
         files = [it for it in items if it.is_file]
@@ -272,6 +347,7 @@ class OrganizeService:
                 continue
             ctx = build_context(parsed, item.name)
             is_tv = parsed.season is not None
+            kind = "tv" if is_tv else "movie"
             folder_name = render_template(
                 templates["tv_folder" if is_tv else "movie_folder"], ctx)
             file_name = render_template(
@@ -281,21 +357,34 @@ class OrganizeService:
             suffix = Path(item.name).suffix
             if suffix and not file_name.lower().endswith(suffix.lower()):
                 file_name = f"{file_name}{suffix}"
-            # 已存在判定: 等待整理目录下已有同名目标目录
+            # 二级分类: 匹配分类 -> 目标目录(cid); 无分类配置时用 pending 目录
+            target_root = pending
+            category_name = match_category(categories, kind, None)
+            if category_name:
+                rule = (categories.get(kind) or {}).get(category_name) or {}
+                cid = rule.get("cid123") if driver_type == "p123" else rule.get("cid")
+                if cid:
+                    target_root = cid
+            # 已存在判定: 目标目录下已有同名目标目录
+            try:
+                target_items = driver.list_files(target_root)
+            except Exception:
+                target_items = []
             target_exists = any(
-                d.is_dir and d.name == folder_name for d in items)
+                d.is_dir and d.name == folder_name for d in target_items)
             if target_exists:
                 self._move_to(driver, item, existing, result, "existing",
                               f"目标已存在: {folder_name}")
                 continue
-            # 正常整理: 在等待整理目录下建结构并移入
+            # 正常整理: 在目标目录下建结构并移入(自动创建目录)
             try:
-                folder_id = driver.create_folder(pending, folder_name)
+                folder_id = driver.create_folder(target_root, folder_name)
                 driver.move(item, folder_id, new_name=file_name)
                 result["ok"].append({
                     "name": item.name,
-                    "target": f"{folder_name}/{file_name}",
-                    "type": "tv" if is_tv else "movie",
+                    "target": f"{category_name + '/' if category_name else ''}{folder_name}/{file_name}",
+                    "type": kind,
+                    "category": category_name or "",
                 })
             except Exception as exc:
                 result["redundant"].append({

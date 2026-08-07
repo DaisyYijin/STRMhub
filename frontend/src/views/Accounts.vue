@@ -286,6 +286,23 @@ function switchRenameMode(mode) {
   refreshAllPreviews()
 }
 
+const fullPreview = ref({ movie: '', tv: '' })
+async function refreshFullPreview() {
+  try {
+    const [mf, mfl, tf, sf, efl] = await Promise.all([
+      organizeApi.render(rules.value.rename_movie_folder, 'movie_folder'),
+      organizeApi.render(rules.value.rename_movie_file, 'movie_file'),
+      organizeApi.render(rules.value.rename_tv_folder, 'tv_folder'),
+      organizeApi.render(rules.value.rename_season_folder, 'season_folder'),
+      organizeApi.render(rules.value.rename_episode_file, 'episode_file'),
+    ])
+    fullPreview.value = {
+      movie: `${mf.rendered}/${mfl.rendered}`,
+      tv: `${tf.rendered}/${sf.rendered}/${efl.rendered}`,
+    }
+  } catch { /* 忽略 */ }
+}
+
 let renderTimer = null
 async function refreshPreview(key) {
   const sample = RENAME_FIELDS.find((f) => f.key === key)?.sample
@@ -293,6 +310,7 @@ async function refreshPreview(key) {
     const data = await organizeApi.render(rules.value[`rename_${key}`], sample)
     renamePreviews.value[key] = data.rendered
   } catch { renamePreviews.value[key] = '' }
+  refreshFullPreview()
 }
 function refreshAllPreviews() {
   for (const f of RENAME_FIELDS) refreshPreview(f.key)
@@ -316,11 +334,63 @@ const rules = ref({
   rename_season_folder: RENAME_DEFAULTS.season_folder,
   rename_episode_file: RENAME_DEFAULTS.episode_file,
   organize_dirs: {},
-  category_rules: [],   // [{kind, match, target}]
-  ai: { enabled: false, api_base: '', api_key: '', model: '' },
+  category_rules: [],
+  category_yaml: '',
+  ai: { enabled: false, mode: 'off', api_base: '', api_key: '', model: '' },
 })
-const rulesMsg = ref('')
 const rulesBusy = ref(false)
+// 每 tab 独立的保存提示(一个页面对应一个)
+const tabMsg = ref({ identify: '', ai: '', rename: '', category: '', organize: '' })
+
+// 保存当前 tab 的字段子集(拉取最新规则合并, 不影响其他 tab 数据)
+async function saveRules(key, fields) {
+  if (!acct.value.id) return
+  rulesBusy.value = true
+  tabMsg.value[key] = ''
+  try {
+    if (key === 'category') rules.value.category_yaml = categoryYaml.value
+    const cur = await accountApi.rules(acct.value.id)
+    const merged = { ...(cur.rules || {}) }
+    for (const f of fields) merged[f] = rules.value[f]
+    await accountApi.saveRules(acct.value.id, merged)
+    tabMsg.value[key] = { type: 'ok', text: '规则已保存' }
+  } catch (e) {
+    tabMsg.value[key] = { type: 'err', text: e.message }
+  } finally {
+    rulesBusy.value = false
+  }
+}
+
+// textarea 自适应高度(回车增高)
+function autoGrow(e) {
+  const el = e.target
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
+// ---- 二级分类策略 YAML ----
+const categoryYaml = ref('')
+const CATEGORY_YAML_SAMPLE = `# 示例: movie/tv 两个区块, 分类名->目标目录 cid(优先级从上到下)
+movie:
+  大陆动画:
+    cid: "3427411034934082997"
+    cid123: "123456"
+    genre_ids: "16"
+    origin_country: "CN"
+  其他电影:
+    cid: "3427697114140900746"
+    cid123: "123456"
+tv:
+  大陆动漫:
+    cid: "3427697285520162579"
+    genre_ids: "16"
+    origin_country: "CN"
+  其他剧集:
+    cid: "3427699023052537554"
+`
+function loadCategorySample() {
+  categoryYaml.value = CATEGORY_YAML_SAMPLE
+}
 
 const strList = (v) => (v || []).join('\n')
 const setStrList = (key, text) => { rules.value[key] = text.split('\n').map((s) => s.trim()).filter(Boolean) }
@@ -344,12 +414,14 @@ async function loadRules() {
       rename_episode_file: r.rename_episode_file || RENAME_DEFAULTS.episode_file,
       organize_dirs: r.organize_dirs || {},
       category_rules: r.category_rules || [],
+      category_yaml: r.category_yaml || '',
       ai: { enabled: false, api_base: '', api_key: '', model: '', ...(r.ai || {}) },
     }
     // 兼容旧版 enabled 布尔 -> mode
     if (!rules.value.ai.mode) {
       rules.value.ai.mode = rules.value.ai.enabled ? 'assist' : 'off'
     }
+    categoryYaml.value = r.category_yaml || ''
     orgDirs.value = {
       pending: { ...(r.organize_dirs?.pending || {}) },
       existing: { ...(r.organize_dirs?.existing || {}) },
@@ -358,19 +430,7 @@ async function loadRules() {
   } catch { /* 忽略 */ }
 }
 
-async function saveRules() {
-  if (!acct.value.id) return
-  rulesBusy.value = true
-  rulesMsg.value = ''
-  try {
-    await accountApi.saveRules(acct.value.id, rules.value)
-    rulesMsg.value = { type: 'ok', text: '规则已保存' }
-  } catch (e) {
-    rulesMsg.value = { type: 'err', text: e.message }
-  } finally {
-    rulesBusy.value = false
-  }
-}
+
 
 function addCategoryRule() {
   rules.value.category_rules.push({ kind: 'movie', match: '', target: '' })
@@ -380,6 +440,13 @@ function delCategoryRule(i) {
 }
 
 watch(acct, (a) => { if (a.id) loadRules() })
+
+watch(accTab, (t) => {
+  if (t === 'rename') {
+    refreshAllPreviews()   // 进入 tab 直接显示示例
+    refreshFullPreview()
+  }
+})
 
 // ---- 手动表单(其他驱动) ----
 async function create() {
@@ -557,11 +624,11 @@ function closeQrcode() {
           <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
         </div>
         <div class="row" style="margin-top: 12px">
-          <button class="primary" @click="saveOrgDirs">保存目录</button>
+          <button class="primary" @click="saveRules('organize', ['organize_dirs'])">保存目录</button>
           <button class="primary" :disabled="orgBusy" @click="startOrganize">
             {{ orgBusy ? '整理中...' : '开始整理' }}
           </button>
-          <div v-if="orgMsg" class="msg" :class="orgMsg.type">{{ orgMsg.text }}</div>
+          <div v-if="tabMsg.organize" class="msg" :class="tabMsg.organize.type">{{ tabMsg.organize.text }}</div>
         </div>
         <div v-if="orgResult" class="org-result" style="margin-top: 12px">
           <div class="row">
@@ -589,27 +656,27 @@ function closeQrcode() {
         <h2 style="margin-top: 0">识别规则</h2>
         <div>
           <label>最小视频大小(MB)<span class="help" data-tip="低于此大小的视频文件不纳入整理识别; 填写 0 表示不限制">?</span></label>
-          <input type="number" min="0" v-model.number="rules.min_video_size_mb" style="max-width: 320px" />
+          <input type="number" min="0" v-model.number="rules.min_video_size_mb" class="rules-input" style="max-width: 320px" />
         </div>
         <div>
           <label>发布组扩展<span class="help" data-tip="追加识别发布组; 逗号分隔多个, 如 FRDS, NEWCINE">?</span></label>
-          <input v-model="releaseGroupsText" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
+          <input v-model="releaseGroupsText" class="rules-input" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
         </div>
         <div>
           <label>整理黑名单<span class="help" data-tip="命中关键词的文件跳过整理; 一行是一条规则, 如 trailer / sample">?</span></label>
-          <textarea v-model="blacklistText" rows="4" placeholder="例如: trailer&#10;sample&#10;xxx" />
+          <textarea v-model="blacklistText" class="rules-input" rows="4" @input="autoGrow" placeholder="例如: trailer&#10;sample&#10;xxx" />
         </div>
         <div>
           <label>自定义识别词<span class="help" data-tip="识别时将原始词替换为替换词; 一行是一条规则, 格式: 原始词|替换词, 如 蜘蛛侠3|Spider-Man 3">?</span></label>
-          <textarea v-model="customWordsText" rows="3" placeholder="例如: 蜘蛛侠3|Spider-Man 3&#10;SW|Star Wars" />
+          <textarea v-model="customWordsText" class="rules-input" rows="3" @input="autoGrow" placeholder="例如: 蜘蛛侠3|Spider-Man 3&#10;SW|Star Wars" />
         </div>
         <div>
           <label>自定义匹配<span class="help" data-tip="文件名命中关键词时直接指定为对应作品; 一行是一条规则, 格式: 关键词|TMDB_ID|movie或tv">?</span></label>
-          <textarea v-model="customMatchesText" rows="3" placeholder="例如: 星际穿越|157336|movie&#10;三体|457433|tv" />
+          <textarea v-model="customMatchesText" class="rules-input" rows="3" @input="autoGrow" placeholder="例如: 星际穿越|157336|movie&#10;三体|457433|tv" />
         </div>
         <div class="row" style="margin-top: 12px">
-          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
-          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+          <button class="primary" :disabled="rulesBusy" @click="saveRules('identify', ['min_video_size_mb', 'blacklist', 'custom_words', 'custom_matches', 'release_groups'])">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="tabMsg.identify" class="msg" :class="tabMsg.identify.type">{{ tabMsg.identify.text }}</div>
         </div>
       </template>
 
@@ -642,8 +709,8 @@ function closeQrcode() {
           <input v-model="rules.ai.api_key" type="password" placeholder="sk-..." />
         </div>
         <div class="row" style="margin-top: 12px">
-          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
-          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+          <button class="primary" :disabled="rulesBusy" @click="saveRules('ai', ['ai'])">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="tabMsg.ai" class="msg" :class="tabMsg.ai.type">{{ tabMsg.ai.text }}</div>
         </div>
       </template>
 
@@ -660,45 +727,36 @@ function closeQrcode() {
         </div>
         <div v-for="f in RENAME_FIELDS" :key="f.key" style="margin-bottom: 14px">
           <label>{{ f.label }}</label>
-          <div class="rename-default" @click="rules[`rename_${f.key}`] = RENAME_DEFAULTS[f.key]">
-            默认模板: <code>{{ RENAME_DEFAULTS[f.key] }}</code>
-          </div>
           <input v-model="rules[`rename_${f.key}`]" @input="onTemplateInput(f.key)" />
           <div class="rename-preview" v-if="renamePreviews[f.key]">
             示例: <code>{{ renamePreviews[f.key] }}</code>
           </div>
         </div>
-        <p class="muted">可用变量见"变量说明" tab; 语法见"语法说明" tab(<code>&lt;...&gt;</code> 块 / <code>[[ ]]</code> 转义)。</p>
+        <div class="full-preview">
+          <h3 style="font-size: 14px; margin: 10px 0 6px">🎬 电影完整示例</h3>
+          <p class="doc-example"><code>{{ fullPreview.movie || '...' }}</code></p>
+          <h3 style="font-size: 14px; margin: 10px 0 6px">📺 剧集完整示例</h3>
+          <p class="doc-example"><code>{{ fullPreview.tv || '...' }}</code></p>
+          <p class="muted" style="margin-top: 8px">变量与语法详见"变量说明"/"语法说明" tab(<code>&lt;...&gt;</code> 块 / <code>[[ ]]</code> 转义)。</p>
+        </div>
         <div class="row" style="margin-top: 12px">
-          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
-          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+          <button class="primary" :disabled="rulesBusy" @click="saveRules('rename', ['rename_movie_folder', 'rename_movie_file', 'rename_tv_folder', 'rename_season_folder', 'rename_episode_file'])">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="tabMsg.rename" class="msg" :class="tabMsg.rename.type">{{ tabMsg.rename.text }}</div>
         </div>
       </template>
 
-      <!-- 二级分类策略 -->
+      <!-- 二级分类策略(YAML) -->
       <template v-else-if="accTab === 'category'">
         <h2 style="margin-top: 0">二级分类策略</h2>
-        <p class="muted" style="margin-top: 0">按匹配词将作品归类到指定子目录(如 电影/动作 → 动作片目录)。</p>
-        <table>
-          <tr><th>类型</th><th>匹配词(命中即归类)</th><th>分类目录</th><th></th></tr>
-          <tr v-for="(r, i) in rules.category_rules" :key="i">
-            <td>
-              <select v-model="r.kind">
-                <option value="movie">电影</option>
-                <option value="tv">剧集</option>
-              </select>
-            </td>
-            <td><input v-model="r.match" placeholder="动作 / 爱情 / 科幻" /></td>
-            <td><input v-model="r.target" placeholder="动作片" /></td>
-            <td><button class="danger" @click="delCategoryRule(i)">删除</button></td>
-          </tr>
-          <tr v-if="!rules.category_rules.length"><td colspan="4" class="muted">暂无分类规则</td></tr>
-        </table>
-        <div class="row" style="margin-top: 12px">
-          <button @click="addCategoryRule">+ 添加分类规则</button>
-          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
-          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+        <p class="muted" style="margin-top: 0">YAML 方式配置(优先级从上到下): 分类名 → 目标目录 cid(115 用 cid, 123 用 cid123); 整理时按 TMDB 类型/地区匹配分类并<strong>自动创建目录结构</strong>。</p>
+        <div class="row" style="margin-bottom: 8px">
+          <button class="primary" @click="loadCategorySample">加载示例</button>
+          <button class="primary" :disabled="rulesBusy" @click="saveRules('category', ['category_yaml'])">{{ rulesBusy ? '保存中...' : '保存策略' }}</button>
+          <div v-if="tabMsg.category" class="msg" :class="tabMsg.category.type">{{ tabMsg.category.text }}</div>
         </div>
+        <textarea v-model="categoryYaml" @input="autoGrow" rows="16" class="yaml-editor"
+                  placeholder="movie:&#10;  其他电影:&#10;    cid: &quot;...&quot;&#10;    cid123: &quot;...&quot;&#10;    genre_ids: &quot;16&quot;&#10;    origin_country: &quot;CN&quot;&#10;tv:&#10;  其他剧集:&#10;    cid: &quot;...&quot;" />
+        <p class="muted" style="margin-top: 6px">字段: <code>cid</code> 115 目标目录 · <code>cid123</code> 123 目标目录 · <code>genre_ids</code> TMDB 类型(逗号分隔) · <code>origin_country</code> 地区(逗号分隔); 无 genre_ids/origin_country 的分类为兜底项。</p>
       </template>
 
       <!-- 变量说明 -->

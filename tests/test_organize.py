@@ -220,3 +220,87 @@ class TestRenderPreview:
                 "sample": "episode_file"})
             body = r.json()
             assert body["rendered"] == "权力的游戏.2011.S01E01", body
+
+
+class TestCategoryYaml:
+    """二级分类策略 YAML: 解析/匹配/校验。"""
+
+    YAML_TEXT = """\
+movie:
+  大陆动画:
+    cid: "3427411034934082997"
+    cid123: "123456"
+    genre_ids: "16"
+    origin_country: "CN"
+  欧美电影:
+    cid: "3427696989519739913"
+    cid123: "123456"
+    origin_country: "US,FR,GB"
+  其他电影:
+    cid: "3427697114140900746"
+    cid123: "123456"
+tv:
+  大陆动漫:
+    cid: "3427697285520162579"
+    genre_ids: "16"
+    origin_country: "CN"
+  其他剧集:
+    cid: "3427699023052537554"
+"""
+
+    def test_parse_yaml(self):
+        from app.services.organize import parse_category_yaml
+        cats = parse_category_yaml(self.YAML_TEXT)
+        assert "movie" in cats and "tv" in cats
+        assert cats["movie"]["大陆动画"]["cid"] == "3427411034934082997"
+        assert cats["movie"]["欧美电影"]["origin_country"] == "US,FR,GB"
+        assert cats["tv"]["其他剧集"]["cid"] == "3427699023052537554"
+
+    def test_parse_invalid_yaml_raises(self):
+        from app.services.organize import parse_category_yaml
+        import pytest as _pytest
+        with _pytest.raises(ValueError, match="YAML"):
+            parse_category_yaml("movie: [broken")
+        with _pytest.raises(ValueError, match="映射"):
+            parse_category_yaml("movie: 123")
+
+    def test_match_category(self):
+        from app.services.organize import match_category, parse_category_yaml
+        cats = parse_category_yaml(self.YAML_TEXT)
+        # 大陆动画(genre 16 + CN)
+        assert match_category(cats, "movie",
+                              {"genre_ids": [16], "origin_country": ["CN"]}) == "大陆动画"
+        # 动画但不是中港台 -> 无匹配(其他电影? 其他电影无 genre -> 兜底)
+        assert match_category(cats, "movie",
+                              {"genre_ids": [16], "origin_country": ["JP"]}) == "其他电影"
+        # 真人 CN 电影 -> 其他电影(大陆动画要求 genre 16)
+        assert match_category(cats, "movie",
+                              {"genre_ids": [28], "origin_country": ["CN"]}) == "其他电影"
+        # 无元数据 -> 兜底类
+        assert match_category(cats, "movie", None) == "其他电影"
+        assert match_category(cats, "tv", None) == "其他剧集"
+        # 无分类配置
+        assert match_category({}, "movie", None) == ""
+
+    def test_category_yaml_save_validation(self):
+        """保存 rules 时 category_yaml 解析失败 -> 400。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            acc = c.post("/api/accounts", headers=h, json={
+                "name": "yaml账户", "driver_type": "local",
+                "credential": ""}).json()
+            r = c.put(f"/api/accounts/{acc['id']}/rules", headers=h,
+                      json={"rules": {"category_yaml": "movie: [broken"}})
+            assert r.status_code == 400
+            assert "YAML" in r.json()["detail"]
+            # 合法 YAML 保存成功
+            r = c.put(f"/api/accounts/{acc['id']}/rules", headers=h,
+                      json={"rules": {"category_yaml": self.YAML_TEXT}})
+            assert r.status_code == 200, r.text
+            got = c.get(f"/api/accounts/{acc['id']}/rules",
+                        headers=h).json()["rules"]
+            assert got["category_yaml"].startswith("movie:")

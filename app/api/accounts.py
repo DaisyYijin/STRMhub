@@ -52,7 +52,8 @@ def delete_account(account_id: int, _: str = Depends(require_user)):
 
 RULES_FIELDS = {
     "min_video_size_mb", "blacklist", "custom_words", "custom_matches",
-    "release_groups", "rename_template", "category_rules", "ai",
+    "release_groups", "rename_template", "category_rules", "category_yaml",
+    "ai",
     # 三目录整理 + 5 段重命名模板
     "organize_dirs", "rename_movie_folder", "rename_movie_file",
     "rename_tv_folder", "rename_season_folder", "rename_episode_file",
@@ -67,6 +68,13 @@ def _normalize_rules(rules: dict) -> dict:
     for key in RULES_FIELDS:
         if key in rules and rules[key] is not None:
             out[key] = rules[key]
+    # 二级分类 YAML 校验(解析失败拒绝保存)
+    if out.get("category_yaml"):
+        from ..services.organize import parse_category_yaml
+        try:
+            parse_category_yaml(out["category_yaml"])
+        except ValueError as exc:
+            raise ValueError(f"分类策略 YAML 无效: {exc}")
     return out
 
 
