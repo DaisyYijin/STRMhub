@@ -440,10 +440,10 @@ async function saveRules(key, fields) {
         redundant: { ...orgDirs.value.redundant },
       }
     }
-    const cur = await driverRulesApi.rules(props.driverType)
-    const merged = { ...(cur.rules || {}) }
-    for (const f of fields) merged[f] = rules.value[f]
-    await driverRulesApi.save(props.driverType, merged)
+    // 只提交本 tab 的字段, 后端按字段合并(防止多标签页/多 tab 旧值覆盖)
+    const patch = {}
+    for (const f of fields) patch[f] = rules.value[f]
+    await driverRulesApi.save(props.driverType, patch)
     tabMsg.value[key] = { type: 'ok', text: '规则已保存' }
   } catch (e) {
     tabMsg.value[key] = { type: 'err', text: e.message }

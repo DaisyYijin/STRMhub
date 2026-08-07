@@ -69,28 +69,33 @@ describe('Accounts.vue mount repro', () => {
   })
   it('目录保存后刷新读回不丢失(保存->读回链路)', async () => {
     accountApi.list.mockResolvedValue([loggedAccount])
-    const saved = { rules: {} }
+    // 模拟后端: save 按字段合并进 store, rules 返回合并结果
+    const store = { rules: {} }
     driverRulesApi.save.mockImplementation(async (driver, rules) => {
-      saved.rules = rules
+      Object.assign(store.rules, rules)
       return { ok: true }
     })
+    driverRulesApi.rules.mockImplementation(async () => ({ rules: { ...store.rules } }))
     const w = mount(Accounts, { props: { driverType: 'p115' } })
     await new Promise((r) => setTimeout(r, 30))
-    // 选择目录 -> 保存
-    w.vm.orgDirs.pending = { id: '342', name: '待整理' }
-    await w.vm.saveRules('organize', ['organize_dirs'])
-    expect(saved.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
     // 选择目录即自动保存(无需手动点保存按钮)
     w.vm.picker = { field: 'pending', parent: '', stack: [], dirs: [],
                     current: { id: '342', name: '待整理' } }
     await w.vm.selectThisDir()
-    expect(saved.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
-    // 模拟刷新: 后端返回保存的值, 重新加载
-    driverRulesApi.rules.mockResolvedValue({ rules: saved.rules })
+    expect(store.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
+    // 只提交本 tab 字段(不拉取全量合并)
+    driverRulesApi.rules.mockClear()
+    await w.vm.saveRules('identify', ['blacklist'])
+    expect(store.rules.blacklist).toEqual([])
+    expect(driverRulesApi.rules).not.toHaveBeenCalled()
+    // 目录字段未被其它 tab 保存覆盖(后端合并)
+    expect(store.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
+    // 模拟刷新: 重新加载, 目录恢复
     await w.vm.loadRules()
     expect(w.vm.orgDirs.pending).toEqual({ id: '342', name: '待整理' })
     expect(w.vm.orgDirs.existing).toEqual({})
   })
+
   it('已登录(local 有账户)渲染不报错', async () => {
     accountApi.list.mockResolvedValue([{ ...loggedAccount, driver_type: 'local' }])
     const w = mount(Accounts, { props: { driverType: 'local' } })

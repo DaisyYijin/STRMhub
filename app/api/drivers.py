@@ -25,13 +25,19 @@ def get_driver_rules(name: str, _: str = Depends(require_user)):
 
 @router.put("/{name}/rules")
 def save_driver_rules(name: str, body: dict, _: str = Depends(require_user)):
-    """保存驱动级规则(白名单校验, YAML 分类策略校验)。"""
+    """保存驱动级规则(按字段合并, 白名单校验)。
+
+    前端每个 tab 只提交自己的字段; 后端合并进现有规则,
+    避免多标签页/多 tab 之间用旧值全量覆盖(目录被覆盖丢失)。
+    """
     _check_driver(name)
     try:
-        rules = _normalize_rules(body.get("rules") or {})
+        patch = _normalize_rules(body.get("rules") or {})
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     cfg = driver_config.get_config(name)
-    cfg["rules"] = rules
+    existing = cfg.get("rules") or {}
+    existing.update(patch)  # 只更新提交的字段, 其余保留
+    cfg["rules"] = existing
     driver_config.save_config(name, cfg)
-    return {"ok": True, "rules": rules}
+    return {"ok": True, "rules": existing}

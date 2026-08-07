@@ -48,6 +48,23 @@ def test_driver_rules_validation(client):
     assert "evil" not in r.json().get("rules", {})
 
 
+def test_save_merges_fields_not_overwrites(client):
+    """按字段合并: 后续保存不得覆盖先前字段(目录被旧值覆盖的回归)。"""
+    h = {"Authorization": f"Bearer {_login(client)}"}
+    r = client.put("/api/drivers/local/rules", headers=h, json={"rules": {
+        "organize_dirs": {"pending": {"id": "9", "name": "待整理"}},
+    }})
+    assert r.status_code == 200, r.text
+    # 另一标签页只提交识别字段
+    r = client.put("/api/drivers/local/rules", headers=h, json={"rules": {
+        "blacklist": ["trailer"],
+    }})
+    assert r.status_code == 200, r.text
+    got = client.get("/api/drivers/local/rules", headers=h).json()["rules"]
+    assert got["organize_dirs"]["pending"]["id"] == "9", "目录被覆盖丢失!"
+    assert got["blacklist"] == ["trailer"]
+
+
 def test_organize_reads_driver_rules(client, tmp_path):
     """整理执行: 未存账户级规则时, 读取驱动级规则(目录来自驱动配置)。"""
     from pathlib import Path
