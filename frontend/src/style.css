@@ -159,3 +159,7 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 }
 .picker-dir:last-child { border-bottom: none; }
 .picker-dir:hover { background: var(--hover); }
+
+/* 目录值输入框(点击选择) */
+.org-dir-value { cursor: pointer; flex: 1; }
+.org-dir-value:hover { border-color: var(--accent); }

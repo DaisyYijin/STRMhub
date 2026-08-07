@@ -499,10 +499,9 @@ function closeQrcode() {
             <span>{{ f.label }}</span>
             <span class="help" :data-tip="f.hint">?</span>
           </div>
-          <div class="org-dir-value" :class="{ 'muted': !orgDirs[f.key]?.id }">
-            {{ orgDirs[f.key]?.name || '未选择' }}
-          </div>
-          <button @click="openPicker(f.key)">选择</button>
+          <input class="org-dir-value" :class="{ 'muted': !orgDirs[f.key]?.id }"
+                 readonly :value="orgDirs[f.key]?.name || '点击选择目录...'"
+                 @click="openPicker(f.key)" />
           <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
         </div>
         <div class="row" style="margin-top: 12px">

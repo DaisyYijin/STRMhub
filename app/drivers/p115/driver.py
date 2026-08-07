@@ -49,7 +49,8 @@ class P115Driver:
         offset = 0
         while True:
             self.gate.wait()
-            data = self.client.fs_files(cid=parent_id, limit=115, offset=offset)
+            data = self.client.fs_files(
+                {"cid": int(parent_id or 0), "limit": 115, "offset": offset})
             self._check_blocked(data)
             rows = data.get("data") or []
             for row in rows:

@@ -23,11 +23,13 @@ class FakeP115Client:
         self.list_calls = 0
         self.download_calls = 0
 
-    def fs_files(self, cid=None, limit=115, offset=0):
+    def fs_files(self, payload):
         self.list_calls += 1
         if self.blocked:
             return {"data": [], "state": True,
                     "error": "您的访问被阻断, 请稍后再试"}
+        limit = payload.get("limit") or 115
+        offset = payload.get("offset") or 0
         idx = offset // limit if limit else 0
         rows = self.pages[idx] if idx < len(self.pages) else []
         return {"data": rows, "state": True}
