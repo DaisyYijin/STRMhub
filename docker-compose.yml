@@ -1,0 +1,23 @@
+services:
+  strmhub:
+    build: .
+    image: strmhub:latest
+    container_name: strmhub
+    restart: unless-stopped
+    ports:
+      - "6060:6060"            # 管理页面/API
+      - "6086:6086"            # Emby 302 反代(Emby 客户端改连此端口)
+    volumes:
+      - ./data:/app/data       # 数据库/密钥/配置持久化(必须挂载)
+      - ./strm:/strm           # 可选: 本地驱动生成的 .strm 输出目录(反代读取用)
+    environment:
+      - STRMHUB_ADMIN_PASSWORD=change-me   # 必改: 管理后台登录密码
+      - EMBY_HOST=http://127.0.0.1:8096    # 上游 Emby/Jellyfin 地址(容器内按需调整)
+      - EMBY_API_KEY=                       # Emby API Key(PlaybackInfo 改写/Path 查询用)
+      # - STRMHUB_DATA=/app/data           # 默认即 /app/data, 一般无需覆盖
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:6060/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,11 @@
+# 构建上下文排除
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+data/
+.venv/
+venv/
+*.egg-info/
+.git/
+.gitignore

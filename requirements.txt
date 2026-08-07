@@ -1,0 +1,12 @@
+# STRMhub 运行时依赖(与 pyproject.toml [project].dependencies 保持一致)
+fastapi>=0.115
+uvicorn>=0.30
+sqlalchemy>=2.0
+pydantic>=2.0
+passlib>=1.7
+bcrypt>=4.0
+cryptography>=42.0
+
+# 网盘驱动可选依赖(缺失时对应驱动不可用, 不影响核心功能)
+p115client>=0.0.9
+p123client>=0.0.5
