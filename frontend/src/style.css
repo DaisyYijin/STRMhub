@@ -93,3 +93,17 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 .space-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
 .space-bar { height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
 .space-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s; }
+
+/* 账户卡 tab 与目录 chips */
+.acc-tabs { display: flex; gap: 8px; margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.acc-tabs button { background: none; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13px; }
+.acc-tabs button:hover { background: var(--hover); color: var(--text); }
+.acc-tabs button.tab-on { background: var(--accent); color: #fff; }
+.dir-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.dir-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 12px; font-size: 12.5px;
+}
+.chip-x { background: none; border: none; cursor: pointer; color: var(--bad); font-size: 14px; padding: 0 2px; line-height: 1; }
+.chip-x:hover { color: var(--text); }

@@ -200,7 +200,7 @@ class TestQrcodeApiAutoCreate:
             assert body["account"]["driver_type"] == "p115"
             assert body["account"]["action"] == "created"
             assert body["account"]["info"]["vip"] == "VIP"
-            assert body["account"]["info"]["device"] == "android"
+            assert "安卓" in body["account"]["info"]["device"]  # 中文设备名
             # 列表中出现自动创建的账户
             accounts = c.get("/api/accounts", headers=h).json()
             assert any(a["name"] == "扫码用户" for a in accounts)
@@ -234,3 +234,71 @@ class TestQrcodeApiAutoCreate:
             accounts = c.get("/api/accounts", headers=h).json()
             p115s = [a for a in accounts if a["driver_type"] == "p115"]
             assert len(p115s) == 1  # 只有一个 115 账户
+
+
+class TestAccountDirs:
+    """网盘账户目录管理 API(每网盘独立)。"""
+
+    def test_add_list_remove_dirs(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            # 创建账户
+            acc = c.post("/api/accounts", headers=h, json={
+                "name": "目录测试", "driver_type": "local",
+                "credential": ""}).json()
+            aid = acc["id"]
+            # 添加目录
+            r = c.post(f"/api/accounts/{aid}/dirs", headers=h,
+                       json={"path": "/电影"})
+            assert r.status_code == 200, r.text
+            assert r.json()["dirs"] == ["电影"]
+            c.post(f"/api/accounts/{aid}/dirs", headers=h, json={"path": "剧集"})
+            # 重复添加报 400
+            r = c.post(f"/api/accounts/{aid}/dirs", headers=h,
+                       json={"path": "电影"})
+            assert r.status_code == 400
+            # 列表
+            assert c.get(f"/api/accounts/{aid}/dirs",
+                         headers=h).json()["dirs"] == ["电影", "剧集"]
+            # 账户 dict 的 config.dirs 同步
+            accs = c.get("/api/accounts", headers=h).json()
+            mine = [a for a in accs if a["id"] == aid][0]
+            assert mine["config"]["dirs"] == ["电影", "剧集"]
+            # 删除
+            r = c.delete(f"/api/accounts/{aid}/dirs/0", headers=h)
+            assert r.json()["dirs"] == ["剧集"]
+            # 空路径 400 / 越界 404
+            assert c.post(f"/api/accounts/{aid}/dirs", headers=h,
+                          json={"path": "  "}).status_code == 400
+            assert c.delete(f"/api/accounts/{aid}/dirs/9",
+                            headers=h).status_code == 404
+            assert c.delete(f"/api/accounts/99999/dirs/0",
+                            headers=h).status_code == 404
+
+    def test_app_list_contains_wechat(self):
+        """设备列表含微信小程序(官方 AVAILABLE_APPS 全量)。"""
+        from app.services.qrcode import QrcodeLoginService
+        apps = QrcodeLoginService._app_list()
+        keys = {a["key"] for a in apps}
+        assert "wechatmini" in keys       # 微信小程序
+        assert "alipaymini" in keys       # 支付宝小程序
+        assert "harmony" in keys          # 鸿蒙
+        assert "tv" in keys               # 电视端
+        assert len(apps) >= 18            # 官方全量 18 种
+
+    def test_device_stored_as_chinese_label(self, monkeypatch):
+        """info.device 存中文设备名(如 微信小程序)。"""
+        from app.services.qrcode import QrcodeLoginService
+
+        def fake_app_list():
+            return [{"key": "wechatmini", "label": "115生活_微信小程序端"}]
+
+        monkeypatch.setattr(QrcodeLoginService, "_app_list",
+                            staticmethod(fake_app_list))
+        assert QrcodeLoginService._app_label("wechatmini") == "115生活_微信小程序端"
+        assert QrcodeLoginService._app_label("unknown") == "unknown"

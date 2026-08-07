@@ -13,19 +13,14 @@ from __future__ import annotations
 
 import io
 
-# 设备 key -> 中文名(APP_TO_SSOENT 的常见项)
+# 设备 key -> 中文名(仅作 AVAILABLE_APPS 导入失败的兜底)
 APP_LABELS = {
-    "web": "网页版",
-    "desktop": "桌面客户端",
-    "android": "安卓",
-    "harmony": "鸿蒙",
-    "alipaymini": "支付宝小程序",
-    "qandroid": "安卓(默认)",
-    "ios": "iOS",
-    "os_windows": "Windows",
+    "web": "网页版", "desktop": "桌面客户端", "android": "安卓",
+    "harmony": "鸿蒙", "alipaymini": "支付宝小程序", "wechatmini": "微信小程序",
+    "qandroid": "安卓(默认)", "ios": "iOS", "os_windows": "Windows",
 }
 DEFAULT_APPS = [("web", "网页版"), ("android", "安卓"), ("harmony", "鸿蒙"),
-                ("alipaymini", "支付宝小程序")]
+                ("alipaymini", "支付宝小程序"), ("wechatmini", "微信小程序")]
 
 
 class QrcodeLoginService:
@@ -100,18 +95,20 @@ class QrcodeLoginService:
 
     @staticmethod
     def _app_list() -> list[dict]:
-        """可用登录设备列表(优先读 p115client.const.AVAILABLE_APPS)。"""
-        apps = []
+        """可用登录设备列表: 直接用 p115client 官方 AVAILABLE_APPS 全量(18 种)。"""
         try:
             from p115client.const import AVAILABLE_APPS
-            keys = [a for a in AVAILABLE_APPS if a in APP_LABELS]
+            return [{"key": k, "label": v} for k, v in AVAILABLE_APPS.items()]
         except Exception:
-            keys = [k for k, _ in DEFAULT_APPS]
-        if not keys:
-            keys = [k for k, _ in DEFAULT_APPS]
-        for k in keys:
-            apps.append({"key": k, "label": APP_LABELS.get(k, k)})
-        return apps
+            return [{"key": k, "label": v} for k, v in DEFAULT_APPS]
+
+    @staticmethod
+    def _app_label(app: str) -> str:
+        """设备 key -> 官方中文名(供 info.device 展示)。"""
+        for a in QrcodeLoginService._app_list():
+            if a["key"] == app:
+                return a["label"]
+        return app
 
     def fetch_account_info(self, driver_type: str, credential: str) -> dict:
         """用凭据拉取账号基本信息(昵称/头像/容量/VIP)。失败时返回 {} 不影响登录。

@@ -67,6 +67,9 @@ export const accountApi = {
   create: (body) => http.post('/api/accounts', body),
   remove: (id) => http.del(`/api/accounts/${id}`),
   drivers: () => http.get('/api/accounts/drivers'),
+  dirs: (id) => http.get(`/api/accounts/${id}/dirs`),
+  addDir: (id, path) => http.post(`/api/accounts/${id}/dirs`, { path }),
+  delDir: (id, index) => http.del(`/api/accounts/${id}/dirs/${index}`),
 }
 
 export const qrcodeApi = {

@@ -51,6 +51,30 @@ const filtered = computed(() =>
 
 // 115 单账号模式: 取第一个(后端 upsert 保证唯一)
 const acct = computed(() => filtered.value[0] || {})
+const accTab = ref('info')  // info | dirs
+const newDir = ref('')
+const dirMsg = ref('')
+const dirs = computed(() => acct.value.config?.dirs || [])
+
+const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s || '-')
+
+async function addDir() {
+  dirMsg.value = ''
+  const path = newDir.value.trim()
+  if (!path) return
+  try {
+    await accountApi.addDir(acct.value.id, path)
+    newDir.value = ''
+    await load()
+  } catch (e) {
+    dirMsg.value = { type: 'err', text: e.message }
+  }
+}
+
+async function delDir(index) {
+  await accountApi.delDir(acct.value.id, index)
+  await load()
+}
 
 const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
@@ -168,37 +192,64 @@ function closeQrcode() {
   <div v-if="isP115">
     <!-- 已登录: 账户信息卡 -->
     <div v-if="filtered.length" class="card acc-card">
-      <div class="acc-head">
-        <img v-if="acct.info?.avatar" :src="acct.info.avatar" class="acc-big-avatar" alt="头像" />
-        <div class="acc-head-info">
-          <div class="acc-title">
-            <span class="acc-name">{{ acct.name }}</span>
-            <span v-if="acct.info?.vip" class="badge ok">{{ acct.info.vip }}</span>
-            <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ acct.status }}</span>
-          </div>
-          <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
-          <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>
-        </div>
+      <!-- tab: 账号信息 / 目录 -->
+      <div class="acc-tabs">
+        <button :class="{ 'tab-on': accTab === 'info' }" @click="accTab = 'info'">账号信息</button>
+        <button :class="{ 'tab-on': accTab === 'dirs' }" @click="accTab = 'dirs'">目录管理</button>
       </div>
-      <div class="acc-space" v-if="acct.info?.total_size">
-        <div class="space-row">
-          <span>容量</span>
-          <span class="muted">
-            已用 {{ fmtSize(acct.info.used_size_fmt, acct.info.used_size) }}
-            / 总 {{ fmtSize(acct.info.total_size_fmt, acct.info.total_size) }}
-            ({{ usedPct(acct.info) }}%)
+
+      <!-- 账号信息 tab -->
+      <template v-if="accTab === 'info'">
+        <div class="acc-head">
+          <img v-if="acct.info?.avatar" :src="acct.info.avatar" class="acc-big-avatar" alt="头像" />
+          <div class="acc-head-info">
+            <div class="acc-title">
+              <span class="acc-name">{{ acct.name }}</span>
+              <span v-if="acct.info?.vip" class="badge ok">{{ acct.info.vip }}</span>
+              <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(acct.status) }}</span>
+            </div>
+            <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
+            <div class="muted" v-if="acct.info?.device">登录设备: {{ acct.info.device }}</div>
+          </div>
+        </div>
+        <div class="acc-space" v-if="acct.info?.total_size">
+          <div class="space-row">
+            <span>容量</span>
+            <span class="muted">
+              已用 {{ fmtSize(acct.info.used_size_fmt, acct.info.used_size) }}
+              / 总 {{ fmtSize(acct.info.total_size_fmt, acct.info.total_size) }}
+              ({{ usedPct(acct.info) }}%)
+            </span>
+          </div>
+          <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
+        </div>
+        <div class="row" style="margin-top: 14px">
+          <button class="primary" :disabled="qrBusy" @click="startQrcode">
+            {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
+          </button>
+          <button class="danger" @click="remove(acct.id)">删除账户</button>
+          <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+        </div>
+        <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
+      </template>
+
+      <!-- 目录管理 tab(独立于其他网盘) -->
+      <template v-else>
+        <h2 style="margin-top: 0">网盘目录</h2>
+        <p class="muted" style="margin-top: 0">此目录列表仅属于该网盘账户, 用于 STRM 任务选择源目录。</p>
+        <div class="row" style="margin-bottom: 10px">
+          <input v-model="newDir" placeholder="输入目录路径, 如 电影" style="flex: 1" @keyup.enter="addDir" />
+          <button class="primary" @click="addDir">添加目录</button>
+        </div>
+        <div v-if="dirMsg" class="msg" :class="dirMsg.type">{{ dirMsg.text }}</div>
+        <div v-if="dirs.length" class="dir-chips">
+          <span v-for="(d, i) in dirs" :key="d" class="dir-chip">
+            /{{ d }}
+            <button class="chip-x" @click="delDir(i)" title="删除">×</button>
           </span>
         </div>
-        <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
-      </div>
-      <div class="row" style="margin-top: 14px">
-        <button class="primary" :disabled="qrBusy" @click="startQrcode">
-          {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
-        </button>
-        <button class="danger" @click="remove(acct.id)">删除账户</button>
-        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
-      </div>
-      <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
+        <p v-else class="muted">暂无目录, 添加你的第一个网盘目录。</p>
+      </template>
     </div>
 
     <!-- 未登录: 引导登录卡 -->

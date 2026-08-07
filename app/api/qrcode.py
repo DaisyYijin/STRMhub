@@ -32,7 +32,7 @@ class PollIn(BaseModel):
 def _auto_upsert_account(driver_type: str, cookies: str, app: str = "web") -> dict:
     """扫码确认后: 拉取账号信息并自动建户/更新(单账号模式), 返回账户 dict。"""
     info = qrcode_login.fetch_account_info(driver_type, cookies)
-    info["device"] = app  # 登录设备(扫码时选择)
+    info["device"] = qrcode_login._app_label(app)  # 登录设备中文名(如 微信小程序)
     nickname = (info.get("nickname") or "").strip()
     name = nickname or f"{driver_type}-{secrets.token_hex(3)}"
     try:

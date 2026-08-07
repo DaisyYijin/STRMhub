@@ -85,6 +85,17 @@ class AccountService:
             s.delete(acc)
             return True
 
+    def update_config(self, account_id: int, config: dict) -> Account | None:
+        """更新账户配置(config_json, 如 dirs 目录列表)。"""
+        with session_scope() as s:
+            acc = s.get(Account, account_id)
+            if acc is None:
+                return None
+            acc.config_json = json.dumps(config or {}, ensure_ascii=False)
+            s.flush()
+            s.refresh(acc)
+            return acc
+
     def driver_for(self, account: Account):
         """解密凭据并实例化驱动。"""
         credential = ""
