@@ -1,5 +1,7 @@
 # STRMhub
 
+![CI](https://github.com/DaisyYijin/STRMhub/actions/workflows/docker-build.yml/badge.svg)
+
 网盘媒体库 STRM 工具(全栈一体化):从网盘批量生成 `.strm` 文件,配合 Emby/Jellyfin 把网盘当本地媒体库,并自带 **302 直链播放**、**TMDB 刮削**、**目录整理**、**Webhook 联动**。
 
 ## ✨ 功能
@@ -39,18 +41,18 @@ services:
       - EMBY_API_KEY=                          # ← Emby API Key(302 必需)
       # - TMDB_API_KEY=                       # 可选: 刮削用
     volumes:
-      - ./data:/app/data       # 数据持久化(密钥/数据库, 务必备份)
+      - ./data:/app/data       # 数据持久化(密钥/数据库/全部配置, 务必备份)
       - ./strm:/strm           # 可选: STRM 输出目录
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:6060/api/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"        # 可选: 日志上限, 防止无限增长
+        max-file: "5"
 ```
 
 ```bash
 docker compose up -d          # 自动拉取镜像并启动
+docker compose ps             # 查看状态(应显示 Up/healthy)
 ```
 
 ### 其他部署方式
@@ -75,44 +77,39 @@ docker compose up -d --build
 | API 文档 | `http://<服务器IP>:6060/docs` | Swagger 交互式文档 |
 | Emby 302 反代 | `http://<服务器IP>:6086` | **Emby 客户端改连此端口**(替代原 8096) |
 
+### 升级
+
+```bash
+git pull && docker compose pull && docker compose up -d
+# 或仅更新镜像(未 clone 仓库时):
+docker compose pull && docker compose up -d
+```
+
 ### 镜像发布(自动)
 
 仓库内置 GitHub Actions(`.github/workflows/docker-build.yml`):
 - **推送 `main` 分支** → 自动构建并发布 `ghcr.io/daisyyijin/strmhub:latest`
 - **推送 `v*` tag**(如 `v0.2.0`)→ 额外发布对应版本标签
-- 服务器升级只需 `git pull && docker compose pull && docker compose up -d`
+- 镜像由 GitHub 云端构建(无需本地 Docker),构建状态见仓库顶部徽章
 
-> 镜像由 GitHub 云端构建(无需本地 Docker),首次推送 main 后约 5 分钟镜像可用。
+## 💾 数据存储与备份
 
-### 目录挂载
+**单数据目录设计**——所有状态都在 `/app/data` 一个目录,不需要额外映射 config/log 目录:
 
-| 宿主机目录 | 容器内 | 说明 |
-|---|---|---|
-| `./data` | `/app/data` | 密钥、SQLite 数据库、凭据加密数据(**必须持久化, 备份**) |
-| `./strm` | `/strm` | STRM 输出目录(本地驱动生成 + 反代读取, 可选) |
-
-### 环境变量
-
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `STRMHUB_ADMIN_PASSWORD` | `admin` | 管理台密码(**生产必改**) |
-| `STRMHUB_DATA` | `/app/data` | 数据目录(一般无需改) |
-| `EMBY_HOST` | `http://127.0.0.1:8096` | 上游 Emby/Jellyfin 地址 |
-| `EMBY_API_KEY` | 空 | Emby API Key(302 反代必需) |
-| `TMDB_API_KEY` | 空 | TMDB Key(刮削必需, 未配置时刮削降级为仅建索引) |
-
-### 升级
-
-```bash
-git pull
-docker compose up -d --build
+```
+/app/data
+├── secret.key          # 主密钥(凭据加密)
+└── db/strmhub.db       # SQLite: 网盘账户(115/123 凭据加密存储)/ 配置 / 任务 / 海报墙
 ```
 
-### 备份
+- **无需映射配置目录**:账户、凭据、Webhook 规则等全部存 SQLite
+- **日志**:应用不写文件日志,uvicorn 日志输出到 stdout,用 `docker logs strmhub` 查看;如需限制大小,在 compose 加 `logging` 配置(见一键配置示例)
+
+**备份**(含密钥,丢失后凭据无法解密):
 
 ```bash
-# 数据全部在 ./data, 直接备份该目录即可(含密钥, 丢失后凭据无法解密)
 tar -czf strmhub-data-$(date +%F).tar.gz data/
+# 恢复: 解压回 data/ 后 docker compose up -d 即可
 ```
 
 ## 🔧 本地开发
