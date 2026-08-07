@@ -23,15 +23,26 @@
 ### 步骤
 
 ```bash
-# 方式 A: 直接拉取预构建镜像(推荐, 无需本地构建)
-git clone https://github.com/DaisyYijin/STRMhub.git
-cd STRMhub
+# 方式 A(最简): 一行拉取部署 —— 不 clone 仓库, compose 文件直接引用远程
+mkdir -p strmhub && cd strmhub && mkdir -p data strm
+docker compose -f https://raw.githubusercontent.com/DaisyYijin/STRMhub/main/docker-compose.yml up -d
+# 国内网络若 raw 不可达, 用 jsDelivr CDN 源:
+# docker compose -f https://cdn.jsdelivr.net/gh/DaisyYijin/STRMhub@main/docker-compose.yml up -d
+
+# 方式 B: 下载 compose 文件后本地运行
+curl -sSL -o docker-compose.yml https://raw.githubusercontent.com/DaisyYijin/STRMhub/main/docker-compose.yml
+# (国内备用: https://cdn.jsdelivr.net/gh/DaisyYijin/STRMhub@main/docker-compose.yml)
 mkdir -p data strm
 docker compose up -d          # 自动从 ghcr.io 拉取镜像
 
-# 方式 B: 本地构建(修改代码/无 ghcr 镜像时)
+# 方式 C: 本地构建(修改代码/无 ghcr 镜像时)
+git clone https://github.com/DaisyYijin/STRMhub.git
+cd STRMhub && mkdir -p data strm
 docker compose up -d --build
 ```
+
+> 三种方式启动前都建议先编辑 compose 文件, 把 `STRMHUB_ADMIN_PASSWORD` 改为自己的密码
+> (方式 A 可先 `curl` 下载到本地改好再 `up`)。
 
 ### 使用
 
