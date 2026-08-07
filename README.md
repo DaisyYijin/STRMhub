@@ -23,25 +23,14 @@
 ### 步骤
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/<你的用户名>/<仓库名>.git
-cd <仓库名>
-
-# 2. 准备数据目录(密钥/数据库将保存在这里, 务必备份)
+# 方式 A: 直接拉取预构建镜像(推荐, 无需本地构建)
+git clone https://github.com/DaisyYijin/STRMhub.git
+cd STRMhub
 mkdir -p data strm
+docker compose up -d          # 自动从 ghcr.io 拉取镜像
 
-# 3. 编辑 docker-compose.yml, 设置环境变量(至少修改密码)
-#    STRMHUB_ADMIN_PASSWORD: 管理台登录密码(必改)
-#    EMBY_HOST: 你的 Emby/Jellyfin 地址, 如 http://192.168.1.10:8096
-#    EMBY_API_KEY: Emby 后台生成的 API Key(用于 Path 查询与 PlaybackInfo 改写)
-#    TMDB_API_KEY: 可选, 用于刮削 https://www.themoviedb.org/settings/api
-
-# 4. 构建并启动(首次构建需几分钟, 自动编译前端)
+# 方式 B: 本地构建(修改代码/无 ghcr 镜像时)
 docker compose up -d --build
-
-# 5. 验证
-docker compose ps          # 状态应为 running (healthy)
-curl http://localhost:6060/api/health   # {"status":"ok",...}
 ```
 
 ### 使用
@@ -51,6 +40,15 @@ curl http://localhost:6060/api/health   # {"status":"ok",...}
 | 管理台 | `http://<服务器IP>:6060` | 登录后管理账户/任务/刮削/整理/Webhook |
 | API 文档 | `http://<服务器IP>:6060/docs` | Swagger 交互式文档 |
 | Emby 302 反代 | `http://<服务器IP>:6086` | **Emby 客户端改连此端口**(替代原 8096) |
+
+### 镜像发布(自动)
+
+仓库内置 GitHub Actions(`.github/workflows/docker-build.yml`):
+- **推送 `main` 分支** → 自动构建并发布 `ghcr.io/daisyyijin/strmhub:latest`
+- **推送 `v*` tag**(如 `v0.2.0`)→ 额外发布对应版本标签
+- 服务器升级只需 `git pull && docker compose pull && docker compose up -d`
+
+> 镜像由 GitHub 云端构建(无需本地 Docker),首次推送 main 后约 5 分钟镜像可用。
 
 ### 目录挂载
 
