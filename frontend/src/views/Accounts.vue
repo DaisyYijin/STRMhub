@@ -359,20 +359,26 @@ async function refreshFullPreview() {
 }
 
 let renderTimer = null
+// 单项示例(不再内嵌完整示例, 避免请求放大)
 async function refreshPreview(key) {
   const sample = RENAME_FIELDS.find((f) => f.key === key)?.sample
   try {
     const data = await organizeApi.render(rules.value[`rename_${key}`], sample)
     renamePreviews.value[key] = data.rendered
   } catch { renamePreviews.value[key] = '' }
-  refreshFullPreview()
 }
+// 进入 tab 时一次性并行刷新(5 单项 + 1 完整示例)
 function refreshAllPreviews() {
   for (const f of RENAME_FIELDS) refreshPreview(f.key)
+  refreshFullPreview()
 }
+// 输入防抖: 只刷当前项 + 完整示例(共 2 个请求)
 function onTemplateInput(key) {
   clearTimeout(renderTimer)
-  renderTimer = setTimeout(() => refreshPreview(key), 300)  // 防抖
+  renderTimer = setTimeout(() => {
+    refreshPreview(key)
+    refreshFullPreview()
+  }, 300)
 }
 
 // ---- 规则配置(识别/AI/重命名/分类) ----
@@ -531,10 +537,7 @@ function delCategoryRule(i) {
 watch(acct, (a) => { if (a.id) loadRules() })
 
 watch(accTab, (t) => {
-  if (t === 'rename') {
-    refreshAllPreviews()   // 进入 tab 直接显示示例
-    refreshFullPreview()
-  }
+  if (t === 'rename') refreshAllPreviews()  // 进入 tab 直接显示示例(一次性并行)
 })
 
 // ---- 手动表单(其他驱动) ----
