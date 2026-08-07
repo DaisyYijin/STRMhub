@@ -35,6 +35,8 @@ async function load() {
     accounts.value = await accountApi.list()
     drivers.value = await accountApi.drivers()
   } catch { /* 401 已由全局事件处理 */ }
+  // 首次进入/刷新页面也必须加载规则(目录/模板等), 否则显示为空
+  loadRules()
 }
 
 onMounted(load)
@@ -48,8 +50,7 @@ watch(() => props.driverType, () => {
   orgResult.value = null
   form.value = { driver_type: props.driverType, name: '', credential: '', config_json: '' }
   accTab.value = localStorage.getItem('strmhub_acctab') || 'info'
-  load()
-  loadRules()
+  load()  // 内部已调用 loadRules
 })
 
 const filtered = computed(() =>

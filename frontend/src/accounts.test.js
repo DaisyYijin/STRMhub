@@ -96,6 +96,19 @@ describe('Accounts.vue mount repro', () => {
     expect(w.vm.orgDirs.existing).toEqual({})
   })
 
+  it('首次挂载即加载规则(刷新页面目录不丢失)', async () => {
+    accountApi.list.mockResolvedValue([loggedAccount])
+    driverRulesApi.rules.mockResolvedValue({ rules: {
+      organize_dirs: { pending: { id: '342', name: '待整理' },
+                       existing: { id: '343', name: '已存在' } },
+    } })
+    const w = mount(Accounts, { props: { driverType: 'p115' } })
+    await new Promise((r) => setTimeout(r, 30))
+    // 挂载后无需任何操作, 目录即应恢复(曾因 load 不调 loadRules 导致刷新后全空)
+    expect(driverRulesApi.rules).toHaveBeenCalled()
+    expect(w.vm.orgDirs.pending).toEqual({ id: '342', name: '待整理' })
+    expect(w.vm.orgDirs.existing).toEqual({ id: '343', name: '已存在' })
+  })
   it('已登录(local 有账户)渲染不报错', async () => {
     accountApi.list.mockResolvedValue([{ ...loggedAccount, driver_type: 'local' }])
     const w = mount(Accounts, { props: { driverType: 'local' } })
