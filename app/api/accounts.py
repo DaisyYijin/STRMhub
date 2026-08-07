@@ -105,6 +105,8 @@ def browse_account_dirs(account_id: int, parent: str = "",
         driver = _accounts.driver_for(acc)
         items = driver.list_files(parent or "0")
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=f"浏览目录失败: {exc}")
     return {"parent": parent or "0",
             "dirs": [{"id": it.id, "name": it.name}

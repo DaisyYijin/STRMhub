@@ -44,7 +44,12 @@ class P115Driver:
             raise RuntimeError("115 接口触发风控, 已进入冷却")
 
     def list_files(self, parent_id: str) -> list[FileItem]:
-        """列目录(分页)。parent_id 为 115 目录 cid。"""
+        """列目录(分页)。parent_id 为 115 目录 cid。
+
+        p115client fs_files(payload dict) -> {"state", "data", ...};
+        data 可能是数组(open/ufile/files)或 dict(个别版本返回 {"list": ...})。
+        """
+        import os
         items: list[FileItem] = []
         offset = 0
         while True:
@@ -53,7 +58,19 @@ class P115Driver:
                 {"cid": int(parent_id or 0), "limit": 115, "offset": offset})
             self._check_blocked(data)
             rows = data.get("data") or []
+            if isinstance(rows, dict):  # 防御: 个别版本 data 为 dict
+                rows = (rows.get("list") or rows.get("items")
+                        or rows.get("files") or [])
+            if not isinstance(rows, list):
+                rows = []
+            if os.environ.get("STRMHUB_DEBUG") and not offset:
+                import sys
+                print(f"[p115] fs_files cid={parent_id} -> "
+                      f"rows={len(rows)} keys={[sorted(r.keys()) for r in rows[:2]]}",
+                      file=sys.stderr)
             for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 items.append(_row_to_item(row))
             if len(rows) < 115:
                 break

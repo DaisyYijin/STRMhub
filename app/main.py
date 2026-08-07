@@ -29,9 +29,12 @@ class LoginIn(BaseModel):
     password: str
 
 
+APP_VERSION = "0.2.0"  # 发布版本(镜像/健康检查用, 与前端联动)
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.post("/api/auth/login")
