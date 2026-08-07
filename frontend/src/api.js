@@ -53,6 +53,7 @@ export async function api(method, path, body) {
 export const http = {
   get: (p) => api('GET', p),
   post: (p, b) => api('POST', p, b),
+  put: (p, b) => api('PUT', p, b),
   del: (p) => api('DELETE', p),
 }
 
@@ -67,9 +68,8 @@ export const accountApi = {
   create: (body) => http.post('/api/accounts', body),
   remove: (id) => http.del(`/api/accounts/${id}`),
   drivers: () => http.get('/api/accounts/drivers'),
-  dirs: (id) => http.get(`/api/accounts/${id}/dirs`),
-  addDir: (id, path) => http.post(`/api/accounts/${id}/dirs`, { path }),
-  delDir: (id, index) => http.del(`/api/accounts/${id}/dirs/${index}`),
+  rules: (id) => http.get(`/api/accounts/${id}/rules`),
+  saveRules: (id, rules) => http.put(`/api/accounts/${id}/rules`, { rules }),
 }
 
 export const qrcodeApi = {

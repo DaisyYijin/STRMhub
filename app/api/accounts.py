@@ -21,10 +21,6 @@ class AccountIn(BaseModel):
     config: dict = {}
 
 
-class DirIn(BaseModel):
-    path: str
-
-
 @router.get("")
 def list_accounts(_: str = Depends(require_user)):
     return [_accounts.to_dict(a) for a in _accounts.list()]
@@ -46,51 +42,50 @@ def delete_account(account_id: int, _: str = Depends(require_user)):
     return {"ok": True}
 
 
-@router.get("/{account_id}/dirs")
-def list_account_dirs(account_id: int, _: str = Depends(require_user)):
-    """网盘账户的目录列表。"""
+# ---- 整理归档规则配置(识别/重命名/分类/AI 等, 按网盘账户独立) ----
+
+RULES_FIELDS = {
+    "min_video_size_mb", "blacklist", "custom_words", "custom_matches",
+    "release_groups", "rename_template", "category_rules", "ai",
+}
+
+
+def _normalize_rules(rules: dict) -> dict:
+    """校验并规范化规则(仅保留白名单字段)。"""
+    if not isinstance(rules, dict):
+        raise ValueError("规则格式错误")
+    out: dict = {}
+    for key in RULES_FIELDS:
+        if key in rules and rules[key] is not None:
+            out[key] = rules[key]
+    return out
+
+
+@router.get("/{account_id}/rules")
+def get_account_rules(account_id: int, _: str = Depends(require_user)):
+    """网盘账户的整理规则配置。"""
     acc = _accounts.get(account_id)
     if acc is None:
         raise HTTPException(status_code=404, detail="账户不存在")
     config = json.loads(acc.config_json or "{}")
-    return {"dirs": config.get("dirs") or []}
+    return {"rules": config.get("rules") or {}}
 
 
-@router.post("/{account_id}/dirs")
-def add_account_dir(account_id: int, body: DirIn,
-                    _: str = Depends(require_user)):
-    """为网盘账户添加目录(独立于其他网盘)。"""
-    acc = _accounts.get(account_id)
-    if acc is None:
-        raise HTTPException(status_code=404, detail="账户不存在")
-    path = body.path.strip().strip("/")
-    if not path:
-        raise HTTPException(status_code=400, detail="目录不能为空")
-    config = json.loads(acc.config_json or "{}")
-    dirs = config.get("dirs") or []
-    if path in dirs:
-        raise HTTPException(status_code=400, detail=f"目录已存在: /{path}")
-    dirs.append(path)
-    config["dirs"] = dirs
-    _accounts.update_config(account_id, config)
-    return {"ok": True, "dirs": dirs}
-
-
-@router.delete("/{account_id}/dirs/{index}")
-def remove_account_dir(account_id: int, index: int,
+@router.put("/{account_id}/rules")
+def save_account_rules(account_id: int, body: dict,
                        _: str = Depends(require_user)):
-    """删除网盘账户的目录。"""
+    """保存网盘账户的整理规则(识别/重命名/分类/AI 等)。"""
     acc = _accounts.get(account_id)
     if acc is None:
         raise HTTPException(status_code=404, detail="账户不存在")
+    try:
+        rules = _normalize_rules(body.get("rules") or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     config = json.loads(acc.config_json or "{}")
-    dirs = config.get("dirs") or []
-    if index < 0 or index >= len(dirs):
-        raise HTTPException(status_code=404, detail="目录不存在")
-    dirs.pop(index)
-    config["dirs"] = dirs
+    config["rules"] = rules
     _accounts.update_config(account_id, config)
-    return {"ok": True, "dirs": dirs}
+    return {"ok": True, "rules": rules}
 
 
 @router.get("/drivers")

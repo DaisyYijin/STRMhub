@@ -236,10 +236,10 @@ class TestQrcodeApiAutoCreate:
             assert len(p115s) == 1  # 只有一个 115 账户
 
 
-class TestAccountDirs:
-    """网盘账户目录管理 API(每网盘独立)。"""
+class TestAccountRules:
+    """网盘账户整理规则配置 API(识别/重命名/分类/AI, 每网盘独立)。"""
 
-    def test_add_list_remove_dirs(self):
+    def test_save_and_get_rules(self):
         from fastapi.testclient import TestClient
         from app.main import app
 
@@ -247,38 +247,68 @@ class TestAccountDirs:
             token = c.post("/api/auth/login",
                            json={"password": "testpass"}).json()["token"]
             h = {"Authorization": f"Bearer {token}"}
-            # 创建账户
             acc = c.post("/api/accounts", headers=h, json={
-                "name": "目录测试", "driver_type": "local",
+                "name": "规则测试", "driver_type": "local",
                 "credential": ""}).json()
             aid = acc["id"]
-            # 添加目录
-            r = c.post(f"/api/accounts/{aid}/dirs", headers=h,
-                       json={"path": "/电影"})
+            # 默认空规则
+            assert c.get(f"/api/accounts/{aid}/rules",
+                         headers=h).json()["rules"] == {}
+            rules = {
+                "min_video_size_mb": 100,
+                "blacklist": ["trailer", "sample"],
+                "custom_words": ["SW|Star Wars"],
+                "custom_matches": ["星际穿越|157336|movie"],
+                "release_groups": ["FRDS", "NEWCINE"],
+                "rename_template": "{title}.{year}.{quality}",
+                "category_rules": [{"kind": "movie", "match": "动作", "target": "动作片"}],
+                "ai": {"enabled": True, "api_base": "https://x/v1",
+                       "api_key": "sk-x", "model": "gpt-4o-mini"},
+            }
+            r = c.put(f"/api/accounts/{aid}/rules", headers=h,
+                      json={"rules": rules})
             assert r.status_code == 200, r.text
-            assert r.json()["dirs"] == ["电影"]
-            c.post(f"/api/accounts/{aid}/dirs", headers=h, json={"path": "剧集"})
-            # 重复添加报 400
-            r = c.post(f"/api/accounts/{aid}/dirs", headers=h,
-                       json={"path": "电影"})
-            assert r.status_code == 400
-            # 列表
-            assert c.get(f"/api/accounts/{aid}/dirs",
-                         headers=h).json()["dirs"] == ["电影", "剧集"]
-            # 账户 dict 的 config.dirs 同步
-            accs = c.get("/api/accounts", headers=h).json()
-            mine = [a for a in accs if a["id"] == aid][0]
-            assert mine["config"]["dirs"] == ["电影", "剧集"]
-            # 删除
-            r = c.delete(f"/api/accounts/{aid}/dirs/0", headers=h)
-            assert r.json()["dirs"] == ["剧集"]
-            # 空路径 400 / 越界 404
-            assert c.post(f"/api/accounts/{aid}/dirs", headers=h,
-                          json={"path": "  "}).status_code == 400
-            assert c.delete(f"/api/accounts/{aid}/dirs/9",
-                            headers=h).status_code == 404
-            assert c.delete(f"/api/accounts/99999/dirs/0",
-                            headers=h).status_code == 404
+            assert r.json()["rules"] == rules
+            # 读回
+            got = c.get(f"/api/accounts/{aid}/rules", headers=h).json()["rules"]
+            assert got["min_video_size_mb"] == 100
+            assert got["category_rules"][0]["target"] == "动作片"
+            assert got["ai"]["model"] == "gpt-4o-mini"
+            # 账户 config 同步
+            mine = [a for a in c.get("/api/accounts",
+                                     headers=h).json() if a["id"] == aid][0]
+            assert mine["config"]["rules"]["release_groups"] == ["FRDS", "NEWCINE"]
+
+    def test_rules_whitelist_filtered(self):
+        """非白名单字段被丢弃。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            acc = c.post("/api/accounts", headers=h, json={
+                "name": "规则测试2", "driver_type": "local",
+                "credential": ""}).json()
+            r = c.put(f"/api/accounts/{acc['id']}/rules", headers=h,
+                      json={"rules": {"evil": "x", "rename_template": "{title}"}})
+            assert r.status_code == 200
+            assert "evil" not in r.json()["rules"]
+            assert r.json()["rules"]["rename_template"] == "{title}"
+
+    def test_rules_missing_account_404(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            assert c.get("/api/accounts/99999/rules",
+                         headers=h).status_code == 404
+            assert c.put("/api/accounts/99999/rules", headers=h,
+                         json={"rules": {}}).status_code == 404
 
     def test_app_list_contains_wechat(self):
         """设备列表含微信小程序(官方 AVAILABLE_APPS 全量)。"""

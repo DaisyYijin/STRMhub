@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { accountApi, qrcodeApi } from '../api'
+import { accountApi, organizeApi, qrcodeApi } from '../api'
 
 const props = defineProps({
   driverType: { type: String, default: '' },
@@ -24,12 +24,6 @@ const qrTimer = ref(null)
 const qrBusy = ref(false)
 const qrError = ref('')
 
-// 设备 key -> 中文名(与后端 APP_LABELS 对应)
-const DEVICE_LABELS = {
-  web: '网页版', desktop: '桌面客户端', android: '安卓', harmony: '鸿蒙',
-  alipaymini: '支付宝小程序', qandroid: '安卓(默认)', ios: 'iOS', os_windows: 'Windows',
-}
-
 // 115 页面: 扫码专用(不显示手动表单); 其他驱动/全部账户: 保留手动表单
 const isP115 = computed(() => props.driverType === 'p115')
 
@@ -51,36 +45,12 @@ const filtered = computed(() =>
 
 // 115 单账号模式: 取第一个(后端 upsert 保证唯一)
 const acct = computed(() => filtered.value[0] || {})
-const accTab = ref('info')  // info | dirs
-const newDir = ref('')
-const dirMsg = ref('')
-const dirs = computed(() => acct.value.config?.dirs || [])
 
 const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s || '-')
-
-async function addDir() {
-  dirMsg.value = ''
-  const path = newDir.value.trim()
-  if (!path) return
-  try {
-    await accountApi.addDir(acct.value.id, path)
-    newDir.value = ''
-    await load()
-  } catch (e) {
-    dirMsg.value = { type: 'err', text: e.message }
-  }
-}
-
-async function delDir(index) {
-  await accountApi.delDir(acct.value.id, index)
-  await load()
-}
 
 const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
 const fmtSize = (fmt, size) => fmt || (size ? `${(size / 1024 ** 3).toFixed(1)} GB` : '')
-
-const deviceLabel = (key) => DEVICE_LABELS[key] || key || ''
 
 const usedPct = (info) => {
   const { used_size: used, total_size: total } = info || {}
@@ -88,6 +58,143 @@ const usedPct = (info) => {
   return Math.min(100, Math.round((used / total) * 100))
 }
 
+// 识别规则 textarea 绑定(换行列表 <-> 数组)
+const blacklistText = computed({
+  get: () => (rules.value.blacklist || []).join('\n'),
+  set: (v) => { rules.value.blacklist = v.split('\n').map((s) => s.trim()).filter(Boolean) },
+})
+const customWordsText = computed({
+  get: () => (rules.value.custom_words || []).join('\n'),
+  set: (v) => { rules.value.custom_words = v.split('\n').map((s) => s.trim()).filter(Boolean) },
+})
+const customMatchesText = computed({
+  get: () => (rules.value.custom_matches || []).join('\n'),
+  set: (v) => { rules.value.custom_matches = v.split('\n').map((s) => s.trim()).filter(Boolean) },
+})
+const releaseGroupsText = computed({
+  get: () => (rules.value.release_groups || []).join(', '),
+  set: (v) => { rules.value.release_groups = v.split(/[,，]/).map((s) => s.trim()).filter(Boolean) },
+})
+
+// 重命名预设
+const renamePreset = ref('{title}.{year}.{quality}')
+function applyPreset() {
+  if (renamePreset.value) rules.value.rename_template = renamePreset.value
+}
+
+// ---- 账户页 tab ----
+const tabs = [
+  { id: 'info', label: '账号信息' },
+  { id: 'organize', label: '整理归档' },
+  { id: 'identify', label: '识别规则' },
+  { id: 'ai', label: 'AI 辅助' },
+  { id: 'rename', label: '重命名规则' },
+  { id: 'category', label: '二级分类策略' },
+]
+const accTab = ref('info')
+
+// ---- 整理归档 tab ----
+const orgPath = ref('')
+const orgPlan = ref(null)
+const orgBusy = ref(false)
+const orgMsg = ref('')
+
+async function makePlan() {
+  orgMsg.value = ''
+  if (!orgPath.value.trim()) { orgMsg.value = { type: 'err', text: '请输入目录路径' }; return }
+  orgBusy.value = true
+  try {
+    orgPlan.value = await organizeApi.plan(orgPath.value.trim())
+  } catch (e) {
+    orgMsg.value = { type: 'err', text: e.message }
+  } finally {
+    orgBusy.value = false
+  }
+}
+
+async function execPlan() {
+  if (!orgPlan.value) return
+  if (!confirm(`确认执行整理归档? 共 ${orgPlan.value.items?.length || 0} 项`)) return
+  orgBusy.value = true
+  try {
+    const res = await organizeApi.execute(orgPlan.value.plan_json)
+    orgMsg.value = { type: 'ok', text: `整理完成: 成功 ${res.done || 0} 项` }
+    orgPlan.value = null
+    orgPath.value = ''
+  } catch (e) {
+    orgMsg.value = { type: 'err', text: e.message }
+  } finally {
+    orgBusy.value = false
+  }
+}
+
+// ---- 规则配置(识别/AI/重命名/分类) ----
+const RENAME_PRESETS = {
+  '默认': '{title}.{year}.{quality}',
+  '电影标准': '{title}.{year}.{quality}.{edition}',
+  '剧集标准': '{title}.{year}.S{season:02}E{episode:02}.{quality}',
+  '仅标题年份': '{title}.{year}',
+  '自定义': '',
+}
+
+const rules = ref({
+  min_video_size_mb: 0,
+  blacklist: [],        // string[] 关键词
+  custom_words: [],     // "原始|替换"
+  custom_matches: [],   // "关键词|tmdb_id|movie/tv"
+  release_groups: [],
+  rename_template: '{title}.{year}.{quality}',
+  category_rules: [],   // [{kind, match, target}]
+  ai: { enabled: false, api_base: '', api_key: '', model: '' },
+})
+const rulesMsg = ref('')
+const rulesBusy = ref(false)
+
+const strList = (v) => (v || []).join('\n')
+const setStrList = (key, text) => { rules.value[key] = text.split('\n').map((s) => s.trim()).filter(Boolean) }
+
+async function loadRules() {
+  if (!acct.value.id) return
+  try {
+    const data = await accountApi.rules(acct.value.id)
+    const r = data.rules || {}
+    rules.value = {
+      min_video_size_mb: r.min_video_size_mb || 0,
+      blacklist: r.blacklist || [],
+      custom_words: r.custom_words || [],
+      custom_matches: r.custom_matches || [],
+      release_groups: r.release_groups || [],
+      rename_template: r.rename_template || RENAME_PRESETS['默认'],
+      category_rules: r.category_rules || [],
+      ai: { enabled: false, api_base: '', api_key: '', model: '', ...(r.ai || {}) },
+    }
+  } catch { /* 忽略 */ }
+}
+
+async function saveRules() {
+  if (!acct.value.id) return
+  rulesBusy.value = true
+  rulesMsg.value = ''
+  try {
+    await accountApi.saveRules(acct.value.id, rules.value)
+    rulesMsg.value = { type: 'ok', text: '规则已保存' }
+  } catch (e) {
+    rulesMsg.value = { type: 'err', text: e.message }
+  } finally {
+    rulesBusy.value = false
+  }
+}
+
+function addCategoryRule() {
+  rules.value.category_rules.push({ kind: 'movie', match: '', target: '' })
+}
+function delCategoryRule(i) {
+  rules.value.category_rules.splice(i, 1)
+}
+
+watch(acct, (a) => { if (a.id) loadRules() })
+
+// ---- 手动表单(其他驱动) ----
 async function create() {
   msg.value = ''
   try {
@@ -190,15 +297,26 @@ function closeQrcode() {
 
   <!-- 115 页面: 单账号卡片 -->
   <div v-if="isP115">
-    <!-- 已登录: 账户信息卡 -->
-    <div v-if="filtered.length" class="card acc-card">
-      <!-- tab: 账号信息 / 目录 -->
+    <!-- 未登录: 引导登录卡 -->
+    <div v-if="!filtered.length" class="card">
+      <h2>115 账号登录</h2>
+      <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
+      <div class="row" style="margin-bottom: 10px">
+        <button class="primary" :disabled="qrBusy" @click="startQrcode">
+          {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
+        </button>
+      </div>
+      <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+    </div>
+
+    <!-- 已登录: 账户管理卡(六 tab) -->
+    <div v-else class="card acc-card">
       <div class="acc-tabs">
-        <button :class="{ 'tab-on': accTab === 'info' }" @click="accTab = 'info'">账号信息</button>
-        <button :class="{ 'tab-on': accTab === 'dirs' }" @click="accTab = 'dirs'">目录管理</button>
+        <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
+                @click="accTab = t.id">{{ t.label }}</button>
       </div>
 
-      <!-- 账号信息 tab -->
+      <!-- 账号信息 -->
       <template v-if="accTab === 'info'">
         <div class="acc-head">
           <img v-if="acct.info?.avatar" :src="acct.info.avatar" class="acc-big-avatar" alt="头像" />
@@ -233,35 +351,137 @@ function closeQrcode() {
         <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
       </template>
 
-      <!-- 目录管理 tab(独立于其他网盘) -->
-      <template v-else>
-        <h2 style="margin-top: 0">网盘目录</h2>
-        <p class="muted" style="margin-top: 0">此目录列表仅属于该网盘账户, 用于 STRM 任务选择源目录。</p>
+      <!-- 整理归档 -->
+      <template v-else-if="accTab === 'organize'">
+        <h2 style="margin-top: 0">整理归档</h2>
+        <p class="muted" style="margin-top: 0">扫描影视目录, 识别影视信息并归类重命名(计划-预览-执行)。</p>
         <div class="row" style="margin-bottom: 10px">
-          <input v-model="newDir" placeholder="输入目录路径, 如 电影" style="flex: 1" @keyup.enter="addDir" />
-          <button class="primary" @click="addDir">添加目录</button>
+          <input v-model="orgPath" placeholder="输入影视目录路径, 如 /media/movies" style="flex: 1" />
+          <button class="primary" :disabled="orgBusy" @click="makePlan">{{ orgBusy ? '分析中...' : '生成整理计划' }}</button>
         </div>
-        <div v-if="dirMsg" class="msg" :class="dirMsg.type">{{ dirMsg.text }}</div>
-        <div v-if="dirs.length" class="dir-chips">
-          <span v-for="(d, i) in dirs" :key="d" class="dir-chip">
-            /{{ d }}
-            <button class="chip-x" @click="delDir(i)" title="删除">×</button>
-          </span>
+        <div v-if="orgMsg" class="msg" :class="orgMsg.type">{{ orgMsg.text }}</div>
+        <div v-if="orgPlan" class="org-plan">
+          <table>
+            <tr><th>原文件</th><th>→ 整理后</th></tr>
+            <tr v-for="(it, i) in orgPlan.items" :key="i">
+              <td class="muted">{{ it.original }}</td>
+              <td><code>{{ it.target }}</code></td>
+            </tr>
+            <tr v-if="!orgPlan.items?.length"><td colspan="2" class="muted">未发现可整理的文件</td></tr>
+          </table>
+          <div class="row" style="margin-top: 10px">
+            <button class="primary" :disabled="orgBusy" @click="execPlan">执行整理</button>
+          </div>
         </div>
-        <p v-else class="muted">暂无目录, 添加你的第一个网盘目录。</p>
       </template>
-    </div>
 
-    <!-- 未登录: 引导登录卡 -->
-    <div v-else class="card">
-      <h2>115 账号登录</h2>
-      <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
-      <div class="row" style="margin-bottom: 10px">
-        <button class="primary" :disabled="qrBusy" @click="startQrcode">
-          {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
-        </button>
-      </div>
-      <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+      <!-- 识别规则 -->
+      <template v-else-if="accTab === 'identify'">
+        <h2 style="margin-top: 0">识别规则</h2>
+        <div class="grid2">
+          <div>
+            <label>最小视频大小(MB) — 低于此大小的视频文件不纳入整理</label>
+            <input type="number" min="0" v-model.number="rules.min_video_size_mb" />
+          </div>
+          <div>
+            <label>发布组扩展(逗号分隔) — 识别发布组</label>
+            <input v-model="releaseGroupsText" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
+          </div>
+        </div>
+        <div>
+          <label>整理黑名单(每行一个关键词) — 命中关键词的文件跳过整理</label>
+          <textarea v-model="blacklistText" rows="4" placeholder="例如: trailer&#10;sample&#10;xxx" />
+        </div>
+        <div>
+          <label>自定义识别词(每行: 原始词|替换词) — 识别时将原始词替换</label>
+          <textarea v-model="customWordsText" rows="3" placeholder="例如: 蜘蛛侠3|Spider-Man 3&#10;SW|Star Wars" />
+        </div>
+        <div>
+          <label>自定义匹配(每行: 关键词|TMDB_ID|movie或tv) — 直接指定作品</label>
+          <textarea v-model="customMatchesText" rows="3" placeholder="例如: 星际穿越|157336|movie&#10;三体|457433|tv" />
+        </div>
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+        </div>
+      </template>
+
+      <!-- AI 辅助 -->
+      <template v-else-if="accTab === 'ai'">
+        <h2 style="margin-top: 0">AI 辅助识别</h2>
+        <p class="muted" style="margin-top: 0">使用大模型辅助识别文件名(OpenAI 兼容接口)。</p>
+        <div class="row" style="margin-bottom: 10px">
+          <label style="display:flex; align-items:center; gap:6px">
+            <input type="checkbox" v-model="rules.ai.enabled" /> 启用 AI 辅助
+          </label>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>API Base</label>
+            <input v-model="rules.ai.api_base" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label>模型</label>
+            <input v-model="rules.ai.model" placeholder="gpt-4o-mini / deepseek-chat" />
+          </div>
+        </div>
+        <div>
+          <label>API Key</label>
+          <input v-model="rules.ai.api_key" type="password" placeholder="sk-..." />
+        </div>
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+        </div>
+      </template>
+
+      <!-- 重命名规则 -->
+      <template v-else-if="accTab === 'rename'">
+        <h2 style="margin-top: 0">重命名规则</h2>
+        <div class="grid2">
+          <div>
+            <label>预设模板</label>
+            <select v-model="renamePreset" @change="applyPreset">
+              <option v-for="(tpl, name) in RENAME_PRESETS" :key="name" :value="tpl">{{ name }}</option>
+            </select>
+          </div>
+          <div>
+            <label>自定义模板</label>
+            <input v-model="rules.rename_template" placeholder="{title}.{year}.{quality}" />
+          </div>
+        </div>
+        <p class="muted">可用变量: <code>{title}</code> 标题 · <code>{year}</code> 年份 · <code>{quality}</code> 画质 · <code>{edition}</code> 版本 · <code>{season:02}</code> 季 · <code>{episode:02}</code> 集</p>
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+        </div>
+      </template>
+
+      <!-- 二级分类策略 -->
+      <template v-else-if="accTab === 'category'">
+        <h2 style="margin-top: 0">二级分类策略</h2>
+        <p class="muted" style="margin-top: 0">按匹配词将作品归类到指定子目录(如 电影/动作 → 动作片目录)。</p>
+        <table>
+          <tr><th>类型</th><th>匹配词(命中即归类)</th><th>分类目录</th><th></th></tr>
+          <tr v-for="(r, i) in rules.category_rules" :key="i">
+            <td>
+              <select v-model="r.kind">
+                <option value="movie">电影</option>
+                <option value="tv">剧集</option>
+              </select>
+            </td>
+            <td><input v-model="r.match" placeholder="动作 / 爱情 / 科幻" /></td>
+            <td><input v-model="r.target" placeholder="动作片" /></td>
+            <td><button class="danger" @click="delCategoryRule(i)">删除</button></td>
+          </tr>
+          <tr v-if="!rules.category_rules.length"><td colspan="4" class="muted">暂无分类规则</td></tr>
+        </table>
+        <div class="row" style="margin-top: 12px">
+          <button @click="addCategoryRule">+ 添加分类规则</button>
+          <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
+          <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -316,11 +536,11 @@ function closeQrcode() {
             <div class="muted" v-if="a.info.used_size_fmt || a.info.total_size_fmt">
               容量: {{ fmtSize(a.info.used_size_fmt, a.info.used_size) }} / {{ fmtSize(a.info.total_size_fmt, a.info.total_size) }}
             </div>
-            <div class="muted" v-if="a.info.device">登录设备: {{ deviceLabel(a.info.device) }}</div>
+            <div class="muted" v-if="a.info.device">登录设备: {{ a.info.device }}</div>
           </template>
           <span v-else class="muted">-</span>
         </td>
-        <td><span class="badge" :class="a.status === 'ok' ? 'ok' : 'err'">{{ a.status }}</span></td>
+        <td><span class="badge" :class="a.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(a.status) }}</span></td>
         <td><button class="danger" @click="remove(a.id)">删除</button></td>
       </tr>
       <tr v-if="!filtered.length"><td colspan="6" class="muted">暂无账户</td></tr>
