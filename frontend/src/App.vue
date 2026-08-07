@@ -13,7 +13,8 @@ const view = ref(localStorage.getItem('strmhub_view') || 'dashboard')
 const driverFilter = ref(localStorage.getItem('strmhub_driver') || '')
 const authed = ref(isAuthed())
 const health = ref('...')
-const drivers = ref([])
+// 驱动列表: 用 localStorage 缓存, 刷新页面立即渲染菜单(后台再刷新)
+const drivers = ref(JSON.parse(localStorage.getItem('strmhub_drivers') || '[]'))
 const driversError = ref('')
 const netpanOpen = ref(localStorage.getItem('strmhub_netpan_open') !== '0')
 
@@ -57,12 +58,16 @@ async function loadDrivers() {
   driversError.value = ''
   try {
     drivers.value = await accountApi.drivers()
+    localStorage.setItem('strmhub_drivers', JSON.stringify(drivers.value))
     if (!drivers.value.length) {
       driversError.value = '驱动列表为空'
     }
   } catch (e) {
-    driversError.value = `驱动列表加载失败: ${e.message}`
-    console.error('[STRMhub]', driversError.value)
+    // 有缓存时正常显示菜单, 仅提示刷新失败; 无缓存才报错
+    if (!drivers.value.length) {
+      driversError.value = `驱动列表加载失败: ${e.message}`
+    }
+    console.error('[STRMhub]', `驱动列表刷新失败: ${e.message}`)
   }
 }
 

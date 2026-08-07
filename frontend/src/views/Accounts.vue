@@ -50,6 +50,17 @@ const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s
 
 const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
+// 登录设备 key -> 中文名(兼容历史数据存的 key; 新数据已存中文名)
+const DEVICE_LABELS = {
+  web: '网页版', desktop: '桌面客户端', ios: '苹果端', android: '安卓端',
+  harmony: '鸿蒙端', alipaymini: '支付宝小程序', wechatmini: '微信小程序端',
+  tv: '安卓电视端', apple_tv: '苹果电视端', qandroid: '115管理_安卓端',
+  os_windows: 'Windows端', os_mac: 'macOS端', os_linux: 'Linux端',
+  ipad: '苹果平板端', qios: '115管理_苹果端', qipad: '115管理_平板端',
+  '115ios': '115_苹果端', '115android': '115_安卓端', '115ipad': '115_平板端',
+}
+const deviceLabel = (d) => (d && DEVICE_LABELS[d] ? DEVICE_LABELS[d] : d || '')
+
 const fmtSize = (fmt, size) => fmt || (size ? `${(size / 1024 ** 3).toFixed(1)} GB` : '')
 
 const usedPct = (info) => {
@@ -359,7 +370,7 @@ function closeQrcode() {
     </div>
 
     <!-- 已登录: 账户管理卡(八 tab) -->
-    <div v-else class="card acc-card" :class="{ narrow: accTab === 'info' }">
+    <div v-else class="card acc-card">
       <div class="acc-tabs">
         <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
                 @click="accTab = t.id">{{ t.label }}</button>
@@ -376,7 +387,7 @@ function closeQrcode() {
               <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(acct.status) }}</span>
             </div>
             <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
-            <div class="muted" v-if="acct.info?.device">登录设备: {{ acct.info.device }}</div>
+            <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>
           </div>
         </div>
         <div class="acc-space" v-if="acct.info?.total_size">
@@ -616,7 +627,7 @@ function closeQrcode() {
             <div class="muted" v-if="a.info.used_size_fmt || a.info.total_size_fmt">
               容量: {{ fmtSize(a.info.used_size_fmt, a.info.used_size) }} / {{ fmtSize(a.info.total_size_fmt, a.info.total_size) }}
             </div>
-            <div class="muted" v-if="a.info.device">登录设备: {{ a.info.device }}</div>
+            <div class="muted" v-if="a.info.device">登录设备: {{ deviceLabel(a.info.device) }}</div>
           </template>
           <span v-else class="muted">-</span>
         </td>

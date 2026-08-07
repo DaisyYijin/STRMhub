@@ -83,8 +83,7 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 .acc-name { font-weight: 600; }
 
 /* 115 单账号信息卡 */
-.acc-card { max-width: none; }               /* 规则/文档 tab 全宽自适应 */
-.acc-card.narrow { max-width: 520px; }       /* 仅账号信息 tab 保持窄卡 */
+.acc-card { max-width: none; }               /* 全部 tab 全宽自适应窗口 */
 .acc-head { display: flex; align-items: center; gap: 14px; }
 .acc-big-avatar { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--line); }
 .acc-head-info { display: flex; flex-direction: column; gap: 3px; }
