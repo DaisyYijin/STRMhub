@@ -49,9 +49,10 @@ class P115Driver:
             self.gate.report_blocked()
             raise RuntimeError("115 接口触发风控, 已进入冷却")
 
-    def list_files(self, parent_id: str) -> list[FileItem]:
+    def list_files(self, parent_id: str, only_dirs: bool = False) -> list[FileItem]:
         """列目录(分页)。parent_id 为 115 目录 cid。
 
+        only_dirs=True 时用 nf=1 仅返回目录行(目录树浏览快很多, 避免拉全量文件)。
         p115client fs_files(payload dict) -> {"state", "data", ...};
         data 可能是数组(open/ufile/files)或 dict(个别版本返回 {"list": ...})。
         原始行保存在 self.last_raw 供 browse 空结果诊断。
@@ -62,8 +63,10 @@ class P115Driver:
         self.last_raw = []
         while True:
             self.gate.wait()
-            data = self.client.fs_files(
-                {"cid": int(parent_id or 0), "limit": 115, "offset": offset})
+            payload = {"cid": int(parent_id or 0), "limit": 115, "offset": offset}
+            if only_dirs:
+                payload["nf"] = 1  # 115: 仅显示目录
+            data = self.client.fs_files(payload)
             self._check_blocked(data)
             if data.get("state") is False:
                 raise RuntimeError(
@@ -78,12 +81,14 @@ class P115Driver:
             if logging.getLogger("strmhub.p115").isEnabledFor(logging.INFO) \
                     and os.environ.get("STRMHUB_DEBUG") and not offset:
                 logging.getLogger("strmhub.p115").info(
-                    "fs_files cid=%s -> rows=%d keys=%s",
-                    parent_id, len(rows),
+                    "fs_files cid=%s only_dirs=%s -> rows=%d keys=%s",
+                    parent_id, only_dirs, len(rows),
                     [sorted(r.keys()) for r in rows[:2]])
             for row in rows:
                 if not isinstance(row, dict):
                     continue
+                if only_dirs and "fid" in row:
+                    continue  # 双保险: nf=1 下 115 只返回目录行
                 items.append(_row_to_item(row))
             if len(rows) < 115:
                 break

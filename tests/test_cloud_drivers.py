@@ -211,3 +211,56 @@ class TestCredentialExpired:
             mine = [a for a in c.get("/api/accounts",
                                      headers=h).json() if a["id"] == acc["id"]][0]
             assert mine["status"] == "expired"
+
+    def test_list_files_only_dirs(self):
+        """only_dirs=True 时 payload 带 nf=1, 且返回行被识别为目录。"""
+        from app.drivers.p115.driver import P115Driver
+
+        calls = []
+
+        class NfClient:
+            def fs_files(self, payload):
+                calls.append(payload)
+                return {"data": [
+                    {"fid": "100", "cid": "1", "n": "movie.mkv", "s": 10,
+                     "pick_code": "ABC"},
+                    {"cid": "55", "pid": "1", "n": "TV"},
+                ], "state": True}
+
+        driver = P115Driver(client=NfClient())
+        items = driver.list_files("1", only_dirs=True)
+        assert calls and calls[0].get("nf") == 1      # 仅目录参数
+        assert len(items) == 1                          # 文件行不返回(nf 模式)
+        assert items[0].is_dir and items[0].name == "TV"
+
+    def test_browse_uses_only_dirs(self):
+        """browse 接口用 only_dirs 模式(目录树快); 空目录正常返回不诊断。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            acc = c.post("/api/accounts", headers=h, json={
+                "name": "browse目录", "driver_type": "local",
+                "credential": "", "config": {"root": "/"}}).json()
+            import tempfile
+            from pathlib import Path
+            with tempfile.TemporaryDirectory() as td:
+                Path(td, "子目录A").mkdir()
+                Path(td, "file.mkv").write_bytes(b"x")
+                r = c.get(f"/api/accounts/{acc['id']}/browse",
+                          params={"parent": td}, headers=h)
+                assert r.status_code == 200, r.text
+                body = r.json()
+                names = [d["name"] for d in body["dirs"]]
+                assert names == ["子目录A"]           # 只有目录, 无 file.mkv
+                assert "diagnose" not in body          # 非空目录无诊断
+            # 空目录: 正常返回无子目录, 无诊断
+            with tempfile.TemporaryDirectory() as td2:
+                r = c.get(f"/api/accounts/{acc['id']}/browse",
+                          params={"parent": td2}, headers=h)
+                body = r.json()
+                assert body["dirs"] == []
+                # 空目录无诊断显示条件: rows <= 0(前端 rows>0 才显示诊断)
+                assert body.get("diagnose", {}).get("rows", 0) <= 0

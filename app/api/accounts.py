@@ -117,7 +117,10 @@ def browse_account_dirs(account_id: int, parent: str = "",
         raise HTTPException(status_code=404, detail="账户不存在")
     try:
         driver = _accounts.driver_for(acc)
-        items = driver.list_files(parent or "0")
+        try:
+            items = driver.list_files(parent or "0", only_dirs=True)  # 仅目录, 快
+        except TypeError:
+            items = [it for it in driver.list_files(parent or "0") if it.is_dir]
     except CredentialExpired as exc:
         # 凭据过期: 标记账户状态, 前端提示重新扫码
         _accounts.set_status(account_id, "expired")

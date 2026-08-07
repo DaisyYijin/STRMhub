@@ -990,7 +990,7 @@ function closeQrcode() {
       <div v-if="pickerErr" class="msg err">{{ pickerErr }}</div>
       <div class="picker-list">
         <div v-if="!pickerBusy && !picker.dirs.length" class="muted" style="padding: 10px">无子目录</div>
-        <div v-if="!pickerBusy && picker.diagnose" class="picker-diag">
+        <div v-if="!pickerBusy && picker.diagnose && picker.diagnose.rows > 0" class="picker-diag">
           诊断(rows={{ picker.diagnose.rows }}, 文件={{ picker.diagnose.all_files?.length || 0 }}):
           <pre>{{ JSON.stringify(picker.diagnose, null, 1) }}</pre>
         </div>

@@ -35,13 +35,15 @@ class LocalDriver(FolderCreator):
             mtime=st.st_mtime,
         )
 
-    def list_files(self, parent_id: str) -> list[FileItem]:
+    def list_files(self, parent_id: str, only_dirs: bool = False) -> list[FileItem]:
         parent = Path(parent_id) if parent_id and parent_id != "0" else self.root
         if not parent.is_dir():
             raise FileNotFoundError(f"目录不存在: {parent}")
         items = []
         for child in sorted(parent.iterdir(), key=lambda c: c.name.lower()):
             try:
+                if only_dirs and not child.is_dir():
+                    continue
                 items.append(self._to_item(child))
             except OSError:
                 continue  # 权限等异常跳过单个条目
