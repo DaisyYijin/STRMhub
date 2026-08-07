@@ -207,3 +207,10 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
   background: #7f1d1d; color: #fecaca; padding: 4px 12px;
   font-size: 12px; flex-shrink: 0;
 }
+
+/* 目录树诊断块 */
+.picker-diag {
+  padding: 8px 10px; font-size: 11px; color: var(--warn);
+  border-top: 1px dashed var(--line); word-break: break-all;
+}
+.picker-diag pre { margin: 4px 0 0; font-size: 10.5px; color: var(--muted); }

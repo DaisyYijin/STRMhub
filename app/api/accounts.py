@@ -110,12 +110,19 @@ def browse_account_dirs(account_id: int, parent: str = "",
         driver = _accounts.driver_for(acc)
         items = driver.list_files(parent or "0")
     except Exception as exc:
-        import traceback
         _log.exception("请求处理异常")
         raise HTTPException(status_code=400, detail=f"浏览目录失败: {exc}")
-    return {"parent": parent or "0",
-            "dirs": [{"id": it.id, "name": it.name}
-                      for it in items if it.is_dir]}
+    dirs = [{"id": it.id, "name": it.name} for it in items if it.is_dir]
+    resp = {"parent": parent or "0", "dirs": dirs}
+    if not dirs:
+        # 自诊断: 空结果时带回原始行结构(便于定位 115 返回/解析问题)
+        raw = getattr(driver, "last_raw", None)
+        resp["diagnose"] = {
+            "rows": len(raw) if isinstance(raw, list) else -1,
+            "sample": (raw[:3] if isinstance(raw, list) else None),
+            "all_files": [it.name for it in items[:5]],
+        }
+    return resp
 
 
 @router.get("/drivers")

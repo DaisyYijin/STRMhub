@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from ..base import DriverMeta, FileItem
 from ..common import AccountGate, is_blocked_response
 
@@ -48,23 +50,29 @@ class P115Driver:
 
         p115client fs_files(payload dict) -> {"state", "data", ...};
         data 可能是数组(open/ufile/files)或 dict(个别版本返回 {"list": ...})。
+        原始行保存在 self.last_raw 供 browse 空结果诊断。
         """
-        import os
+        import logging
         items: list[FileItem] = []
         offset = 0
+        self.last_raw = []
         while True:
             self.gate.wait()
             data = self.client.fs_files(
                 {"cid": int(parent_id or 0), "limit": 115, "offset": offset})
             self._check_blocked(data)
+            if data.get("state") is False:
+                raise RuntimeError(
+                    f"115 接口返回失败: {data.get('error') or data.get('msg') or data}")
             rows = data.get("data") or []
             if isinstance(rows, dict):  # 防御: 个别版本 data 为 dict
                 rows = (rows.get("list") or rows.get("items")
                         or rows.get("files") or [])
             if not isinstance(rows, list):
                 rows = []
-            if os.environ.get("STRMHUB_DEBUG") and not offset:
-                import logging
+            self.last_raw.extend(rows)
+            if logging.getLogger("strmhub.p115").isEnabledFor(logging.INFO) \
+                    and os.environ.get("STRMHUB_DEBUG") and not offset:
                 logging.getLogger("strmhub.p115").info(
                     "fs_files cid=%s -> rows=%d keys=%s",
                     parent_id, len(rows),

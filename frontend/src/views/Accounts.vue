@@ -176,9 +176,11 @@ async function loadPickerDirs() {
   if (!picker.value) return
   pickerBusy.value = true
   pickerErr.value = ''
+  picker.value.diagnose = null
   try {
     const data = await accountApi.browse(acct.value.id, picker.value.parent)
     picker.value.dirs = data.dirs || []
+    picker.value.diagnose = data.diagnose || null
   } catch (e) {
     pickerErr.value = e.message
   } finally {
@@ -745,6 +747,10 @@ function closeQrcode() {
       <div v-if="pickerErr" class="msg err">{{ pickerErr }}</div>
       <div class="picker-list">
         <div v-if="!pickerBusy && !picker.dirs.length" class="muted" style="padding: 10px">无子目录</div>
+        <div v-if="!pickerBusy && picker.diagnose" class="picker-diag">
+          诊断(rows={{ picker.diagnose.rows }}, 文件={{ picker.diagnose.all_files?.length || 0 }}):
+          <pre>{{ JSON.stringify(picker.diagnose, null, 1) }}</pre>
+        </div>
         <button v-for="d in picker.dirs" :key="d.id" class="picker-dir" @click="enterDir(d)">📁 {{ d.name }}</button>
       </div>
       <div class="row" style="justify-content: space-between; margin-top: 10px">
