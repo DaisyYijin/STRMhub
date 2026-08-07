@@ -415,6 +415,14 @@ async function saveRules(key, fields) {
   tabMsg.value[key] = ''
   try {
     if (key === 'category') rules.value.category_yaml = categoryYaml.value
+    if (key === 'organize') {
+      // 目录选择器写入 orgDirs, 保存前同步到规则对象
+      rules.value.organize_dirs = {
+        pending: { ...orgDirs.value.pending },
+        existing: { ...orgDirs.value.existing },
+        redundant: { ...orgDirs.value.redundant },
+      }
+    }
     const cur = await accountApi.rules(acct.value.id)
     const merged = { ...(cur.rules || {}) }
     for (const f of fields) merged[f] = rules.value[f]
