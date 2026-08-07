@@ -74,6 +74,12 @@ export const accountApi = {
     `/api/accounts/${id}/browse${parent ? `?parent=${encodeURIComponent(parent)}` : ''}`),
 }
 
+// 驱动级规则配置(不随账户, 未创建账户也可配置)
+export const driverRulesApi = {
+  rules: (driver) => http.get(`/api/drivers/${driver}/rules`),
+  save: (driver, rules) => http.put(`/api/drivers/${driver}/rules`, { rules }),
+}
+
 export const qrcodeApi = {
   start: (driverType) => http.post('/api/accounts/qrcode/start', { driver_type: driverType }),
   poll: (driverType, { uid, time, sign, app }) => http.post('/api/accounts/qrcode/poll', {

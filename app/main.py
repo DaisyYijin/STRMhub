@@ -11,8 +11,8 @@ from pydantic import BaseModel
 
 from . import config
 from . import web
-from .api import (accounts, auth, automation, logs, organize, playback,
-                  qrcode, scrape, tasks)
+from .api import (accounts, auth, automation, drivers, logs, organize,
+                  playback, qrcode, scrape, tasks)
 from .db.session import init_db
 
 APP_VERSION = "0.2.0"  # 发布版本(镜像/健康检查用, 与前端联动)
@@ -53,6 +53,7 @@ def me(user: str = Depends(auth.require_user)):
 
 # 业务路由
 app.include_router(accounts.router)
+app.include_router(drivers.router)
 app.include_router(tasks.router)
 app.include_router(playback.router)
 app.include_router(scrape.router)

@@ -375,9 +375,12 @@ class OrganizeService:
             acc = s.get(Account, account_id)
             if acc is None:
                 raise ValueError("账户不存在")
-            config = json.loads(acc.config_json or "{}")
-            rules = config.get("rules") or {}
+            account_config = json.loads(acc.config_json or "{}")
             driver_type = acc.driver_type
+        # 规则优先级: 驱动级配置(新) -> 账户级(旧数据兼容)
+        from ..services import driver_config
+        rules = driver_config.get_rules(driver_type,
+                                        account_config.get("rules") or {})
         driver = accounts.driver_for(acc)
         if not (hasattr(driver, "move") and hasattr(driver, "create_folder")):
             raise ValueError(f"驱动 {driver_type} 不支持整理归档(需要移动/建目录能力)")

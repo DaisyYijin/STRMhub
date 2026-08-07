@@ -105,3 +105,12 @@ class WebhookRule(Base):
     token: Mapped[str] = mapped_column(String(64), default="", index=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class DriverConfig(Base):
+    """驱动级配置(规则/目录等, 不随账户): 一个驱动类型一套。"""
+    __tablename__ = "driver_configs"
+
+    driver_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)

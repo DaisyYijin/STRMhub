@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { accountApi, organizeApi, qrcodeApi } from '../api'
+import { accountApi, driverRulesApi, organizeApi, qrcodeApi } from '../api'
 
 const props = defineProps({
   driverType: { type: String, default: '' },
@@ -99,7 +99,6 @@ function applyPreset() {
 
 // ---- 账户页 tab ----
 const tabs = [
-  { id: 'info', label: '账号信息' },
   { id: 'organize', label: '整理归档' },
   { id: 'identify', label: '识别规则' },
   { id: 'ai', label: 'AI 辅助' },
@@ -110,7 +109,7 @@ const tabs = [
   { id: 'dict', label: '分类字典' },
 ]
 // tab 状态持久化: 刷新后停留在当前 tab
-const accTab = ref(localStorage.getItem('strmhub_acctab') || 'info')
+const accTab = ref(localStorage.getItem('strmhub_acctab') || 'organize')
 function setTab(t) {
   accTab.value = t
   localStorage.setItem('strmhub_acctab', t)
@@ -282,6 +281,10 @@ async function saveOrgDirs() {
 
 async function startOrganize() {
   orgMsg.value = ''
+  if (!acct.value.id) {
+    orgMsg.value = { type: 'err', text: '请先在顶部创建/登录账户' }
+    return
+  }
   if (!orgDirs.value.pending?.id) {
     orgMsg.value = { type: 'err', text: '请先选择等待整理目录' }
     return
@@ -414,7 +417,7 @@ const tabMsg = ref({ identify: '', ai: '', rename: '', category: '', organize: '
 
 // 保存当前 tab 的字段子集(拉取最新规则合并, 不影响其他 tab 数据)
 async function saveRules(key, fields) {
-  if (!acct.value.id) return
+  if (!props.driverType) return
   rulesBusy.value = true
   tabMsg.value[key] = ''
   try {
@@ -427,10 +430,10 @@ async function saveRules(key, fields) {
         redundant: { ...orgDirs.value.redundant },
       }
     }
-    const cur = await accountApi.rules(acct.value.id)
+    const cur = await driverRulesApi.rules(props.driverType)
     const merged = { ...(cur.rules || {}) }
     for (const f of fields) merged[f] = rules.value[f]
-    await accountApi.saveRules(acct.value.id, merged)
+    await driverRulesApi.save(props.driverType, merged)
     tabMsg.value[key] = { type: 'ok', text: '规则已保存' }
   } catch (e) {
     tabMsg.value[key] = { type: 'err', text: e.message }
@@ -508,9 +511,9 @@ const strList = (v) => (v || []).join('\n')
 const setStrList = (key, text) => { rules.value[key] = text.split('\n').map((s) => s.trim()).filter(Boolean) }
 
 async function loadRules() {
-  if (!acct.value.id) return
+  if (!props.driverType) return
   try {
-    const data = await accountApi.rules(acct.value.id)
+    const data = await driverRulesApi.rules(props.driverType)
     const r = data.rules || {}
     rules.value = {
       min_video_size_mb: r.min_video_size_mb || 0,
@@ -551,7 +554,7 @@ function delCategoryRule(i) {
   rules.value.category_rules.splice(i, 1)
 }
 
-watch(acct, (a) => { if (a.id) loadRules() })
+watch(() => props.driverType, () => loadRules())
 
 watch(accTab, (t) => {
   if (t === 'rename') refreshAllPreviews()  // 进入 tab 直接显示示例(一次性并行)
@@ -660,53 +663,39 @@ function closeQrcode() {
 <template>
   <h1>{{ driverLabel(props.driverType) || '网盘' }}管理</h1>
 
-  <!-- 115 页面: 单账号卡片 -->
+  <!-- 驱动管理页: 顶部卡(登录/账户) + 规则 tab 区(驱动级, 不依赖账户) -->
   <div v-if="isCard">
-    <!-- 未登录: 引导登录卡(按驱动) -->
-    <div v-if="!filtered.length" class="card" style="max-width: 560px">
-      <h2>{{ driverLabel(props.driverType) }}账号</h2>
-      <!-- 115: 扫码 -->
-      <template v-if="isP115">
-        <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
-        <div class="row" style="margin-bottom: 10px">
-          <button class="primary" :disabled="qrBusy" @click="startQrcode">
-            {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
-          </button>
-        </div>
-        <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+    <div class="card" style="max-width: 640px">
+      <template v-if="!filtered.length">
+        <h2>{{ driverLabel(props.driverType) }}账号</h2>
+        <template v-if="isP115">
+          <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
+          <div class="row" style="margin-bottom: 10px">
+            <button class="primary" :disabled="qrBusy" @click="startQrcode">
+              {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
+            </button>
+          </div>
+          <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+        </template>
+        <template v-else-if="props.driverType === 'p123'">
+          <p class="muted" style="margin-top: 0">填写 123 云盘账号与密码(格式: 手机号:密码), 创建后自动登录。</p>
+          <div class="row" style="margin-bottom: 10px; gap: 8px">
+            <input v-model="form.name" placeholder="名称(可选), 如 我的123" style="max-width: 200px" />
+            <input v-model="form.credential" placeholder="手机号:密码" style="flex: 1" />
+            <button class="primary" @click="create">创建账号</button>
+          </div>
+          <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+        </template>
+        <template v-else>
+          <p class="muted" style="margin-top: 0">本地文件无需登录, 创建后即可用于 STRM 生成与整理归档。</p>
+          <div class="row" style="margin-bottom: 10px; gap: 8px">
+            <input v-model="form.name" placeholder="名称, 如 我的本地文件" style="max-width: 240px" />
+            <button class="primary" @click="create">创建</button>
+          </div>
+          <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+        </template>
       </template>
-      <!-- 123: 账号密码 -->
-      <template v-else-if="props.driverType === 'p123'">
-        <p class="muted" style="margin-top: 0">填写 123 云盘账号与密码(格式: 手机号:密码), 创建后自动登录。</p>
-        <p class="muted" style="margin-top: -4px">创建后可用完整功能: 整理归档/识别规则/AI 辅助/重命名规则/二级分类策略等(与 115 网盘一致)。</p>
-        <div class="row" style="margin-bottom: 10px; gap: 8px">
-          <input v-model="form.name" placeholder="名称(可选), 如 我的123" style="max-width: 200px" />
-          <input v-model="form.credential" placeholder="手机号:密码" style="flex: 1" />
-          <button class="primary" @click="create">创建账号</button>
-        </div>
-        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
-      </template>
-      <!-- 本地文件: 直接创建 -->
       <template v-else>
-        <p class="muted" style="margin-top: 0">本地文件无需登录, 创建后即可用于 STRM 生成与整理归档。</p>
-        <p class="muted" style="margin-top: -4px">创建后可用完整功能: 整理归档/识别规则/AI 辅助/重命名规则/二级分类策略等(与 115 网盘一致)。</p>
-        <div class="row" style="margin-bottom: 10px; gap: 8px">
-          <input v-model="form.name" placeholder="名称, 如 我的本地文件" style="max-width: 240px" />
-          <button class="primary" @click="create">创建</button>
-        </div>
-        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
-      </template>
-    </div>
-
-    <!-- 已登录: 账户管理卡(八 tab) -->
-    <div v-else class="card acc-card">
-      <div class="acc-tabs">
-        <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
-                @click="setTab(t.id)">{{ t.label }}</button>
-      </div>
-
-      <!-- 账号信息 -->
-      <template v-if="accTab === 'info'">
         <div class="acc-head">
           <img v-if="acct.info?.avatar" :src="acct.info.avatar" class="acc-big-avatar" alt="头像" />
           <div class="acc-head-info">
@@ -715,9 +704,7 @@ function closeQrcode() {
               <span v-if="acct.info?.vip" class="badge ok">{{ acct.info.vip }}</span>
               <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(acct.status) }}</span>
             </div>
-            <div v-if="acct.status === 'expired'" class="msg err" style="margin: 4px 0 0">
-              凭据已过期, 请重新登录更新状态
-            </div>
+            <div v-if="acct.status === 'expired'" class="msg err" style="margin: 4px 0 0">凭据已过期, 请重新登录更新状态</div>
             <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
             <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>
             <div class="muted" v-if="!acct.info || !Object.keys(acct.info).length">驱动: {{ driverLabel(props.driverType) }}(该驱动暂不支持账号信息拉取)</div>
@@ -726,19 +713,13 @@ function closeQrcode() {
         <div class="acc-space" v-if="acct.info?.total_size">
           <div class="space-row">
             <span>容量</span>
-            <span class="muted">
-              已用 {{ fmtSize(acct.info.used_size_fmt, acct.info.used_size) }}
-              / 总 {{ fmtSize(acct.info.total_size_fmt, acct.info.total_size) }}
-              ({{ usedPct(acct.info) }}%)
-            </span>
+            <span class="muted">已用 {{ fmtSize(acct.info.used_size_fmt, acct.info.used_size) }} / 总 {{ fmtSize(acct.info.total_size_fmt, acct.info.total_size) }} ({{ usedPct(acct.info) }}%)</span>
           </div>
           <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
         </div>
         <div class="row" style="margin-top: 14px">
           <template v-if="isP115">
-            <button class="primary" :disabled="qrBusy" @click="startQrcode">
-              {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
-            </button>
+            <button class="primary" :disabled="qrBusy" @click="startQrcode">{{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}</button>
           </template>
           <template v-else-if="props.driverType === 'p123'">
             <input v-model="form.credential" placeholder="更新凭据(手机号:密码)" style="max-width: 260px" />
@@ -749,9 +730,15 @@ function closeQrcode() {
         </div>
         <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
       </template>
+    </div>
 
-      <!-- 整理归档 -->
-      <template v-else-if="accTab === 'organize'">
+    <div class="card acc-card" style="margin-top: 14px">
+      <div class="acc-tabs">
+        <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
+                @click="setTab(t.id)">{{ t.label }}</button>
+      </div>
+            <!-- 整理归档 -->
+      <template v-if="accTab === 'organize'">
         <h2 style="margin-top: 0">整理归档</h2>
         <p class="muted" style="margin-top: 0">选择三个目录: 点击"选择"浏览网盘目录(无需填 cid)。开始整理后, 扫描等待整理目录并识别分类。</p>
         <div v-for="f in ORG_FIELDS" :key="f.key" class="org-dir-row">
@@ -760,8 +747,9 @@ function closeQrcode() {
             <span class="help" :data-tip="f.hint">?</span>
           </div>
           <input class="org-dir-value" :class="{ 'muted': !orgDirs[f.key]?.id }"
-                 readonly :value="orgDirs[f.key]?.name || '点击选择目录...'"
-                 @click="openPicker(f.key)" />
+                 readonly :value="orgDirs[f.key]?.name || (acct.value.id ? '点击选择目录...' : '请先创建/登录账户')"
+                 :disabled="!acct.value.id"
+                 @click="acct.value.id && openPicker(f.key)" />
           <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
         </div>
         <div class="row" style="margin-top: 12px">

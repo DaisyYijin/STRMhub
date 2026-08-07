@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.services.organize import OrganizeService, parse_filename
 
 
@@ -121,6 +123,13 @@ class TestRenderTemplate:
 
 class TestOrganizeRun:
     """三目录整理流程(本地驱动): 成功/已存在/冗余分类。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_driver_config(self):
+        """清理 local 驱动级配置, 防止其他测试(驱动级规则)污染本类账户级规则流程。"""
+        from app.services import driver_config
+        driver_config.save_config("local", {})
+        yield
 
     def _make_account_with_rules(self, root, rules):
         from app.main import app
