@@ -284,3 +284,10 @@ textarea.rules-input, .yaml-editor {
 .pop-btn:hover { border-color: var(--accent); }
 .pop-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pop-btn-primary:hover { opacity: .9; }
+
+/* 分类字典速查表 */
+.dict-pre {
+  background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; font-size: 12px; line-height: 1.7; overflow: auto;
+  max-height: 62vh; color: var(--text);
+}

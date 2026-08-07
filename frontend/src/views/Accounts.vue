@@ -103,8 +103,62 @@ const tabs = [
   { id: 'category', label: '二级分类策略' },
   { id: 'vars', label: '变量说明' },
   { id: 'syntax', label: '语法说明' },
+  { id: 'dict', label: '分类字典' },
 ]
 const accTab = ref('info')
+
+
+// ---- 二级分类字典(genre_ids/语种/国家地区) ----
+const DICT_TEXT = `## genre_ids 内容类型 字典
+#  28  Action          |  28  动作
+#  12  Adventure       |  12  冒险
+#  16  Animation       |  16  动画
+#  35  Comedy          |  35  喜剧
+#  80  Crime           |  80  犯罪
+#  99  Documentary     |  99  纪录
+#  18  Drama           |  18  剧情
+#  10751  Family       |  10751  家庭
+#  14  Fantasy         |  14  奇幻
+#  36  History         |  36  历史
+#  27  Horror          |  27  恐怖
+#  10402  Music        |  10402  音乐
+#  9648  Mystery       |  9648  悬疑
+#  10749  Romance      |  10749  爱情
+#  878  Science Fiction|  878  科幻
+#  10770  TV Movie     |  10770  电视电影
+#  53  Thriller        |  53  惊悚
+#  10752  War          |  10752  战争
+#  37  Western         |  37  西部
+
+## original_language 语种 字典
+#  af 南非语   ar 阿拉伯语   az 阿塞拜疆语   be 比利时语   bg 保加利亚语
+#  ca 加泰隆语  cs 捷克语    cy 威尔士语    da 丹麦语     de 德语
+#  dv 第维埃语  el 希腊语    en 英语       eo 世界语     es 西班牙语
+#  et 爱沙尼亚语 eu 巴士克语  fa 法斯语     fi 芬兰语     fo 法罗语
+#  fr 法语     gl 加里西亚语  gu 古吉拉特语  he 希伯来语   hi 印地语
+#  hr 克罗地亚语 hu 匈牙利语  hy 亚美尼亚语  id 印度尼西亚语 is 冰岛语
+#  it 意大利语  ja 日语      ka 格鲁吉亚语  kk 哈萨克语   kn 卡纳拉语
+#  ko 朝鲜语   kok 孔卡尼语  ky 吉尔吉斯语  lt 立陶宛语   lv 拉脱维亚语
+#  mi 毛利语   mk 马其顿语   mn 蒙古语     mr 马拉地语   ms 马来语
+#  mt 马耳他语  nb 挪威语(伯克梅尔) nl 荷兰语   ns 北梭托语   pa 旁遮普语
+#  pl 波兰语   pt 葡萄牙语   qu 克丘亚语   ro 罗马尼亚语  ru 俄语
+#  sa 梵文    se 北萨摩斯语  sk 斯洛伐克语  sl 斯洛文尼亚语 sq 阿尔巴尼亚语
+#  sv 瑞典语   sw 斯瓦希里语  syr 叙利亚语  ta 泰米尔语   te 泰卢固语
+#  th 泰语    tl 塔加路语   tn 茨瓦纳语   tr 土耳其语   ts 宗加语
+#  tt 鞑靼语   uk 乌克兰语   ur 乌都语     uz 乌兹别克语  vi 越南语
+#  xh 班图语   zh 中文      cn 中文      zu 祖鲁语
+
+## origin_country / production_countries 国家地区 字典
+#  AR 阿根廷  AU 澳大利亚  BE 比利时   BR 巴西    CA 加拿大
+#  CH 瑞士    CL 智利     CO 哥伦比亚  CZ 捷克    DE 德国
+#  DK 丹麦    EG 埃及     ES 西班牙   FR 法国    GR 希腊
+#  HK 香港    IL 以色列   IN 印度     IQ 伊拉克   IR 伊朗
+#  IT 意大利   JP 日本     MM 缅甸     MO 澳门    MX 墨西哥
+#  MY 马来西亚  NL 荷兰    NO 挪威     PH 菲律宾   PK 巴基斯坦
+#  PL 波兰    RU 俄罗斯   SE 瑞典     SG 新加坡   TH 泰国
+#  TR 土耳其   US 美国    VN 越南     CN 中国内地  GB 英国
+#  TW 中国台湾  NZ 新西兰  SA 沙特阿拉伯 LA 老挝    KP 朝鲜
+#  KR 韩国    PT 葡萄牙   MN 蒙古国`
 
 // ---- 变量说明 / 语法说明(静态文档) ----
 const VAR_DOCS = [
@@ -139,6 +193,7 @@ const SYNTAX_DOCS = [
   ['<...>', '用尖括号包围的字符串称为 块，块里 {变量名} 表示当 {变量名}不为空时，取块里的内容。简单来说重命名规则就是写多个块，然后拼在一起'],
   ['<{{name}}...>', '给块取个名字，类似于临时变量，之后可以用 {name} 反复引用该块的值'],
   ['<?{{name}}...>', '有名字的块可以只取名不输出，便于后续引用'],
+  ['{} 里支持 python 的字符串函数及语法', '见下方示例: replace/lower/upper/条件表达式等'],
   ['<{title}> 和 {title} 的区别', '<{title}> 会先判断 title 是否为空，后者是直接取 title 的值；也就是说如果你用的变量可能为空，则必须用 < > 把变量包起来'],
   ['[[ ]]', '如果想用 { }，由于和语法冲突，可以用 [[ ]] 代替，最终会替换为 { }'],
 ]
@@ -455,7 +510,7 @@ async function loadRules() {
     if (!rules.value.ai.mode) {
       rules.value.ai.mode = rules.value.ai.enabled ? 'assist' : 'off'
     }
-    categoryYaml.value = r.category_yaml || ''
+    categoryYaml.value = r.category_yaml || CATEGORY_YAML_DEFAULT
     orgDirs.value = {
       pending: { ...(r.organize_dirs?.pending || {}) },
       existing: { ...(r.organize_dirs?.existing || {}) },
@@ -809,7 +864,7 @@ function closeQrcode() {
               </div>
             </div>
           </span>
-          <button @click="loadCategorySample">加载示例</button>
+
           <div v-if="tabMsg.category" class="msg" :class="tabMsg.category.type">{{ tabMsg.category.text }}</div>
         </div>
       </template>
@@ -826,6 +881,13 @@ function closeQrcode() {
             <td class="muted">{{ row[2] }}</td>
           </tr>
         </table>
+      </template>
+
+      <!-- 分类字典 -->
+      <template v-else-if="accTab === 'dict'">
+        <h2 style="margin-top: 0">分类字典</h2>
+        <p class="muted" style="margin-top: 0">二级分类策略中使用的类型/语种/国家地区代码速查表。</p>
+        <pre class="dict-pre">{{ DICT_TEXT }}</pre>
       </template>
 
       <!-- 语法说明 -->
