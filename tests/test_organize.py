@@ -175,3 +175,48 @@ class TestOrganizeRun:
         acc, _ = self._make_account_with_rules(tmp_path, {})
         with _pytest.raises(ValueError, match="等待整理"):
             organize.run(acc["id"])
+
+
+class TestRenderPreview:
+    """模板实时预览 API(重命名规则示例)。"""
+
+    def test_render_movie_folder(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            r = c.post("/api/organize/render", headers=h, json={
+                "template": "{first_letter}-{title}-{year}-[tmdb=[[tmdb_id]]]",
+                "sample": "movie_folder"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # 蜘蛛侠 -> 拼音首字母 Z; tmdb 示例 1726
+            assert body["rendered"] == "Z-蜘蛛侠-2016-[tmdb=1726]", body
+
+    def test_render_movie_file(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            r = c.post("/api/organize/render", headers=h, json={
+                "template": "{title}.{year}<.{resource_pix}><.{resource_type}><-{resource_team}>",
+                "sample": "movie_file"})
+            body = r.json()
+            assert body["rendered"] == "蜘蛛侠.2016.2160p.BluRay-TnT", body
+
+    def test_render_episode_file(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            r = c.post("/api/organize/render", headers=h, json={
+                "template": "{title}.{year}.{season_episode}",
+                "sample": "episode_file"})
+            body = r.json()
+            assert body["rendered"] == "权力的游戏.2011.S01E01", body

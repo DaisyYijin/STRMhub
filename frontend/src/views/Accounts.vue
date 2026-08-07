@@ -236,11 +236,11 @@ async function startOrganize() {
 
 // ---- 重命名规则(5 段模板) ----
 const RENAME_FIELDS = [
-  { key: 'movie_folder', label: '电影文件夹命名规则' },
-  { key: 'movie_file', label: '电影文件命名规则' },
-  { key: 'tv_folder', label: '剧集文件夹命名规则' },
-  { key: 'season_folder', label: '季文件夹命名规则' },
-  { key: 'episode_file', label: '集文件命名规则' },
+  { key: 'movie_folder', label: '电影文件夹命名规则', sample: 'movie_folder' },
+  { key: 'movie_file', label: '电影文件命名规则', sample: 'movie_file' },
+  { key: 'tv_folder', label: '剧集文件夹命名规则', sample: 'tv_folder' },
+  { key: 'season_folder', label: '季文件夹命名规则', sample: 'season_folder' },
+  { key: 'episode_file', label: '集文件命名规则', sample: 'episode_file' },
 ]
 const RENAME_DEFAULTS = {
   movie_folder: '{first_letter}-{title}-{year}-[tmdb=[[tmdb_id]]]',
@@ -249,15 +249,57 @@ const RENAME_DEFAULTS = {
   season_folder: 'Season {season_num:02d}',
   episode_file: '{title}.{year}.{season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>',
 }
-// 预设(用户给定)与自定义输入
-const renamePresets = ref({})
-const renameCustom = ref({})
-for (const f of RENAME_FIELDS) {
-  renamePresets.value[f.key] = RENAME_DEFAULTS[f.key]
-  renameCustom.value[f.key] = RENAME_DEFAULTS[f.key]
+// 三种档位预设: 完整 / 常规 / 精简
+const RENAME_MODES = {
+  full: { label: '完整', templates: { ...RENAME_DEFAULTS } },
+  normal: {
+    label: '常规',
+    templates: {
+      movie_folder: '{title}-{year}',
+      movie_file: '{title}.{year}<.{resource_pix}><.{resource_type}><-{resource_team}>',
+      tv_folder: '{title}-{year}',
+      season_folder: 'Season {season_num:02d}',
+      episode_file: '{title}.{year}.{season_episode}<.{resource_pix}>',
+    },
+  },
+  minimal: {
+    label: '精简',
+    templates: {
+      movie_folder: '{title}-{year}',
+      movie_file: '{title}.{year}',
+      tv_folder: '{title}-{year}',
+      season_folder: '{season_episode}',
+      episode_file: '{title}.{season_episode}',
+    },
+  },
 }
-function applyRenamePreset(key) {
-  if (renamePresets.value[key]) rules.value[`rename_${key}`] = renamePresets.value[key]
+const renameMode = ref('full')
+// 实时示例预览结果: {key: rendered}
+const renamePreviews = ref({})
+
+function switchRenameMode(mode) {
+  renameMode.value = mode
+  const tpls = RENAME_MODES[mode].templates
+  for (const f of RENAME_FIELDS) {
+    rules.value[`rename_${f.key}`] = tpls[f.key]
+  }
+  refreshAllPreviews()
+}
+
+let renderTimer = null
+async function refreshPreview(key) {
+  const sample = RENAME_FIELDS.find((f) => f.key === key)?.sample
+  try {
+    const data = await organizeApi.render(rules.value[`rename_${key}`], sample)
+    renamePreviews.value[key] = data.rendered
+  } catch { renamePreviews.value[key] = '' }
+}
+function refreshAllPreviews() {
+  for (const f of RENAME_FIELDS) refreshPreview(f.key)
+}
+function onTemplateInput(key) {
+  clearTimeout(renderTimer)
+  renderTimer = setTimeout(() => refreshPreview(key), 300)  // 防抖
 }
 
 // ---- 规则配置(识别/AI/重命名/分类) ----
@@ -303,6 +345,10 @@ async function loadRules() {
       organize_dirs: r.organize_dirs || {},
       category_rules: r.category_rules || [],
       ai: { enabled: false, api_base: '', api_key: '', model: '', ...(r.ai || {}) },
+    }
+    // 兼容旧版 enabled 布尔 -> mode
+    if (!rules.value.ai.mode) {
+      rules.value.ai.mode = rules.value.ai.enabled ? 'assist' : 'off'
     }
     orgDirs.value = {
       pending: { ...(r.organize_dirs?.pending || {}) },
@@ -541,15 +587,13 @@ function closeQrcode() {
       <!-- 识别规则 -->
       <template v-else-if="accTab === 'identify'">
         <h2 style="margin-top: 0">识别规则</h2>
-        <div class="grid2">
-          <div>
-            <label>最小视频大小(MB)<span class="help" data-tip="低于此大小的视频文件不纳入整理识别; 填写 0 表示不限制">?</span></label>
-            <input type="number" min="0" v-model.number="rules.min_video_size_mb" />
-          </div>
-          <div>
-            <label>发布组扩展<span class="help" data-tip="追加识别发布组; 逗号分隔多个, 如 FRDS, NEWCINE">?</span></label>
-            <input v-model="releaseGroupsText" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
-          </div>
+        <div>
+          <label>最小视频大小(MB)<span class="help" data-tip="低于此大小的视频文件不纳入整理识别; 填写 0 表示不限制">?</span></label>
+          <input type="number" min="0" v-model.number="rules.min_video_size_mb" style="max-width: 320px" />
+        </div>
+        <div>
+          <label>发布组扩展<span class="help" data-tip="追加识别发布组; 逗号分隔多个, 如 FRDS, NEWCINE">?</span></label>
+          <input v-model="releaseGroupsText" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
         </div>
         <div>
           <label>整理黑名单<span class="help" data-tip="命中关键词的文件跳过整理; 一行是一条规则, 如 trailer / sample">?</span></label>
@@ -573,11 +617,16 @@ function closeQrcode() {
       <template v-else-if="accTab === 'ai'">
         <h2 style="margin-top: 0">AI 辅助识别</h2>
         <p class="muted" style="margin-top: 0">使用大模型辅助识别文件名(OpenAI 兼容接口)。</p>
-        <div class="row" style="margin-bottom: 10px">
-          <label style="display:flex; align-items:center; gap:6px">
-            <input type="checkbox" v-model="rules.ai.enabled" /> 启用 AI 辅助
-          </label>
+        <div class="row" style="margin-bottom: 12px">
+          <button class="ai-mode" :class="{ on: rules.ai.mode === 'off' }" @click="rules.ai.mode = 'off'">禁用</button>
+          <button class="ai-mode" :class="{ on: rules.ai.mode === 'assist' }" @click="rules.ai.mode = 'assist'">辅助识别</button>
+          <button class="ai-mode" :class="{ on: rules.ai.mode === 'force' }" @click="rules.ai.mode = 'force'">强制识别</button>
         </div>
+        <p class="muted" style="margin-top: -6px">
+          <template v-if="rules.ai.mode === 'off'">不使用 AI, 仅用内置识别规则。</template>
+          <template v-else-if="rules.ai.mode === 'assist'">内置识别结果不准确时, 使用 AI 辅助识别文件名。</template>
+          <template v-else>不使用内置识别规则, 直接由 AI 识别文件名或目录名。</template>
+        </p>
         <div class="grid2">
           <div>
             <label>API Base</label>
@@ -601,14 +650,22 @@ function closeQrcode() {
       <!-- 重命名规则(5 段模板) -->
       <template v-else-if="accTab === 'rename'">
         <h2 style="margin-top: 0">重命名规则</h2>
-        <div v-for="f in RENAME_FIELDS" :key="f.key" style="margin-bottom: 12px">
+        <div class="row" style="margin-bottom: 14px">
+          <span class="muted" style="margin-right: 6px">模板方式:</span>
+          <button v-for="(m, key) in RENAME_MODES" :key="key" class="ai-mode"
+                  :class="{ on: renameMode === key }" @click="switchRenameMode(key)">
+            {{ m.label }}
+          </button>
+          <span class="help" data-tip="完整: 全变量模板(推荐); 常规: 常用变量; 精简: 最简文件名; 切换后仍可手动修改任意模板">?</span>
+        </div>
+        <div v-for="f in RENAME_FIELDS" :key="f.key" style="margin-bottom: 14px">
           <label>{{ f.label }}</label>
-          <div class="row" style="gap: 8px">
-            <select style="max-width: 260px" v-model="renamePresets[f.key]" @change="applyRenamePreset(f.key)">
-              <option :value="RENAME_DEFAULTS[f.key]">默认模板</option>
-              <option value="">自定义</option>
-            </select>
-            <input v-model="rules[`rename_${f.key}`]" :placeholder="RENAME_DEFAULTS[f.key]" style="flex: 1" />
+          <div class="rename-default" @click="rules[`rename_${f.key}`] = RENAME_DEFAULTS[f.key]">
+            默认模板: <code>{{ RENAME_DEFAULTS[f.key] }}</code>
+          </div>
+          <input v-model="rules[`rename_${f.key}`]" @input="onTemplateInput(f.key)" />
+          <div class="rename-preview" v-if="renamePreviews[f.key]">
+            示例: <code>{{ renamePreviews[f.key] }}</code>
           </div>
         </div>
         <p class="muted">可用变量见"变量说明" tab; 语法见"语法说明" tab(<code>&lt;...&gt;</code> 块 / <code>[[ ]]</code> 转义)。</p>

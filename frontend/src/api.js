@@ -97,6 +97,7 @@ export const organizeApi = {
   plan: (path) => http.post('/api/organize/plan', { path }),
   execute: (planJson) => http.post('/api/organize/execute', { plan_json: planJson }),
   run: (accountId) => http.post('/api/organize/run', { account_id: accountId }),
+  render: (template, sample) => http.post('/api/organize/render', { template, sample }),
 }
 
 export const automationApi = {

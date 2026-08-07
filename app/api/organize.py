@@ -20,6 +20,34 @@ class RunIn(BaseModel):
     account_id: int
 
 
+class RenderIn(BaseModel):
+    template: str
+    sample: str = "movie_file"  # movie_folder|movie_file|tv_folder|season_folder|episode_file
+
+
+# 示例文件名(供模板实时预览)
+_SAMPLE_NAMES = {
+    "movie_folder": "蜘蛛侠.2016.2160p.BluRay.x265.10bit.HDR.TrueHD.7.1-TnT.mkv",
+    "movie_file": "蜘蛛侠.2016.2160p.BluRay.x265.10bit.HDR.TrueHD.7.1-TnT.mkv",
+    "tv_folder": "权力的游戏.2011.S01E01.1080p.WEB-DL.x264-TnT.mkv",
+    "season_folder": "权力的游戏.2011.S01E01.1080p.WEB-DL.x264-TnT.mkv",
+    "episode_file": "权力的游戏.2011.S01E01.1080p.WEB-DL.x264-TnT.mkv",
+}
+
+
+@router.post("/render")
+def render_template_preview(body: RenderIn, _: str = Depends(require_user)):
+    """用示例数据渲染命名模板(实时预览)。"""
+    from ..services.organize import build_context, parse_filename, render_template
+    name = _SAMPLE_NAMES.get(body.sample, _SAMPLE_NAMES["movie_file"])
+    parsed = parse_filename(name)
+    if parsed is None:
+        raise HTTPException(status_code=400, detail="示例解析失败")
+    ctx = build_context(parsed, name)
+    ctx["tmdb_id"] = "1726"
+    return {"rendered": render_template(body.template, ctx), "sample": name}
+
+
 @router.post("/run")
 def run_organize(body: RunIn, _: str = Depends(require_user)):
     """三目录整理: 扫描账户的等待整理目录 -> 识别 -> 分类移动。

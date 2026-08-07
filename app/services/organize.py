@@ -27,7 +27,11 @@ EPISODE_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 CN_EPISODE_RE = re.compile(r"第(\d{1,2})季第(\d{1,3})集")
 QUALITY_RE = re.compile(
     r"(?<=[.\s_])(2160p|1080p|720p|480p|4k|WEB-?DL|BluRay|REMUX|HDTV|UHD|"
-    r"HDR|DV|HEVC|x265|x264|10bit)(?=[.\s_]|$)", re.IGNORECASE)
+    r"HDR|DV|HEVC|x265|x264|10bit|"
+    r"TrueHD(?:\.\d(?:\.\d)?)?|DTS(?:\.\d(?:\.\d)?)?|EAC3|AC3|FLAC|AAC|Atmos)"
+    r"(?=[.\s_\d-]|$)", re.IGNORECASE)
+
+AUDIO_WORDS = {"truehd", "dts", "eac3", "ac3", "flac", "aac", "atmos"}
 TEAM_RE = re.compile(r"[-\s]\[?([A-Za-z0-9]{2,12})\]?$")
 
 VAR_RE = re.compile(r"\{([^{}]+)\}")
@@ -70,18 +74,20 @@ def parse_filename(name: str) -> ParsedMedia | None:
     if m:
         year = int(m.group(1))
         stem = YEAR_RE.sub(" ", stem)
-    # 资源属性(先清理质量词, 避免误伤发布组提取)
-    pix = quality = effect = encode = ""
+    # 资源属性(先清理质量词, 避免误伤发布组提取; 保留原文件大小写)
+    pix = quality = effect = encode = audio = ""
     for q in re.findall(QUALITY_RE, name):
         ql = q.lower()
         if ql in ("2160p", "1080p", "720p", "480p", "4k"):
-            pix = ql.upper() if ql != "4k" else "2160p"
+            pix = "2160p" if ql == "4k" else q
         elif ql in ("bluray", "web-dl", "webdl", "hdtv", "remux", "uhd"):
-            quality = ql.upper()
-        elif ql in ("hdr", "dv", "10bit"):
-            effect = f"{effect}.{ql.upper()}".strip(".") if effect else ql.upper()
+            quality = q.upper() if ql == "webdl" else q
+        elif ql in ("hdr", "dv"):
+            effect = f"{effect}.{q}".strip(".") if effect else q
+        elif ql.split(".")[0] in AUDIO_WORDS:
+            audio = q
         else:
-            encode = ql.upper()
+            encode = f"{encode}.{q}".strip(".") if encode else q
     stem = QUALITY_RE.sub(" ", stem)
     # 发布组(文件名尾部)
     team = ""
@@ -96,7 +102,7 @@ def parse_filename(name: str) -> ParsedMedia | None:
         return None
     return ParsedMedia(title=title, year=year, season=season, episode=episode,
                        pix=pix, quality=quality, effect=effect, encode=encode,
-                       team=team)
+                       audio=audio, team=team)
 
 
 # ---------- 模板渲染 ----------
