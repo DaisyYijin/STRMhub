@@ -409,8 +409,19 @@ function loadCategorySample() {
   categoryYaml.value = CATEGORY_YAML_DEFAULT
 }
 
-function resetCategory() {
-  if (!confirm('确定重置为默认分类策略? 当前内容将被覆盖')) return
+// Popconfirm 气泡确认(替代原生 confirm)
+const popConfirm = ref(null)  // { title, ok }
+
+function askConfirm(title, ok) {
+  popConfirm.value = { title, ok }
+}
+
+function doPopOk() {
+  if (popConfirm.value?.ok) popConfirm.value.ok()
+  popConfirm.value = null
+}
+
+function doReset() {
   categoryYaml.value = CATEGORY_YAML_DEFAULT
   tabMsg.value.category = { type: 'ok', text: '已重置为默认策略(记得保存)' }
 }
@@ -780,7 +791,24 @@ function closeQrcode() {
         <p class="muted" style="margin-top: 6px">字段: <code>cid</code> 115 目标目录 · <code>cid123</code> 123 目标目录 · <code>genre_ids</code> 类型 · <code>origin_country</code>/<code>production_countries</code> 地区 · <code>original_language</code> 语种 · <code>release_year</code> 年份(支持 YYYY-YYYY); 多值逗号分隔, <code>!值</code> 排除; 无条件的分类为兜底项。</p>
         <div class="row" style="margin-top: 12px">
           <button class="primary" :disabled="rulesBusy" @click="saveRules('category', ['category_yaml'])">{{ rulesBusy ? '保存中...' : '保存策略' }}</button>
-          <button @click="resetCategory">重置策略</button>
+          <span class="pop-wrap">
+            <button @click="askConfirm('确认要重置所有配置吗？', doReset)">重置策略</button>
+            <div v-if="popConfirm" class="pop-mask" @click="popConfirm = null"></div>
+            <div v-if="popConfirm" class="pop-confirm">
+              <div class="pop-body">
+                <span class="pop-icon">
+                  <svg viewBox="0 0 48 48" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="4" stroke-linecap="butt" stroke-linejoin="miter">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M24 44c11.046 0 20-8.954 20-20S35.046 4 24 4 4 12.954 4 24s8.954 20 20 20Zm-2-11a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2Zm4-18a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V15Z" fill="currentColor" stroke="none"></path>
+                  </svg>
+                </span>
+                <span>{{ popConfirm.title }}</span>
+              </div>
+              <div class="pop-foot">
+                <button class="pop-btn" @click="popConfirm = null">取消</button>
+                <button class="pop-btn pop-btn-primary" @click="doPopOk">确定</button>
+              </div>
+            </div>
+          </span>
           <button @click="loadCategorySample">加载示例</button>
           <div v-if="tabMsg.category" class="msg" :class="tabMsg.category.type">{{ tabMsg.category.text }}</div>
         </div>

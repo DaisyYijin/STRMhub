@@ -259,3 +259,28 @@ textarea.rules-input, .yaml-editor {
   margin: 4px 0; font-family: ui-monospace, Consolas, monospace;
   font-size: 12.5px; color: var(--text); line-height: 1.7;
 }
+
+/* Popconfirm 气泡确认 */
+.pop-wrap { position: relative; display: inline-block; }
+.pop-mask { position: fixed; inset: 0; z-index: 99; background: transparent; }
+.pop-confirm {
+  position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 100;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, .18); padding: 10px 12px;
+  min-width: 220px; max-width: 300px; font-size: 13px;
+}
+.pop-confirm::after {
+  content: ""; position: absolute; top: 100%; left: 28px;
+  border: 6px solid transparent; border-top-color: var(--card);
+  transform: translateY(-1px);
+}
+.pop-body { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
+.pop-icon { color: var(--warn); flex-shrink: 0; margin-top: 1px; }
+.pop-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.pop-btn {
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 12.5px;
+}
+.pop-btn:hover { border-color: var(--accent); }
+.pop-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pop-btn-primary:hover { opacity: .9; }
