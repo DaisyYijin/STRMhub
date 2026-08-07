@@ -429,6 +429,7 @@ function closeQrcode() {
   if (qrTimer.value) { clearInterval(qrTimer.value); qrTimer.value = null }
   qrShow.value = false
 }
+
 </script>
 
 <template>

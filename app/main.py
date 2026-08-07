@@ -11,25 +11,27 @@ from pydantic import BaseModel
 
 from . import config
 from . import web
-from .api import accounts, auth, automation, organize, playback, qrcode, scrape, tasks
+from .api import (accounts, auth, automation, logs, organize, playback,
+                  qrcode, scrape, tasks)
 from .db.session import init_db
+
+APP_VERSION = "0.2.0"  # 发布版本(镜像/健康检查用, 与前端联动)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     config.ensure_dirs()
     init_db()
+    from .services.logbuf import install as install_logbuf
+    install_logbuf()  # 日志环形缓冲(日志面板)
     yield
 
 
-app = FastAPI(title="STRMhub", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="STRMhub", version=APP_VERSION, lifespan=lifespan)
 
 
 class LoginIn(BaseModel):
     password: str
-
-
-APP_VERSION = "0.2.0"  # 发布版本(镜像/健康检查用, 与前端联动)
 
 
 @app.get("/api/health")
@@ -55,6 +57,7 @@ app.include_router(scrape.router)
 app.include_router(organize.router)
 app.include_router(automation.router)
 app.include_router(qrcode.router)
+app.include_router(logs.router)
 
 # 前端静态托管(最后注册, 不影响 /api)
 app.include_router(web.router)

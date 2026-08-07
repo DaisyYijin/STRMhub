@@ -64,10 +64,11 @@ class P115Driver:
             if not isinstance(rows, list):
                 rows = []
             if os.environ.get("STRMHUB_DEBUG") and not offset:
-                import sys
-                print(f"[p115] fs_files cid={parent_id} -> "
-                      f"rows={len(rows)} keys={[sorted(r.keys()) for r in rows[:2]]}",
-                      file=sys.stderr)
+                import logging
+                logging.getLogger("strmhub.p115").info(
+                    "fs_files cid=%s -> rows=%d keys=%s",
+                    parent_id, len(rows),
+                    [sorted(r.keys()) for r in rows[:2]])
             for row in rows:
                 if not isinstance(row, dict):
                     continue

@@ -1,11 +1,16 @@
 """整理 API: 计划-预览-执行 + 三目录整理(账户)。"""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..services.organize import OrganizeService, organize
 from .auth import require_user
+
+_log = logging.getLogger("strmhub.api")
+
 
 router = APIRouter(prefix="/api/organize", tags=["organize"])
 _organize = OrganizeService()
@@ -27,7 +32,7 @@ def run_organize(body: RunIn, _: str = Depends(require_user)):
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         import traceback
-        traceback.print_exc()
+        _log.exception("请求处理异常")
         raise HTTPException(status_code=500, detail=f"整理失败: {exc}")
 
 

@@ -1,6 +1,8 @@
 """账户 API: CRUD + 驱动列表 + 目录管理(每网盘独立目录)。"""
 from __future__ import annotations
 
+import logging
+
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +11,9 @@ from pydantic import BaseModel
 from ..drivers import registry
 from ..services.account import AccountService
 from .auth import require_user
+
+_log = logging.getLogger("strmhub.api")
+
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 _accounts = AccountService()
@@ -106,7 +111,7 @@ def browse_account_dirs(account_id: int, parent: str = "",
         items = driver.list_files(parent or "0")
     except Exception as exc:
         import traceback
-        traceback.print_exc()
+        _log.exception("请求处理异常")
         raise HTTPException(status_code=400, detail=f"浏览目录失败: {exc}")
     return {"parent": parent or "0",
             "dirs": [{"id": it.id, "name": it.name}

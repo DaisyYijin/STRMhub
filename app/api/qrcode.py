@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +14,9 @@ from pydantic import BaseModel
 from ..services.account import AccountService
 from ..services.qrcode import qrcode_login
 from .auth import require_user
+
+_log = logging.getLogger("strmhub.api")
+
 
 router = APIRouter(prefix="/api/accounts/qrcode", tags=["qrcode"])
 _accounts = AccountService()
@@ -56,8 +61,7 @@ def start_qrcode(body: StartIn, _: str = Depends(require_user)):
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # 未知异常: 返回具体信息便于排查
-        import traceback
-        traceback.print_exc()
+        _log.exception("请求处理异常")
         raise HTTPException(status_code=500, detail=f"二维码生成失败: {exc}")
 
 
@@ -70,16 +74,14 @@ def poll_qrcode(body: PollIn, _: str = Depends(require_user)):
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
+        _log.exception("请求处理异常")
         raise HTTPException(status_code=500, detail=f"轮询失败: {exc}")
     if result["status"] == "confirmed":
         try:
             result["account"] = _auto_upsert_account(
                 body.driver_type, result["cookies"], body.app)
         except Exception as exc:
-            import traceback
-            traceback.print_exc()
+            _log.exception("请求处理异常")
             result["status"] = "error"
             result["error"] = f"自动创建账户失败: {exc}"
     return result

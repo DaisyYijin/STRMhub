@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { accountApi, authApi, isAuthed, qrcodeApi, setToken } from './api'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { accountApi, authApi, http, isAuthed, qrcodeApi, setToken } from './api'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Accounts from './views/Accounts.vue'
@@ -80,6 +80,55 @@ function switchView(id) {
   localStorage.setItem('strmhub_view', id)
 }
 
+// ---- 实时日志面板(右上角) ----
+const logShow = ref(false)
+const logLines = ref([])
+const logPaused = ref(false)
+const logAutoScroll = ref(true)
+const logBox = ref(null)
+let logEs = null
+
+function logLevelClass(level) {
+  if (level === 'ERROR' || level === 'CRITICAL') return 'log-err'
+  if (level === 'WARNING') return 'log-warn'
+  return ''
+}
+
+async function logOpen() {
+  logShow.value = true
+  try {
+    const data = await http.get('/api/logs?tail=200')
+    logLines.value = data.lines || []
+  } catch { /* 401 等忽略 */ }
+  const token = localStorage.getItem('strmhub_token') || ''
+  if (logEs) logEs.close()
+  logEs = new EventSource(`/api/logs/stream?token=${encodeURIComponent(token)}`)
+  logEs.onmessage = (e) => {
+    if (logPaused.value) return
+    try {
+      const ln = JSON.parse(e.data)
+      logLines.value.push(ln)
+      if (logLines.value.length > 1000) {
+        logLines.value.splice(0, logLines.value.length - 1000)
+      }
+      if (logAutoScroll.value) {
+        nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
+      }
+    } catch { /* 心跳忽略 */ }
+  }
+}
+
+function logClose() {
+  logShow.value = false
+  if (logEs) { logEs.close(); logEs = null }
+}
+
+function logClear() {
+  logLines.value = []
+}
+
+onUnmounted(() => { if (logEs) logEs.close() })
+
 function toggleNetpan() {
   netpanOpen.value = !netpanOpen.value
   localStorage.setItem('strmhub_netpan_open', netpanOpen.value ? '1' : '0')
@@ -136,6 +185,30 @@ onMounted(async () => {
     <main class="main">
       <component :is="current.comp" :driver-type="current.driver || ''" />
     </main>
+
+    <!-- 右上角: 实时日志 -->
+    <button class="log-fab" title="实时日志" @click="logShow ? logClose() : logOpen()">📄</button>
+    <div v-if="logShow" class="log-panel">
+      <div class="log-head">
+        <span class="log-title">实时日志</span>
+        <label style="display:flex; align-items:center; gap:4px; font-size:12px">
+          <input type="checkbox" v-model="logPaused" /> 暂停
+        </label>
+        <label style="display:flex; align-items:center; gap:4px; font-size:12px">
+          <input type="checkbox" v-model="logAutoScroll" /> 自动滚动
+        </label>
+        <button class="log-btn" @click="logClear">清空</button>
+        <button class="log-btn" @click="logClose">关闭</button>
+      </div>
+      <div ref="logBox" class="log-body">
+        <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
+          <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>
+          <span class="log-lv">[{{ ln.level }}]</span>
+          <span class="log-msg">{{ ln.msg }}</span>
+        </div>
+        <div v-if="!logLines.length" class="muted" style="padding: 10px">暂无日志...</div>
+      </div>
+    </div>
   </div>
 </template>
 
