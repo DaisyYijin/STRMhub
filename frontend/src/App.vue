@@ -115,16 +115,21 @@ function translateMsg(msg) {
   let out = msg || ''
   for (const [re, rep] of LOG_TRANSLATIONS) out = out.replace(re, rep)
   // 访问日志: '1.2.3.4:5678 - "GET /api/x HTTP/1.1" 200'
-  const m = out.match(/^(\S+:\d+) - "(\w+) (\S+) HTTP\/1\.1" (\d+)/)
+  // (消息开头带时间戳, 不能锚定 ^)
+  const m = out.match(/(\d+\.\d+\.\d+\.\d+:\d+) - "(\w+) (\S+) HTTP\/1\.1" (\d+)/)
   if (m) {
     let path = m[3]
     if (path.startsWith('/api/logs/stream')) path = '/api/logs/stream (实时日志流)'
-    out = `${m[1]} - 请求: ${m[2]} ${path} → ${m[4]}`
+    out = out.replace(m[0], `${m[1]} - 请求: ${m[2]} ${path} → ${m[4]}`)
   }
   // 隐藏 URL 中的登录令牌
   out = out.replace(/(token=)[A-Za-z0-9_.\-]{20,}/g, '$1[已隐藏]')
   return out
 }
+
+// 日志级别汉化
+const LEVEL_LABELS = { INFO: '信息', WARNING: '警告', ERROR: '错误', CRITICAL: '严重', DEBUG: '调试' }
+const levelLabel = (lv) => (logLang.value === 'cn' ? (LEVEL_LABELS[lv] || lv) : lv)
 
 async function logOpen() {
   logShow.value = true
@@ -246,7 +251,7 @@ onMounted(async () => {
       <div ref="logBox" class="log-body">
         <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
           <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>
-          <span class="log-lv">[{{ ln.level }}]</span>
+          <span class="log-lv">[{{ levelLabel(ln.level) }}]</span>
           <span class="log-msg">{{ translateMsg(ln.msg) }}</span>
         </div>
         <div v-if="!logLines.length" class="muted" style="padding: 10px">暂无日志...</div>
