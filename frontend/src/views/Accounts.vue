@@ -241,7 +241,7 @@ async function loadPickerDirs() {
   pickerErr.value = ''
   picker.value.diagnose = null
   try {
-    const data = await accountApi.browse(acct.value.id, picker.value.parent)
+    const data = await accountApi.browse(acct.id, picker.value.parent)
     picker.value.dirs = data.dirs || []
     picker.value.diagnose = data.diagnose || null
   } catch (e) {
@@ -272,7 +272,7 @@ function closePicker() { picker.value = null }
 async function saveOrgDirs() {
   orgMsg.value = ''
   try {
-    await accountApi.saveRules(acct.value.id, rules.value)
+    await accountApi.saveRules(acct.id, rules.value)
     orgMsg.value = { type: 'ok', text: '目录与规则已保存' }
   } catch (e) {
     orgMsg.value = { type: 'err', text: e.message }
@@ -281,7 +281,7 @@ async function saveOrgDirs() {
 
 async function startOrganize() {
   orgMsg.value = ''
-  if (!acct.value.id) {
+  if (!acct.id) {
     orgMsg.value = { type: 'err', text: '请先在顶部创建/登录账户' }
     return
   }
@@ -293,7 +293,7 @@ async function startOrganize() {
   orgBusy.value = true
   orgResult.value = null
   try {
-    orgResult.value = await organizeApi.run(acct.value.id)
+    orgResult.value = await organizeApi.run(acct.id)
   } catch (e) {
     orgMsg.value = { type: 'err', text: e.message }
   } finally {
@@ -747,9 +747,9 @@ function closeQrcode() {
             <span class="help" :data-tip="f.hint">?</span>
           </div>
           <input class="org-dir-value" :class="{ 'muted': !orgDirs[f.key]?.id }"
-                 readonly :value="orgDirs[f.key]?.name || (acct.value.id ? '点击选择目录...' : '请先创建/登录账户')"
-                 :disabled="!acct.value.id"
-                 @click="acct.value.id && openPicker(f.key)" />
+                 readonly :value="orgDirs[f.key]?.name || (acct.id ? '点击选择目录...' : '请先创建/登录账户')"
+                 :disabled="!acct.id"
+                 @click="acct.id && openPicker(f.key)" />
           <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
         </div>
         <div class="row" style="margin-top: 12px">
