@@ -95,6 +95,37 @@ function logLevelClass(level) {
   return ''
 }
 
+// ---- 日志汉化(仅前端展示层, 后端日志保持英文原文) ----
+const logLang = ref('cn')  // cn | raw
+
+const LOG_TRANSLATIONS = [
+  [/Application startup complete\./, '应用启动完成'],
+  [/Uvicorn running on (http:\/\/[^ )]+)/, '服务已启动并监听 $1'],
+  [/Waiting for application startup\./, '等待应用启动...'],
+  [/Shutting down/, '正在关闭服务'],
+  [/Invalid HTTP request received\./, '收到无效 HTTP 请求(通常是端口扫描探测, 可忽略)'],
+  [/Connection lost/, '客户端连接断开'],
+  [/Started server process \[\d+\]/, '服务进程已启动'],
+  [/Finished server process \[\d+\]/, '服务进程已结束'],
+  [/Press CTRL\+C to quit/, '按 Ctrl+C 退出'],
+]
+
+function translateMsg(msg) {
+  if (logLang.value !== 'cn') return msg
+  let out = msg || ''
+  for (const [re, rep] of LOG_TRANSLATIONS) out = out.replace(re, rep)
+  // 访问日志: '1.2.3.4:5678 - "GET /api/x HTTP/1.1" 200'
+  const m = out.match(/^(\S+:\d+) - "(\w+) (\S+) HTTP\/1\.1" (\d+)/)
+  if (m) {
+    let path = m[3]
+    if (path.startsWith('/api/logs/stream')) path = '/api/logs/stream (实时日志流)'
+    out = `${m[1]} - 请求: ${m[2]} ${path} → ${m[4]}`
+  }
+  // 隐藏 URL 中的登录令牌
+  out = out.replace(/(token=)[A-Za-z0-9_.\-]{20,}/g, '$1[已隐藏]')
+  return out
+}
+
 async function logOpen() {
   logShow.value = true
   logError.value = ''
@@ -199,6 +230,9 @@ onMounted(async () => {
     <div v-if="logShow" class="log-panel">
       <div class="log-head">
         <span class="log-title">实时日志</span>
+        <button class="log-toggle" :class="{ on: logLang === 'cn' }" @click="logLang = logLang === 'cn' ? 'raw' : 'cn'">
+          {{ logLang === 'cn' ? '汉化' : '原文' }}
+        </button>
         <button class="log-toggle" :class="{ on: !logPaused }" @click="logPaused = !logPaused">
           {{ logPaused ? '已暂停' : '实时' }}
         </button>
@@ -213,7 +247,7 @@ onMounted(async () => {
         <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
           <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>
           <span class="log-lv">[{{ ln.level }}]</span>
-          <span class="log-msg">{{ ln.msg }}</span>
+          <span class="log-msg">{{ translateMsg(ln.msg) }}</span>
         </div>
         <div v-if="!logLines.length" class="muted" style="padding: 10px">暂无日志...</div>
       </div>
