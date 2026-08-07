@@ -358,8 +358,8 @@ function closeQrcode() {
       <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
     </div>
 
-    <!-- 已登录: 账户管理卡(六 tab) -->
-    <div v-else class="card acc-card">
+    <!-- 已登录: 账户管理卡(八 tab) -->
+    <div v-else class="card acc-card" :class="{ narrow: accTab === 'info' }">
       <div class="acc-tabs">
         <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
                 @click="accTab = t.id">{{ t.label }}</button>
