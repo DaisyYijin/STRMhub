@@ -244,8 +244,18 @@ textarea.rules-input, .yaml-editor {
   font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
   line-height: 1.6; overflow: hidden;
 }
-.yaml-editor { max-width: none; min-height: 320px; }
+.yaml-editor {
+  max-width: none; height: 60vh; min-height: 320px;
+  overflow-y: auto; resize: vertical; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.6;
+}
 .full-preview {
   border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
   background: var(--code-bg);
+}
+
+/* 完整示例目录树 */
+.tree-example {
+  margin: 4px 0; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px; color: var(--text); line-height: 1.7;
 }

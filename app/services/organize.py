@@ -207,6 +207,13 @@ def parse_category_yaml(text: str) -> dict:
             raise ValueError(f"YAML 的 {kind} 必须是分类映射")
         items = {}
         for name, rule in section.items():
+            if rule is None:  # 兜底分类(无任何条件, 如 外语电影:/未分类:)
+                items[str(name)] = {
+                    "cid": "", "cid123": "", "genre_ids": "",
+                    "origin_country": "", "original_language": "",
+                    "production_countries": "", "release_year": "",
+                }
+                continue
             if not isinstance(rule, dict):
                 raise ValueError(f"分类 [{kind}] {name} 的配置必须是映射")
             items[str(name)] = {
@@ -214,34 +221,94 @@ def parse_category_yaml(text: str) -> dict:
                 "cid123": str(rule.get("cid123") or ""),
                 "genre_ids": str(rule.get("genre_ids") or ""),
                 "origin_country": str(rule.get("origin_country") or ""),
+                "original_language": str(rule.get("original_language") or ""),
+                "production_countries": str(rule.get("production_countries") or ""),
+                "release_year": str(rule.get("release_year") or ""),
             }
         out[kind] = items
     return out
 
 
 def match_category(categories: dict, kind: str, meta: dict | None) -> str:
-    """按 TMDB 元数据匹配分类名; 无元数据/未命中时返回"其他"类。
+    """按 TMDB 元数据匹配分类名; 无元数据/未命中时返回兜底类。
 
-    meta: {"genre_ids": [16], "origin_country": ["CN"]}(TMDB 刮削后传入)
-    规则按 YAML 顺序优先; genre_ids/origin_country 均为空的条件视为兜底类。
+    支持的规则字段(MoviePilot 风格):
+      genre_ids / origin_country / production_countries / original_language
+      release_year(YYYY 或 YYYY-YYYY 范围)
+      多值逗号分隔; 前缀 ! 表示排除; 无任何条件的分类为兜底项。
+    meta: {"genre_ids": [16], "origin_country": ["CN"],
+           "production_countries": ["CN"], "original_language": "zh",
+           "release_year": 2016}
     """
     items = (categories or {}).get(kind) or {}
     if not items:
         return ""
-    meta_genres = {str(g) for g in (meta or {}).get("genre_ids") or []}
-    meta_countries = {str(c).upper() for c in (meta or {}).get("origin_country") or []}
+    meta = meta or {}
+    m_genres = {str(g) for g in meta.get("genre_ids") or []}
+    m_countries = {str(c).upper() for c in meta.get("origin_country") or []}
+    m_prod = {str(c).upper() for c in meta.get("production_countries") or []}
+    m_lang = str(meta.get("original_language") or "").lower()
+    m_year = meta.get("release_year")
+
+    def _match_list(cond: str, mvals: set) -> bool:
+        values = {v.strip() for v in cond.split(",") if v.strip()}
+        exclude = {v[1:] for v in values if v.startswith("!")}
+        include = {v for v in values if not v.startswith("!")}
+        if exclude and mvals & exclude:
+            return False
+        if include and not (mvals & include):
+            return False
+        return True
+
+    def _match_year(cond: str, year) -> bool:
+        if year is None:
+            return False
+        try:
+            y = int(year)
+        except (TypeError, ValueError):
+            return False
+        cond = cond.strip()
+        if cond.startswith("!"):
+            return y != int(cond[1:])
+        if "-" in cond:
+            lo, _, hi = cond.partition("-")
+            return int(lo) <= y <= int(hi)
+        return y == int(cond)
+
     fallback = ""
     for name, rule in items.items():
-        genres = {g.strip() for g in rule.get("genre_ids", "").split(",") if g.strip()}
-        countries = {c.strip().upper() for c in rule.get("origin_country", "").split(",") if c.strip()}
-        if not genres and not countries:
-            fallback = name  # 兜底类(如 其他电影)
+        ok = True
+        has_cond = False
+        conds = [
+            ("genre_ids", m_genres), ("origin_country", m_countries),
+            ("production_countries", m_prod),
+        ]
+        for field, mvals in conds:
+            cond = rule.get(field)
+            if not cond:
+                continue
+            has_cond = True
+            if not _match_list(cond, mvals):
+                ok = False
+                break
+        if ok and rule.get("original_language"):
+            has_cond = True
+            lang_cond = rule["original_language"]
+            if lang_cond.startswith("!"):
+                if m_lang == lang_cond[1:].strip().lower():
+                    ok = False
+            elif m_lang not in {v.strip().lower() for v in
+                                lang_cond.split(",") if v.strip()}:
+                ok = False
+        if ok and rule.get("release_year"):
+            has_cond = True
+            if not _match_year(rule["release_year"], m_year):
+                ok = False
+        if not has_cond:
+            fallback = name  # 兜底类(如 外语电影/未分类)
             continue
-        if genres and not (genres & meta_genres):
-            continue
-        if countries and not (countries & meta_countries):
-            continue
-        return name
+        if ok:
+            return name
     return fallback
 
 

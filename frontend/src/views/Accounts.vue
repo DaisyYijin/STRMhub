@@ -286,7 +286,7 @@ function switchRenameMode(mode) {
   refreshAllPreviews()
 }
 
-const fullPreview = ref({ movie: '', tv: '' })
+const fullPreview = ref({ movieFolder: '', movieFile: '', tvFolder: '', seasonFolder: '', episodeFile: '' })
 async function refreshFullPreview() {
   try {
     const [mf, mfl, tf, sf, efl] = await Promise.all([
@@ -297,8 +297,8 @@ async function refreshFullPreview() {
       organizeApi.render(rules.value.rename_episode_file, 'episode_file'),
     ])
     fullPreview.value = {
-      movie: `${mf.rendered}/${mfl.rendered}`,
-      tv: `${tf.rendered}/${sf.rendered}/${efl.rendered}`,
+      movieFolder: mf.rendered, movieFile: mfl.rendered,
+      tvFolder: tf.rendered, seasonFolder: sf.rendered, episodeFile: efl.rendered,
     }
   } catch { /* 忽略 */ }
 }
@@ -370,26 +370,49 @@ function autoGrow(e) {
 
 // ---- 二级分类策略 YAML ----
 const categoryYaml = ref('')
-const CATEGORY_YAML_SAMPLE = `# 示例: movie/tv 两个区块, 分类名->目标目录 cid(优先级从上到下)
+const CATEGORY_YAML_DEFAULT = `# 配置说明:
+# 1. movie/tv 为固定一级分类; 二级名称即目录名, 按顺序匹配, 匹配后建立二级目录
+# 2. 条件: original_language 语种 / origin_country|production_countries 地区 /
+#    genre_ids 内容类型 / release_year 年份(YYYY 或 YYYY-YYYY) / TMDB 其它一级字段
+# 3. 多项条件需同时满足; 一个条件多个值用逗号分隔; 前缀 ! 表示排除该值
+# 4. 无任何条件的分类为兜底项(如 外语电影/未分类)
+
 movie:
-  大陆动画:
-    cid: "3427411034934082997"
-    cid123: "123456"
-    genre_ids: "16"
-    origin_country: "CN"
-  其他电影:
-    cid: "3427697114140900746"
-    cid123: "123456"
+  动画电影:
+    genre_ids: '16'
+  华语电影:
+    original_language: 'zh,cn,bo,za'
+  外语电影:
+
 tv:
-  大陆动漫:
-    cid: "3427697285520162579"
-    genre_ids: "16"
-    origin_country: "CN"
-  其他剧集:
-    cid: "3427699023052537554"
+  国漫:
+    genre_ids: '16'
+    origin_country: 'CN,TW,HK'
+  日番:
+    genre_ids: '16'
+    origin_country: 'JP'
+  纪录片:
+    genre_ids: '99'
+  儿童:
+    genre_ids: '10762'
+  综艺:
+    genre_ids: '10764,10767'
+  国产剧:
+    origin_country: 'CN,TW,HK'
+  欧美剧:
+    origin_country: 'US,FR,GB,DE,ES,IT,NL,PT,RU,UK'
+  日韩剧:
+    origin_country: 'JP,KP,KR,TH,IN,SG'
+  未分类:
 `
 function loadCategorySample() {
-  categoryYaml.value = CATEGORY_YAML_SAMPLE
+  categoryYaml.value = CATEGORY_YAML_DEFAULT
+}
+
+function resetCategory() {
+  if (!confirm('确定重置为默认分类策略? 当前内容将被覆盖')) return
+  categoryYaml.value = CATEGORY_YAML_DEFAULT
+  tabMsg.value.category = { type: 'ok', text: '已重置为默认策略(记得保存)' }
 }
 
 const strList = (v) => (v || []).join('\n')
@@ -733,10 +756,13 @@ function closeQrcode() {
           </div>
         </div>
         <div class="full-preview">
-          <h3 style="font-size: 14px; margin: 10px 0 6px">🎬 电影完整示例</h3>
-          <p class="doc-example"><code>{{ fullPreview.movie || '...' }}</code></p>
-          <h3 style="font-size: 14px; margin: 10px 0 6px">📺 剧集完整示例</h3>
-          <p class="doc-example"><code>{{ fullPreview.tv || '...' }}</code></p>
+          <h3 style="font-size: 14px; margin: 10px 0 6px">🎬 电影完整示例(目录结构)</h3>
+          <pre class="tree-example">📁 {{ fullPreview.movieFolder || '...' }}/
+   └ {{ fullPreview.movieFile || '...' }}</pre>
+          <h3 style="font-size: 14px; margin: 10px 0 6px">📺 剧集完整示例(目录结构)</h3>
+          <pre class="tree-example">📁 {{ fullPreview.tvFolder || '...' }}/
+   📁 {{ fullPreview.seasonFolder || '...' }}/
+      └ {{ fullPreview.episodeFile || '...' }}</pre>
           <p class="muted" style="margin-top: 8px">变量与语法详见"变量说明"/"语法说明" tab(<code>&lt;...&gt;</code> 块 / <code>[[ ]]</code> 转义)。</p>
         </div>
         <div class="row" style="margin-top: 12px">
@@ -749,14 +775,15 @@ function closeQrcode() {
       <template v-else-if="accTab === 'category'">
         <h2 style="margin-top: 0">二级分类策略</h2>
         <p class="muted" style="margin-top: 0">YAML 方式配置(优先级从上到下): 分类名 → 目标目录 cid(115 用 cid, 123 用 cid123); 整理时按 TMDB 类型/地区匹配分类并<strong>自动创建目录结构</strong>。</p>
-        <div class="row" style="margin-bottom: 8px">
-          <button class="primary" @click="loadCategorySample">加载示例</button>
+        <textarea v-model="categoryYaml" rows="18" class="yaml-editor"
+                  placeholder="movie:&#10;  动画电影:&#10;    genre_ids: '16'&#10;  ...&#10;tv:&#10;  ..." />
+        <p class="muted" style="margin-top: 6px">字段: <code>cid</code> 115 目标目录 · <code>cid123</code> 123 目标目录 · <code>genre_ids</code> 类型 · <code>origin_country</code>/<code>production_countries</code> 地区 · <code>original_language</code> 语种 · <code>release_year</code> 年份(支持 YYYY-YYYY); 多值逗号分隔, <code>!值</code> 排除; 无条件的分类为兜底项。</p>
+        <div class="row" style="margin-top: 12px">
           <button class="primary" :disabled="rulesBusy" @click="saveRules('category', ['category_yaml'])">{{ rulesBusy ? '保存中...' : '保存策略' }}</button>
+          <button @click="resetCategory">重置策略</button>
+          <button @click="loadCategorySample">加载示例</button>
           <div v-if="tabMsg.category" class="msg" :class="tabMsg.category.type">{{ tabMsg.category.text }}</div>
         </div>
-        <textarea v-model="categoryYaml" @input="autoGrow" rows="16" class="yaml-editor"
-                  placeholder="movie:&#10;  其他电影:&#10;    cid: &quot;...&quot;&#10;    cid123: &quot;...&quot;&#10;    genre_ids: &quot;16&quot;&#10;    origin_country: &quot;CN&quot;&#10;tv:&#10;  其他剧集:&#10;    cid: &quot;...&quot;" />
-        <p class="muted" style="margin-top: 6px">字段: <code>cid</code> 115 目标目录 · <code>cid123</code> 123 目标目录 · <code>genre_ids</code> TMDB 类型(逗号分隔) · <code>origin_country</code> 地区(逗号分隔); 无 genre_ids/origin_country 的分类为兜底项。</p>
       </template>
 
       <!-- 变量说明 -->

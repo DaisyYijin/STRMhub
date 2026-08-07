@@ -304,3 +304,39 @@ tv:
             got = c.get(f"/api/accounts/{acc['id']}/rules",
                         headers=h).json()["rules"]
             assert got["category_yaml"].startswith("movie:")
+
+    def test_match_extended_fields(self):
+        """支持 original_language/production_countries/release_year/!排除。"""
+        from app.services.organize import match_category, parse_category_yaml
+        yaml_text = """\
+movie:
+  动画电影:
+    genre_ids: '16'
+  华语电影:
+    original_language: 'zh,cn,bo,za'
+  2000年前:
+    release_year: '1900-2000'
+  外语电影:
+"""
+        cats = parse_category_yaml(yaml_text)
+        # 动画
+        assert match_category(cats, "movie", {"genre_ids": [16]}) == "动画电影"
+        # 华语(语种 zh)
+        assert match_category(cats, "movie", {"original_language": "zh"}) == "华语电影"
+        # 年份范围
+        assert match_category(cats, "movie", {"release_year": 1999}) == "2000年前"
+        assert match_category(cats, "movie", {"release_year": 2016}) == "外语电影"
+        # 无元数据 -> 兜底
+        assert match_category(cats, "movie", None) == "外语电影"
+
+    def test_match_exclude(self):
+        """! 前缀排除。"""
+        from app.services.organize import match_category, parse_category_yaml
+        cats = parse_category_yaml("""\
+movie:
+  非国产:
+    original_language: '!zh'
+  其他:
+""")
+        assert match_category(cats, "movie", {"original_language": "en"}) == "非国产"
+        assert match_category(cats, "movie", {"original_language": "zh"}) == "其他"
