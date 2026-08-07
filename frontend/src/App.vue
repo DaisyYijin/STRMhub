@@ -96,8 +96,6 @@ function logLevelClass(level) {
 }
 
 // ---- 日志汉化(仅前端展示层, 后端日志保持英文原文) ----
-const logLang = ref('cn')  // cn | raw
-
 const LOG_TRANSLATIONS = [
   [/Application startup complete\./, '应用启动完成'],
   [/Uvicorn running on (http:\/\/[^ )]+)/, '服务已启动并监听 $1'],
@@ -111,7 +109,6 @@ const LOG_TRANSLATIONS = [
 ]
 
 function translateMsg(msg) {
-  if (logLang.value !== 'cn') return msg
   let out = msg || ''
   for (const [re, rep] of LOG_TRANSLATIONS) out = out.replace(re, rep)
   // 访问日志: '1.2.3.4:5678 - "GET /api/x HTTP/1.1" 200'
@@ -129,7 +126,7 @@ function translateMsg(msg) {
 
 // 日志级别汉化
 const LEVEL_LABELS = { INFO: '信息', WARNING: '警告', ERROR: '错误', CRITICAL: '严重', DEBUG: '调试' }
-const levelLabel = (lv) => (logLang.value === 'cn' ? (LEVEL_LABELS[lv] || lv) : lv)
+const levelLabel = (lv) => LEVEL_LABELS[lv] || lv
 
 async function logOpen() {
   logShow.value = true
@@ -228,35 +225,34 @@ onMounted(async () => {
     </aside>
     <main class="main">
       <component :is="current.comp" :driver-type="current.driver || ''" />
+
+      <!-- 实时日志(页面内嵌, 点击右上角按钮展开/收起) -->
+      <div v-if="logShow" class="log-panel">
+        <div class="log-head">
+          <span class="log-title">实时日志</span>
+          <button class="log-toggle" :class="{ on: !logPaused }" @click="logPaused = !logPaused">
+            {{ logPaused ? '已暂停' : '实时' }}
+          </button>
+          <button class="log-toggle" :class="{ on: logAutoScroll }" @click="logAutoScroll = !logAutoScroll">
+            自动滚动 {{ logAutoScroll ? '开' : '关' }}
+          </button>
+          <button class="log-btn" @click="logClear">清空</button>
+          <button class="log-btn" @click="logClose">收起</button>
+        </div>
+        <div v-if="logError" class="log-errbar">{{ logError }}</div>
+        <div ref="logBox" class="log-body">
+          <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
+            <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>
+            <span class="log-lv">[{{ levelLabel(ln.level) }}]</span>
+            <span class="log-msg">{{ translateMsg(ln.msg) }}</span>
+          </div>
+          <div v-if="!logLines.length" class="muted" style="padding: 10px">暂无日志...</div>
+        </div>
+      </div>
     </main>
 
-    <!-- 右上角: 实时日志 -->
-    <button class="log-fab" title="实时日志" @click="logShow ? logClose() : logOpen()">📄</button>
-    <div v-if="logShow" class="log-panel">
-      <div class="log-head">
-        <span class="log-title">实时日志</span>
-        <button class="log-toggle" :class="{ on: logLang === 'cn' }" @click="logLang = logLang === 'cn' ? 'raw' : 'cn'">
-          {{ logLang === 'cn' ? '汉化' : '原文' }}
-        </button>
-        <button class="log-toggle" :class="{ on: !logPaused }" @click="logPaused = !logPaused">
-          {{ logPaused ? '已暂停' : '实时' }}
-        </button>
-        <button class="log-toggle" :class="{ on: logAutoScroll }" @click="logAutoScroll = !logAutoScroll">
-          自动滚动 {{ logAutoScroll ? '开' : '关' }}
-        </button>
-        <button class="log-btn" @click="logClear">清空</button>
-        <button class="log-btn" @click="logClose">关闭</button>
-      </div>
-      <div v-if="logError" class="log-errbar">{{ logError }}</div>
-      <div ref="logBox" class="log-body">
-        <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
-          <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>
-          <span class="log-lv">[{{ levelLabel(ln.level) }}]</span>
-          <span class="log-msg">{{ translateMsg(ln.msg) }}</span>
-        </div>
-        <div v-if="!logLines.length" class="muted" style="padding: 10px">暂无日志...</div>
-      </div>
-    </div>
+    <!-- 右上角: 实时日志开关 -->
+    <button class="log-fab" :class="{ on: logShow }" title="实时日志" @click="logShow ? logClose() : logOpen()">📄</button>
   </div>
 </template>
 
@@ -291,5 +287,5 @@ onMounted(async () => {
 .side nav .nav-sub { padding-left: 22px; font-size: 12.5px; }
 .side nav .nav-error { font-size: 11px; color: var(--bad); padding: 4px 10px; word-break: break-all; }
 .side-foot { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
-.main { flex: 1; padding: 22px 26px; max-width: 1100px; }
+.main { flex: 1; padding: 22px 26px; max-width: none; }
 </style>
