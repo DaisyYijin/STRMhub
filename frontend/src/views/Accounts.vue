@@ -90,8 +90,57 @@ const tabs = [
   { id: 'ai', label: 'AI 辅助' },
   { id: 'rename', label: '重命名规则' },
   { id: 'category', label: '二级分类策略' },
+  { id: 'vars', label: '变量说明' },
+  { id: 'syntax', label: '语法说明' },
 ]
 const accTab = ref('info')
+
+// ---- 变量说明 / 语法说明(静态文档) ----
+const VAR_DOCS = [
+  ['{original_name}', '原文件名', '钢铁侠.2008.2160p.UHD.BluRay.x265.10bit.HDR.TrueHD.7.1-TnT.mkv'],
+  ['{ext}', '扩展名', 'iso'],
+  ['{title}', 'TMDB中的标题', '钢铁侠'],
+  ['{en_title}', 'TMDB中的英文标题 (tmdb为空时，会将中文标题转换为拼音)', 'Iron Man'],
+  ['{first_letter}', '标题的大写拼音首字母', 'G'],
+  ['{year}', 'TMDB中的年份', '2008'],
+  ['{tmdb_id}', 'TMDB ID', '1726'],
+  ['{resource_pix}', '分辨率', '2160p'],
+  ['{resource_version}', '资源版本', 'IMAX、HQ、3D、CC、DC'],
+  ['{resource_source}', '资源来源', 'USA.UHD、NF、DSNP'],
+  ['{resource_type}', '资源质量', 'BluRay、WEB-DL、HDTV'],
+  ['{resource_effect}', '特效', 'DV.HDR、DV、HDR、SDR'],
+  ['{video_encode}', '视频编码', 'H265.10bit、REMUX'],
+  ['{audio_encode}', '音频编码', 'TrueHD.7.1'],
+  ['{resource_team}', '发布组', 'TnT'],
+  ['{fps}', '帧率', '60FPS'],
+  ['{season_episode}', '季集 SxxExx', 'S01E01'],
+  ['{season_num}', '季号', '1'],
+  ['{episode_num}', '集号', '1'],
+  ['{disc_num}', '盘号', '1'],
+  ['{season_name}', '季名', '东海篇'],
+  ['{season_year}', '季年份 (可能为空，不建议使用)', '1999'],
+  ['{episode_name}', '集名', '我是路飞！将要成为海贼王的男人！'],
+  ['{custom_regex_match}', '自定义匹配', '自定义匹配'],
+]
+
+const SYNTAX_DOCS = [
+  ['{变量名}', '取这个变量的值'],
+  ['<...>', '用尖括号包围的字符串称为 块，块里 {变量名} 表示当 {变量名}不为空时，取块里的内容。简单来说重命名规则就是写多个块，然后拼在一起'],
+  ['<{{name}}...>', '给块取个名字，类似于临时变量，之后可以用 {name} 反复引用该块的值'],
+  ['<?{{name}}...>', '有名字的块可以只取名不输出，便于后续引用'],
+  ['<{title}> 和 {title} 的区别', '<{title}> 会先判断 title 是否为空，后者是直接取 title 的值；也就是说如果你用的变量可能为空，则必须用 < > 把变量包起来'],
+  ['[[ ]]', '如果想用 { }，由于和语法冲突，可以用 [[ ]] 代替，最终会替换为 { }'],
+]
+
+const SYNTAX_EXAMPLES = [
+  ["{resource_effect.replace('.', ' ')}", '替换 resource_effect 中的.为空格'],
+  ['{resource_effect.lower()}', '将 resource_effect 转换为小写'],
+  ['{resource_effect.upper()}', '将 resource_effect 转换为大写'],
+  ["{'2160p' if resource_pix=='4k' else resource_pix}", '如果 resource_pix 为 4k，则返回 2160p，否则返回 resource_pix'],
+  ['自定义命名规则', '自定义多个块，也是多个 <...>，最终这些块按顺序拼在一块'],
+  ['文件夹命名规则示例', '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]'],
+  ['电影命名规则示例', '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>'],
+]
 
 // ---- 整理归档 tab ----
 const orgPath = ref('')
@@ -380,24 +429,24 @@ function closeQrcode() {
         <h2 style="margin-top: 0">识别规则</h2>
         <div class="grid2">
           <div>
-            <label>最小视频大小(MB) — 低于此大小的视频文件不纳入整理</label>
+            <label>最小视频大小(MB)<span class="help" data-tip="低于此大小的视频文件不纳入整理识别; 填写 0 表示不限制">?</span></label>
             <input type="number" min="0" v-model.number="rules.min_video_size_mb" />
           </div>
           <div>
-            <label>发布组扩展(逗号分隔) — 识别发布组</label>
+            <label>发布组扩展<span class="help" data-tip="追加识别发布组; 逗号分隔多个, 如 FRDS, NEWCINE">?</span></label>
             <input v-model="releaseGroupsText" placeholder="例如: FRDS, 蓝光组, NEWCINE" />
           </div>
         </div>
         <div>
-          <label>整理黑名单(每行一个关键词) — 命中关键词的文件跳过整理</label>
+          <label>整理黑名单<span class="help" data-tip="命中关键词的文件跳过整理; 一行是一条规则, 如 trailer / sample">?</span></label>
           <textarea v-model="blacklistText" rows="4" placeholder="例如: trailer&#10;sample&#10;xxx" />
         </div>
         <div>
-          <label>自定义识别词(每行: 原始词|替换词) — 识别时将原始词替换</label>
+          <label>自定义识别词<span class="help" data-tip="识别时将原始词替换为替换词; 一行是一条规则, 格式: 原始词|替换词, 如 蜘蛛侠3|Spider-Man 3">?</span></label>
           <textarea v-model="customWordsText" rows="3" placeholder="例如: 蜘蛛侠3|Spider-Man 3&#10;SW|Star Wars" />
         </div>
         <div>
-          <label>自定义匹配(每行: 关键词|TMDB_ID|movie或tv) — 直接指定作品</label>
+          <label>自定义匹配<span class="help" data-tip="文件名命中关键词时直接指定为对应作品; 一行是一条规则, 格式: 关键词|TMDB_ID|movie或tv">?</span></label>
           <textarea v-model="customMatchesText" rows="3" placeholder="例如: 星际穿越|157336|movie&#10;三体|457433|tv" />
         </div>
         <div class="row" style="margin-top: 12px">
@@ -481,6 +530,37 @@ function closeQrcode() {
           <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
           <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
         </div>
+      </template>
+
+      <!-- 变量说明 -->
+      <template v-else-if="accTab === 'vars'">
+        <h2 style="margin-top: 0">变量说明</h2>
+        <p class="muted" style="margin-top: 0">重命名规则中可用的变量(识别结果)。</p>
+        <table class="doc-table">
+          <tr><th>变量名</th><th>说明</th><th>示例值</th></tr>
+          <tr v-for="(row, i) in VAR_DOCS" :key="i">
+            <td><code>{{ row[0] }}</code></td>
+            <td>{{ row[1] }}</td>
+            <td class="muted">{{ row[2] }}</td>
+          </tr>
+        </table>
+      </template>
+
+      <!-- 语法说明 -->
+      <template v-else-if="accTab === 'syntax'">
+        <h2 style="margin-top: 0">语法说明</h2>
+        <table class="doc-table" style="margin-bottom: 12px">
+          <tr><th>语法</th><th>说明</th></tr>
+          <tr v-for="(row, i) in SYNTAX_DOCS" :key="i">
+            <td><code>{{ row[0] }}</code></td>
+            <td>{{ row[1] }}</td>
+          </tr>
+        </table>
+        <h3 style="font-size: 14px; margin: 10px 0 6px">示例</h3>
+        <p v-for="(ex, i) in SYNTAX_EXAMPLES" :key="i" class="doc-example">
+          <code>{{ ex[0] }}</code><br />
+          <span class="muted">{{ ex[1] }}</span>
+        </p>
       </template>
     </div>
   </div>
