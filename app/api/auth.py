@@ -1,15 +1,16 @@
 """认证: 密码登录 + JWT Bearer 鉴权 + 登录失败限速。
 
-安全基线: 密码 bcrypt 哈希校验; 同一 IP 失败 5 次后锁定 5 分钟。
+安全基线: 密码 bcrypt 哈希校验(直接用 bcrypt 库, 不依赖 passlib ——
+passlib 1.7.4 与 bcrypt>=4.1 不兼容会导致 500); 同一 IP 失败 5 次后锁定 5 分钟。
 """
 from __future__ import annotations
 
 import threading
 import time
 
+import bcrypt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.hash import bcrypt
 
 from .. import config
 from ..security.jwt import create_token, verify_token
@@ -22,13 +23,14 @@ _fail_lock = threading.Lock()
 MAX_FAILS = 5
 LOCK_SECONDS = 300
 
-_hashed_password: str | None = None
+_hashed_password: bytes | None = None
 
 
-def _password_hash() -> str:
+def _password_hash() -> bytes:
     global _hashed_password
     if _hashed_password is None:
-        _hashed_password = bcrypt.hash(config.admin_password())
+        _hashed_password = bcrypt.hashpw(
+            config.admin_password().encode("utf-8"), bcrypt.gensalt())
     return _hashed_password
 
 
@@ -43,7 +45,7 @@ def check_login(password: str, request: Request) -> str:
                                 detail="尝试次数过多, 请稍后再试")
         _failures[ip] = rec
 
-    if bcrypt.verify(password, _password_hash()):
+    if bcrypt.checkpw(password.encode("utf-8"), _password_hash()):
         with _fail_lock:
             _failures[ip] = [0, 0.0]
         return create_token("admin")
