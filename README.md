@@ -37,7 +37,7 @@ services:
       - 6086:6086      # Emby 302 反代(Emby 客户端改连此端口)
     environment:
       - STRMHUB_ADMIN_PASSWORD=change-me      # ← 必改: 管理台密码
-      - EMBY_HOST=http://127.0.0.1:8096       # ← Emby 地址(容器内按需改宿主机IP)
+      - EMBY_HOST=http://host.docker.internal:8096   # ← Emby 地址(容器内 127.0.0.1 是容器自己; 用 host.docker.internal 或宿主机IP)
       - EMBY_API_KEY=                          # ← Emby API Key(302 必需)
       # - TMDB_API_KEY=                       # 可选: 刮削用
     volumes:

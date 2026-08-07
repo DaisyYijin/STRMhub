@@ -135,8 +135,24 @@ async def _forward(request: Request) -> Response:
     url = emby_host() + request.url.path + ("?" + request.url.query if request.url.query else "")
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in ("host", "content-length", "accept-encoding")}
-    resp = await get_client().request(request.method, url, headers=headers,
-                                      content=await request.body())
+    try:
+        resp = await get_client().request(request.method, url, headers=headers,
+                                          content=await request.body())
+    except httpx.ConnectError as exc:
+        # 常见原因: EMBY_HOST 配了 127.0.0.1(容器内指容器自身)或 Emby 未启动
+        import json as _json
+        return Response(
+            content=_json.dumps({
+                "error": "无法连接 Emby 服务器",
+                "detail": f"{exc}",
+                "hint": "请检查 EMBY_HOST 配置: Emby 在宿主机时应使用 "
+                        "http://host.docker.internal:8096(而非 127.0.0.1)",
+            }, ensure_ascii=False).encode(),
+            status_code=502, media_type="application/json")
+    except httpx.HTTPError as exc:
+        return Response(
+            content=str(exc).encode(), status_code=502,
+            media_type="text/plain")
     return Response(
         content=resp.content,
         status_code=resp.status_code,

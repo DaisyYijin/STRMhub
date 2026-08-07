@@ -14,13 +14,19 @@ services:
     environment:
       # 必改: 管理台登录密码
       - STRMHUB_ADMIN_PASSWORD=change-me
-      # Emby/Jellyfin 地址与 API Key(302 反代必需; 容器网络下可用 宿主机IP)
-      - EMBY_HOST=http://127.0.0.1:8096
+      # Emby/Jellyfin 地址与 API Key(302 反代必需)
+      # 注意: 容器内的 127.0.0.1 是容器自己, 不是宿主机!
+      # Emby 跑在宿主机/另一台机时, 用 host.docker.internal 或宿主机 IP:
+      #   http://host.docker.internal:8096
+      - EMBY_HOST=http://host.docker.internal:8096
       - EMBY_API_KEY=
       # 可选: TMDB API Key, 用于刮削 https://www.themoviedb.org/settings/api
       # - TMDB_API_KEY=
       # 可选: 数据目录(默认 /app/data)
       # - STRMHUB_DATA=/app/data
+    extra_hosts:
+      # 让容器内 host.docker.internal 指向宿主机(Emby 联调用)
+      - "host.docker.internal:host-gateway"
     volumes:
       # 必挂: 数据持久化(密钥/数据库/凭据, 改左侧为你的宿主机目录)
       - ./data:/app/data

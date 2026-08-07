@@ -124,3 +124,23 @@ class TestProxy:
             assert r.status_code == 500
         finally:
             proxy_mod.set_client(None)
+
+    def test_forward_connect_error_returns_502(self, client, fake_emby, monkeypatch):
+        """上游(Emby)连接失败 -> 502 + 可读错误提示(而非 500 traceback)。"""
+        import httpx
+        from app import proxy
+        import app.proxy.server as proxy_mod
+
+        def boom(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("All connection attempts failed")
+
+        proxy_mod.set_client(httpx.AsyncClient(
+            transport=httpx.MockTransport(boom)))
+        try:
+            r = client.get("/System/Info", follow_redirects=False)
+            assert r.status_code == 502
+            body = r.json()
+            assert "无法连接 Emby" in body["error"]
+            assert "host.docker.internal" in body["hint"]
+        finally:
+            proxy_mod.set_client(None)
