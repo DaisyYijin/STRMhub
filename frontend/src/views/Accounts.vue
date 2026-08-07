@@ -153,18 +153,78 @@ const SYNTAX_EXAMPLES = [
   ['电影命名规则示例', '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>'],
 ]
 
-// ---- 整理归档 tab ----
-const orgPath = ref('')
-const orgPlan = ref(null)
-const orgBusy = ref(false)
+// ---- 整理归档 tab(三目录 + 目录树选择) ----
+const ORG_FIELDS = [
+  { key: 'pending', label: '等待整理', hint: '需要整理的影视放在这里, 开始整理后扫描此目录' },
+  { key: 'existing', label: '已经存在', hint: '整理完成的影视已存在时, 重复文件移动到此目录' },
+  { key: 'redundant', label: '冗余文件', hint: '识别失败或非影视文件移动到此目录' },
+]
+const orgDirs = ref({ pending: {}, existing: {}, redundant: {} })
 const orgMsg = ref('')
+const orgBusy = ref(false)
+const orgResult = ref(null)
+// 目录树弹窗
+const picker = ref(null)  // { field, parent, stack: [{id, name}], dirs: [] }
+const pickerBusy = ref(false)
+const pickerErr = ref('')
 
-async function makePlan() {
-  orgMsg.value = ''
-  if (!orgPath.value.trim()) { orgMsg.value = { type: 'err', text: '请输入目录路径' }; return }
-  orgBusy.value = true
+async function openPicker(field) {
+  picker.value = { field, parent: '', stack: [], dirs: [], current: { id: '', name: '根目录' } }
+  await loadPickerDirs()
+}
+async function loadPickerDirs() {
+  if (!picker.value) return
+  pickerBusy.value = true
+  pickerErr.value = ''
   try {
-    orgPlan.value = await organizeApi.plan(orgPath.value.trim())
+    const data = await accountApi.browse(acct.value.id, picker.value.parent)
+    picker.value.dirs = data.dirs || []
+  } catch (e) {
+    pickerErr.value = e.message
+  } finally {
+    pickerBusy.value = false
+  }
+}
+function enterDir(dir) {
+  picker.value.stack.push(picker.value.current)
+  picker.value.current = { id: dir.id, name: dir.name }
+  picker.value.parent = dir.id
+  loadPickerDirs()
+}
+function pickerBack() {
+  const prev = picker.value.stack.pop()
+  picker.value.current = prev || { id: '', name: '根目录' }
+  picker.value.parent = prev?.id || ''
+  loadPickerDirs()
+}
+function selectThisDir() {
+  orgDirs.value[picker.value.field] = { ...picker.value.current }
+  picker.value = null
+  orgMsg.value = ''
+}
+function closePicker() { picker.value = null }
+
+async function saveOrgDirs() {
+  orgMsg.value = ''
+  try {
+    await accountApi.saveRules(acct.value.id, rules.value)
+    orgMsg.value = { type: 'ok', text: '目录与规则已保存' }
+  } catch (e) {
+    orgMsg.value = { type: 'err', text: e.message }
+  }
+}
+
+async function startOrganize() {
+  orgMsg.value = ''
+  if (!orgDirs.value.pending?.id) {
+    orgMsg.value = { type: 'err', text: '请先选择等待整理目录' }
+    return
+  }
+  if (!confirm('确认开始整理? 将扫描等待整理目录并移动文件')) return
+  orgBusy.value = true
+  orgResult.value = null
+  try {
+    orgResult.value = await organizeApi.run(acct.value.id)
   } catch (e) {
     orgMsg.value = { type: 'err', text: e.message }
   } finally {
@@ -172,38 +232,46 @@ async function makePlan() {
   }
 }
 
-async function execPlan() {
-  if (!orgPlan.value) return
-  if (!confirm(`确认执行整理归档? 共 ${orgPlan.value.items?.length || 0} 项`)) return
-  orgBusy.value = true
-  try {
-    const res = await organizeApi.execute(orgPlan.value.plan_json)
-    orgMsg.value = { type: 'ok', text: `整理完成: 成功 ${res.done || 0} 项` }
-    orgPlan.value = null
-    orgPath.value = ''
-  } catch (e) {
-    orgMsg.value = { type: 'err', text: e.message }
-  } finally {
-    orgBusy.value = false
-  }
+// ---- 重命名规则(5 段模板) ----
+const RENAME_FIELDS = [
+  { key: 'movie_folder', label: '电影文件夹命名规则' },
+  { key: 'movie_file', label: '电影文件命名规则' },
+  { key: 'tv_folder', label: '剧集文件夹命名规则' },
+  { key: 'season_folder', label: '季文件夹命名规则' },
+  { key: 'episode_file', label: '集文件命名规则' },
+]
+const RENAME_DEFAULTS = {
+  movie_folder: '{first_letter}-{title}-{year}-[tmdb=[[tmdb_id]]]',
+  movie_file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>',
+  tv_folder: '{first_letter}-{title}-{year}-[tmdb=[[tmdb_id]]]',
+  season_folder: 'Season {season_num:02d}',
+  episode_file: '{title}.{year}.{season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>',
+}
+// 预设(用户给定)与自定义输入
+const renamePresets = ref({})
+const renameCustom = ref({})
+for (const f of RENAME_FIELDS) {
+  renamePresets.value[f.key] = RENAME_DEFAULTS[f.key]
+  renameCustom.value[f.key] = RENAME_DEFAULTS[f.key]
+}
+function applyRenamePreset(key) {
+  if (renamePresets.value[key]) rules.value[`rename_${key}`] = renamePresets.value[key]
 }
 
 // ---- 规则配置(识别/AI/重命名/分类) ----
-const RENAME_PRESETS = {
-  '默认': '{title}.{year}.{quality}',
-  '电影标准': '{title}.{year}.{quality}.{edition}',
-  '剧集标准': '{title}.{year}.S{season:02}E{episode:02}.{quality}',
-  '仅标题年份': '{title}.{year}',
-  '自定义': '',
-}
-
 const rules = ref({
   min_video_size_mb: 0,
   blacklist: [],        // string[] 关键词
   custom_words: [],     // "原始|替换"
   custom_matches: [],   // "关键词|tmdb_id|movie/tv"
   release_groups: [],
-  rename_template: '{title}.{year}.{quality}',
+  rename_template: '',
+  rename_movie_folder: RENAME_DEFAULTS.movie_folder,
+  rename_movie_file: RENAME_DEFAULTS.movie_file,
+  rename_tv_folder: RENAME_DEFAULTS.tv_folder,
+  rename_season_folder: RENAME_DEFAULTS.season_folder,
+  rename_episode_file: RENAME_DEFAULTS.episode_file,
+  organize_dirs: {},
   category_rules: [],   // [{kind, match, target}]
   ai: { enabled: false, api_base: '', api_key: '', model: '' },
 })
@@ -224,9 +292,20 @@ async function loadRules() {
       custom_words: r.custom_words || [],
       custom_matches: r.custom_matches || [],
       release_groups: r.release_groups || [],
-      rename_template: r.rename_template || RENAME_PRESETS['默认'],
+      rename_template: r.rename_template || '',
+      rename_movie_folder: r.rename_movie_folder || RENAME_DEFAULTS.movie_folder,
+      rename_movie_file: r.rename_movie_file || RENAME_DEFAULTS.movie_file,
+      rename_tv_folder: r.rename_tv_folder || RENAME_DEFAULTS.tv_folder,
+      rename_season_folder: r.rename_season_folder || RENAME_DEFAULTS.season_folder,
+      rename_episode_file: r.rename_episode_file || RENAME_DEFAULTS.episode_file,
+      organize_dirs: r.organize_dirs || {},
       category_rules: r.category_rules || [],
       ai: { enabled: false, api_base: '', api_key: '', model: '', ...(r.ai || {}) },
+    }
+    orgDirs.value = {
+      pending: { ...(r.organize_dirs?.pending || {}) },
+      existing: { ...(r.organize_dirs?.existing || {}) },
+      redundant: { ...(r.organize_dirs?.redundant || {}) },
     }
   } catch { /* 忽略 */ }
 }
@@ -414,24 +493,43 @@ function closeQrcode() {
       <!-- 整理归档 -->
       <template v-else-if="accTab === 'organize'">
         <h2 style="margin-top: 0">整理归档</h2>
-        <p class="muted" style="margin-top: 0">扫描影视目录, 识别影视信息并归类重命名(计划-预览-执行)。</p>
-        <div class="row" style="margin-bottom: 10px">
-          <input v-model="orgPath" placeholder="输入影视目录路径, 如 /media/movies" style="flex: 1" />
-          <button class="primary" :disabled="orgBusy" @click="makePlan">{{ orgBusy ? '分析中...' : '生成整理计划' }}</button>
-        </div>
-        <div v-if="orgMsg" class="msg" :class="orgMsg.type">{{ orgMsg.text }}</div>
-        <div v-if="orgPlan" class="org-plan">
-          <table>
-            <tr><th>原文件</th><th>→ 整理后</th></tr>
-            <tr v-for="(it, i) in orgPlan.items" :key="i">
-              <td class="muted">{{ it.original }}</td>
-              <td><code>{{ it.target }}</code></td>
-            </tr>
-            <tr v-if="!orgPlan.items?.length"><td colspan="2" class="muted">未发现可整理的文件</td></tr>
-          </table>
-          <div class="row" style="margin-top: 10px">
-            <button class="primary" :disabled="orgBusy" @click="execPlan">执行整理</button>
+        <p class="muted" style="margin-top: 0">选择三个目录: 点击"选择"浏览网盘目录(无需填 cid)。开始整理后, 扫描等待整理目录并识别分类。</p>
+        <div v-for="f in ORG_FIELDS" :key="f.key" class="org-dir-row">
+          <div class="org-dir-label">
+            <span>{{ f.label }}</span>
+            <span class="help" :data-tip="f.hint">?</span>
           </div>
+          <div class="org-dir-value" :class="{ 'muted': !orgDirs[f.key]?.id }">
+            {{ orgDirs[f.key]?.name || '未选择' }}
+          </div>
+          <button @click="openPicker(f.key)">选择</button>
+          <button v-if="orgDirs[f.key]?.id" class="danger" @click="orgDirs[f.key] = {}">清除</button>
+        </div>
+        <div class="row" style="margin-top: 12px">
+          <button class="primary" @click="saveOrgDirs">保存目录</button>
+          <button class="primary" :disabled="orgBusy" @click="startOrganize">
+            {{ orgBusy ? '整理中...' : '开始整理' }}
+          </button>
+          <div v-if="orgMsg" class="msg" :class="orgMsg.type">{{ orgMsg.text }}</div>
+        </div>
+        <div v-if="orgResult" class="org-result" style="margin-top: 12px">
+          <div class="row">
+            <span class="badge ok">整理成功 {{ orgResult.counts?.ok || 0 }}</span>
+            <span class="badge" style="color: var(--warn)">已存在 {{ orgResult.counts?.existing || 0 }}</span>
+            <span class="badge err">冗余 {{ orgResult.counts?.redundant || 0 }}</span>
+          </div>
+          <table style="margin-top: 8px">
+            <tr><th>文件</th><th>结果</th></tr>
+            <tr v-for="(it, i) in orgResult.ok" :key="'ok' + i">
+              <td class="muted">{{ it.name }}</td><td><code>{{ it.target }}</code></td>
+            </tr>
+            <tr v-for="(it, i) in orgResult.existing" :key="'ex' + i">
+              <td class="muted">{{ it.name }}</td><td>已存在 → {{ it.reason }}</td>
+            </tr>
+            <tr v-for="(it, i) in orgResult.redundant" :key="'rd' + i">
+              <td class="muted">{{ it.name }}</td><td class="err">{{ it.reason }}</td>
+            </tr>
+          </table>
         </div>
       </template>
 
@@ -495,22 +593,20 @@ function closeQrcode() {
         </div>
       </template>
 
-      <!-- 重命名规则 -->
+      <!-- 重命名规则(5 段模板) -->
       <template v-else-if="accTab === 'rename'">
         <h2 style="margin-top: 0">重命名规则</h2>
-        <div class="grid2">
-          <div>
-            <label>预设模板</label>
-            <select v-model="renamePreset" @change="applyPreset">
-              <option v-for="(tpl, name) in RENAME_PRESETS" :key="name" :value="tpl">{{ name }}</option>
+        <div v-for="f in RENAME_FIELDS" :key="f.key" style="margin-bottom: 12px">
+          <label>{{ f.label }}</label>
+          <div class="row" style="gap: 8px">
+            <select style="max-width: 260px" v-model="renamePresets[f.key]" @change="applyRenamePreset(f.key)">
+              <option :value="RENAME_DEFAULTS[f.key]">默认模板</option>
+              <option value="">自定义</option>
             </select>
-          </div>
-          <div>
-            <label>自定义模板</label>
-            <input v-model="rules.rename_template" placeholder="{title}.{year}.{quality}" />
+            <input v-model="rules[`rename_${f.key}`]" :placeholder="RENAME_DEFAULTS[f.key]" style="flex: 1" />
           </div>
         </div>
-        <p class="muted">可用变量: <code>{title}</code> 标题 · <code>{year}</code> 年份 · <code>{quality}</code> 画质 · <code>{edition}</code> 版本 · <code>{season:02}</code> 季 · <code>{episode:02}</code> 集</p>
+        <p class="muted">可用变量见"变量说明" tab; 语法见"语法说明" tab(<code>&lt;...&gt;</code> 块 / <code>[[ ]]</code> 转义)。</p>
         <div class="row" style="margin-top: 12px">
           <button class="primary" :disabled="rulesBusy" @click="saveRules">{{ rulesBusy ? '保存中...' : '保存规则' }}</button>
           <div v-if="rulesMsg" class="msg" :class="rulesMsg.type">{{ rulesMsg.text }}</div>
@@ -636,6 +732,26 @@ function closeQrcode() {
       </tr>
       <tr v-if="!filtered.length"><td colspan="6" class="muted">暂无账户</td></tr>
     </table>
+  </div>
+
+  <!-- 目录树选择弹窗 -->
+  <div v-if="picker" class="modal-mask" @click.self="closePicker">
+    <div class="modal" style="width: 420px">
+      <h2 style="margin-top: 0">选择目录 — {{ ORG_FIELDS.find((f) => f.key === picker.field)?.label }}</h2>
+      <div class="picker-path">
+        <button @click="pickerBack" :disabled="!picker.stack.length">← 返回</button>
+        <span class="muted" style="margin-left: 8px">{{ picker.current.name || '根目录' }}</span>
+      </div>
+      <div v-if="pickerErr" class="msg err">{{ pickerErr }}</div>
+      <div class="picker-list">
+        <div v-if="!pickerBusy && !picker.dirs.length" class="muted" style="padding: 10px">无子目录</div>
+        <button v-for="d in picker.dirs" :key="d.id" class="picker-dir" @click="enterDir(d)">📁 {{ d.name }}</button>
+      </div>
+      <div class="row" style="justify-content: space-between; margin-top: 10px">
+        <button class="primary" @click="selectThisDir">选择当前目录</button>
+        <button @click="closePicker">取消</button>
+      </div>
+    </div>
   </div>
 
   <!-- 扫码登录弹窗 -->

@@ -143,3 +143,19 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 .doc-table th { background: var(--code-bg); font-weight: 600; }
 .doc-table code { white-space: nowrap; }
 .doc-example { font-size: 12.5px; margin: 4px 0; }
+
+/* 整理归档三目录选择 */
+.org-dir-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.org-dir-label { display: flex; align-items: center; width: 90px; flex-shrink: 0; }
+.org-dir-value { flex: 1; padding: 6px 10px; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; }
+
+/* 目录树选择弹窗 */
+.picker-path { display: flex; align-items: center; margin-bottom: 8px; }
+.picker-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.picker-dir {
+  display: block; width: 100%; text-align: left; background: none;
+  border: none; border-bottom: 1px solid var(--line); padding: 8px 10px;
+  cursor: pointer; font-size: 13px; color: var(--text);
+}
+.picker-dir:last-child { border-bottom: none; }
+.picker-dir:hover { background: var(--hover); }

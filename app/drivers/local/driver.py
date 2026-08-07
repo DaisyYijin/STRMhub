@@ -36,7 +36,7 @@ class LocalDriver(FolderCreator):
         )
 
     def list_files(self, parent_id: str) -> list[FileItem]:
-        parent = Path(parent_id)
+        parent = Path(parent_id) if parent_id and parent_id != "0" else self.root
         if not parent.is_dir():
             raise FileNotFoundError(f"目录不存在: {parent}")
         items = []
@@ -65,6 +65,23 @@ class LocalDriver(FolderCreator):
         d = Path(parent_id) / name
         d.mkdir(parents=True, exist_ok=True)
         return str(d)
+
+    def move(self, item: FileItem, dest_parent_id: str,
+             new_name: str | None = None) -> FileItem:
+        """移动(可同时重命名)。返回移动后的条目。"""
+        import shutil
+        src = Path(item.id)
+        dest_dir = Path(dest_parent_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / (new_name or src.name)
+        if dest == src:
+            return item
+        if dest.exists():
+            raise FileExistsError(f"目标已存在: {dest}")
+        shutil.move(str(src), str(dest))
+        return FileItem(id=str(dest), name=dest.name,
+                        size=dest.stat().st_size if dest.is_file() else 0,
+                        is_dir=dest.is_dir(), mtime=dest.stat().st_mtime)
 
 
 def _factory(credential: str = "", config: dict | None = None) -> LocalDriver:

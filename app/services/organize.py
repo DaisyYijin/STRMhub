@@ -1,7 +1,14 @@
-"""整理服务: 轻量文件名解析 + 计划-预览-执行。
+"""整理归档服务: 文件名解析 + 模板渲染 + 三目录整理流程。
 
-设计来源: LitePan mediaorganize —— 生成计划 -> 预览/人工编辑 -> 执行;
-命名目标: {Title} ({Year})/Season N/SxxEyy 标准结构(兼容刮削与 Emby 识别)。
+旧接口(计划-预览-执行, 供目录整理页)与新接口(账户内三目录整理)并存。
+三目录流程(在"等待整理"目录内完成整理):
+  1. 列出等待整理目录的直接子文件(仅视频)
+  2. 逐个识别(parse_filename + 资源属性提取)
+  3. 识别失败 / 非视频 -> 移入"冗余"目录
+  4. 识别成功:
+     - 按重命名规则(5 模板)生成目标目录结构与文件名
+     - 等待整理目录下已存在同目标目录 -> 移入"已经存在"目录
+     - 否则 -> 在等待整理目录下创建目录结构并移入(重命名)
 """
 from __future__ import annotations
 
@@ -11,11 +18,23 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-YEAR_RE = re.compile(r"\((\d{4})\)")
+from ..db.models import Account
+from ..db.session import session_scope
+from ..services.account import AccountService
+
+YEAR_RE = re.compile(r"(?:\(|\.)(\d{4})(?:\)|\.|$)")
 EPISODE_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 CN_EPISODE_RE = re.compile(r"第(\d{1,2})季第(\d{1,3})集")
-QUALITY_RE = re.compile(r"\.?(1080p|720p|2160p|4k|WEB-?DL|BluRay|REMUX|HDR|DV|HEVC|x264|x265|HDTV)",
-                        re.IGNORECASE)
+QUALITY_RE = re.compile(
+    r"(?<=[.\s_])(2160p|1080p|720p|480p|4k|WEB-?DL|BluRay|REMUX|HDTV|UHD|"
+    r"HDR|DV|HEVC|x265|x264|10bit)(?=[.\s_]|$)", re.IGNORECASE)
+TEAM_RE = re.compile(r"[-\s]\[?([A-Za-z0-9]{2,12})\]?$")
+
+VAR_RE = re.compile(r"\{([^{}]+)\}")
+BLOCK_RE = re.compile(r"<([^<>]*)>")
+
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".ts", ".mov", ".wmv", ".flv",
+              ".m2ts", ".iso", ".rmvb", ".webm", ".m4v", ".mpg", ".mpeg"}
 
 
 @dataclass
@@ -24,10 +43,17 @@ class ParsedMedia:
     year: int | None = None
     season: int | None = None
     episode: int | None = None
+    pix: str = ""            # 分辨率 2160p
+    quality: str = ""        # 资源质量 BluRay/WEB-DL
+    effect: str = ""         # 特效 DV.HDR
+    encode: str = ""         # 视频编码 H265.10bit
+    audio: str = ""          # 音频编码 TrueHD.7.1
+    team: str = ""           # 发布组
+    fps: str = ""            # 帧率
 
 
-def parse_filename(name: str) -> ParsedMedia:
-    """解析媒体文件名: 'Movie.Title.2024.1080p.mkv' / 'Show.S01E02.1080p.mkv'。"""
+def parse_filename(name: str) -> ParsedMedia | None:
+    """解析影视文件名; 无法识别返回 None。"""
     stem = name.rsplit(".", 1)[0] if "." in name else name
     m = EPISODE_RE.search(stem)
     if m:
@@ -39,24 +65,150 @@ def parse_filename(name: str) -> ParsedMedia:
         if m:
             season, episode = int(m.group(1)), int(m.group(2))
             stem = CN_EPISODE_RE.sub(" ", stem)
-    # 年份提取必须先于质量词清理(否则 ".2024.1080p" 的断点被破坏)
     m = YEAR_RE.search(stem)
     year = None
     if m:
         year = int(m.group(1))
         stem = YEAR_RE.sub(" ", stem)
-    else:
-        # 兼容无括号年份: "Movie.2024.1080p" / "Movie.2024"
-        dotted = f".{stem}."
-        m2 = re.search(r"\.(19\d{2}|20\d{2})\.", dotted)
-        if m2:
-            year = int(m2.group(1))
-            stem = re.sub(r"\.(19\d{2}|20\d{2})\.", " ", dotted)[1:-1]
+    # 资源属性(先清理质量词, 避免误伤发布组提取)
+    pix = quality = effect = encode = ""
+    for q in re.findall(QUALITY_RE, name):
+        ql = q.lower()
+        if ql in ("2160p", "1080p", "720p", "480p", "4k"):
+            pix = ql.upper() if ql != "4k" else "2160p"
+        elif ql in ("bluray", "web-dl", "webdl", "hdtv", "remux", "uhd"):
+            quality = ql.upper()
+        elif ql in ("hdr", "dv", "10bit"):
+            effect = f"{effect}.{ql.upper()}".strip(".") if effect else ql.upper()
+        else:
+            encode = ql.upper()
     stem = QUALITY_RE.sub(" ", stem)
+    # 发布组(文件名尾部)
+    team = ""
+    tm = TEAM_RE.search(stem)
+    if tm and tm.group(1).lower() not in {"strm", "mp4", "mkv"}:
+        team = tm.group(1)
+        stem = TEAM_RE.sub(" ", stem)
     title = stem.replace(".", " ").replace("_", " ")
-    title = re.sub(r"\s+", " ", title).strip(" -")
-    return ParsedMedia(title=title, year=year, season=season, episode=episode)
+    title = re.sub(r"\s+", " ", title).strip(" .-_")
+    title = re.sub(r"\bS\d{1,2}(E\d{1,3})?\b.*$", "", title).strip(" .-_")
+    if not title or len(title) < 2:
+        return None
+    return ParsedMedia(title=title, year=year, season=season, episode=episode,
+                       pix=pix, quality=quality, effect=effect, encode=encode,
+                       team=team)
 
+
+# ---------- 模板渲染 ----------
+
+def render_template(template: str, ctx: dict) -> str:
+    """渲染重命名模板。
+
+    语法: {var} 取值; {var:fmt} 格式化; <...> 块(块内变量全非空才输出);
+          [[ ]] 转义为 { }。
+    """
+    if not template:
+        return ""
+    template = template.replace("[[", "{").replace("]]", "}")
+
+    def fill(text: str) -> str:
+        def repl(m: re.Match) -> str:
+            value = _eval_var(m.group(1), ctx)
+            if value is None or value == "":
+                return ""
+            return str(value)
+        return VAR_RE.sub(repl, text)
+
+    def block_ok(inner: str) -> bool:
+        for vm in VAR_RE.finditer(inner):
+            if not _eval_var(vm.group(1), ctx):
+                return False
+        return True
+
+    out = ""
+    pos = 0
+    for m in BLOCK_RE.finditer(template):
+        out += fill(template[pos:m.start()])
+        inner = m.group(1)
+        if block_ok(inner):
+            out += fill(inner)
+        pos = m.end()
+    out += fill(template[pos:])
+    return out
+
+
+def _eval_var(expr: str, ctx: dict):
+    """求值 {expr}: 'var' / 'var:fmt'。"""
+    var = expr
+    fmt = ""
+    if ":" in expr:
+        var, fmt = expr.split(":", 1)
+    value = ctx.get(var, "")
+    if value is None:
+        return ""
+    if fmt:
+        try:
+            return format(value, fmt)
+        except (ValueError, TypeError):
+            return str(value)
+    return value
+
+
+def _first_letter(title: str) -> str:
+    """标题的大写拼音首字母(中文转拼音, 失败时返回首个可见字符大写)。"""
+    try:
+        from pypinyin import lazy_pinyin
+        s = "".join(lazy_pinyin(title))[:1].upper()
+        if s:
+            return s
+    except Exception:
+        pass
+    for ch in title:
+        if ch.isalnum():
+            return ch.upper()
+    return ""
+
+
+def build_context(parsed: ParsedMedia, original_name: str) -> dict:
+    ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    season_episode = ""
+    if parsed.season is not None and parsed.episode is not None:
+        season_episode = f"S{parsed.season:02d}E{parsed.episode:02d}"
+    return {
+        "original_name": original_name,
+        "ext": ext,
+        "title": parsed.title,
+        "year": parsed.year or "",
+        "first_letter": _first_letter(parsed.title),
+        "tmdb_id": "",
+        "season_episode": season_episode,
+        "season_num": parsed.season or "",
+        "episode_num": parsed.episode or "",
+        "resource_pix": parsed.pix,
+        "resource_type": parsed.quality,
+        "resource_effect": parsed.effect,
+        "video_encode": parsed.encode,
+        "audio_encode": parsed.audio,
+        "resource_team": parsed.team,
+        "fps": parsed.fps,
+    }
+
+
+DEFAULT_TEMPLATES = {
+    "movie_folder": "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+    "movie_file": "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}>"
+                  "<.{resource_source}><.{resource_type}><.{resource_effect}>"
+                  "<.{video_encode}><.{audio_encode}><-{resource_team}>",
+    "tv_folder": "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+    "season_folder": "Season {season_num:02d}",
+    "episode_file": "{title}.{year}.{season_episode}<.{resource_pix}><.{fps}>"
+                    "<.{resource_version}><.{resource_source}><.{resource_type}>"
+                    "<.{resource_effect}><.{video_encode}><.{audio_encode}>"
+                    "<-{resource_team}>",
+}
+
+
+# ---------- 旧接口: 计划-预览-执行(目录整理页) ----------
 
 @dataclass
 class PlanAction:
@@ -72,6 +224,92 @@ class OrganizePlan:
 
 
 class OrganizeService:
+    # ---------- 新接口: 三目录整理 ----------
+    def run(self, account_id: int) -> dict:
+        """三目录整理: 扫描等待整理目录 -> 识别 -> 分类移动。"""
+        accounts = AccountService()
+        with session_scope() as s:
+            acc = s.get(Account, account_id)
+            if acc is None:
+                raise ValueError("账户不存在")
+            config = json.loads(acc.config_json or "{}")
+            rules = config.get("rules") or {}
+            driver_type = acc.driver_type
+        driver = accounts.driver_for(acc)
+        if not (hasattr(driver, "move") and hasattr(driver, "create_folder")):
+            raise ValueError(f"驱动 {driver_type} 不支持整理归档(需要移动/建目录能力)")
+        dirs = rules.get("organize_dirs") or {}
+        pending = str(dirs.get("pending") or "")
+        existing = str(dirs.get("existing") or "")
+        redundant = str(dirs.get("redundant") or "")
+        if not pending:
+            raise ValueError("未配置等待整理目录")
+        templates = {k: (rules.get(f"rename_{k}") or v)
+                     for k, v in DEFAULT_TEMPLATES.items()}
+        # 兼容旧版单模板: 旧 rename_template 作为 movie_file 兜底
+        if (rules.get("rename_template")
+                and templates["movie_file"] == DEFAULT_TEMPLATES["movie_file"]):
+            templates["movie_file"] = rules["rename_template"]
+
+        items = driver.list_files(pending)
+        files = [it for it in items if it.is_file]
+        result = {"ok": [], "existing": [], "redundant": []}
+        for item in files:
+            if Path(item.name).suffix.lower() not in VIDEO_EXTS:
+                self._move_to(driver, item, redundant, result, "redundant",
+                              "非视频文件")
+                continue
+            parsed = parse_filename(item.name)
+            if parsed is None:
+                self._move_to(driver, item, redundant, result, "redundant",
+                              "识别失败/非影视文件")
+                continue
+            ctx = build_context(parsed, item.name)
+            is_tv = parsed.season is not None
+            folder_name = render_template(
+                templates["tv_folder" if is_tv else "movie_folder"], ctx)
+            file_name = render_template(
+                templates["episode_file" if is_tv else "movie_file"], ctx)
+            if not file_name:
+                file_name = item.name
+            suffix = Path(item.name).suffix
+            if suffix and not file_name.lower().endswith(suffix.lower()):
+                file_name = f"{file_name}{suffix}"
+            # 已存在判定: 等待整理目录下已有同名目标目录
+            target_exists = any(
+                d.is_dir and d.name == folder_name for d in items)
+            if target_exists:
+                self._move_to(driver, item, existing, result, "existing",
+                              f"目标已存在: {folder_name}")
+                continue
+            # 正常整理: 在等待整理目录下建结构并移入
+            try:
+                folder_id = driver.create_folder(pending, folder_name)
+                driver.move(item, folder_id, new_name=file_name)
+                result["ok"].append({
+                    "name": item.name,
+                    "target": f"{folder_name}/{file_name}",
+                    "type": "tv" if is_tv else "movie",
+                })
+            except Exception as exc:
+                result["redundant"].append({
+                    "name": item.name, "reason": f"整理失败: {exc}"})
+        result["counts"] = {k: len(v) for k, v in result.items()}
+        return result
+
+    @staticmethod
+    def _move_to(driver, item, dest_dir, result, key, reason):
+        if dest_dir:
+            try:
+                driver.move(item, dest_dir)
+            except Exception as exc:
+                result["redundant"].append({
+                    "name": item.name, "reason": f"移入{key}目录失败: {exc}"})
+                return
+        result[key].append({"name": item.name, "reason": reason,
+                            "target": dest_dir or ""})
+
+    # ---------- 旧接口: 计划-预览-执行 ----------
     def create_plan(self, path: str) -> OrganizePlan:
         """扫描目录, 生成重命名计划(仅文件名规范化, 不改目录结构)。"""
         root = Path(path)
@@ -82,7 +320,7 @@ class OrganizeService:
             if not f.is_file() or f.name.lower().endswith((".nfo", ".jpg", ".jpeg", ".png")):
                 continue
             parsed = parse_filename(f.name)
-            if not parsed.title:
+            if not parsed or not parsed.title:
                 continue
             target_name = self._target_name(parsed, f.name)
             if target_name != f.name:
@@ -131,3 +369,6 @@ class OrganizeService:
         return json.dumps({"plan_id": plan.plan_id,
                            "actions": [a.__dict__ for a in plan.actions]},
                           ensure_ascii=False)
+
+
+organize = OrganizeService()

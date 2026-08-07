@@ -65,6 +65,32 @@ class P115Driver:
         url = self.client.download_url(item.id, user_agent="Mozilla/5.0")
         return url, {}
 
+    def create_folder(self, parent_id: str, name: str) -> str:
+        """创建目录, 返回新目录 id; 已存在则返回已有目录 id。"""
+        self.gate.wait()
+        resp = self.client.fs_mkdir(name, pid=int(parent_id or 0))
+        self._check_blocked(resp)
+        if resp.get("state"):
+            return str(resp.get("cid") or 0)
+        if resp.get("errno") == 20004:  # 目录已存在: 查找返回
+            for item in self.list_files(parent_id):
+                if item.is_dir and item.name == name:
+                    return item.id
+        raise RuntimeError(f"创建目录失败: {resp}")
+
+    def move(self, item: FileItem, dest_parent_id: str,
+             new_name: str | None = None) -> FileItem:
+        """移动(可同时重命名)文件/目录。"""
+        if new_name and new_name != item.name:
+            self.gate.wait()
+            r = self.client.fs_rename((item.id, new_name))
+            self._check_blocked(r)
+        self.gate.wait()
+        data = self.client.fs_move([item.id], pid=dest_parent_id)
+        self._check_blocked(data)
+        return FileItem(id=item.id, name=new_name or item.name,
+                        size=item.size, is_dir=item.is_dir)
+
     def ping(self) -> bool:
         self.gate.wait()
         info = self.client.user_info()
@@ -72,15 +98,23 @@ class P115Driver:
 
 
 def _row_to_item(row: dict) -> FileItem:
-    """115 行数据 -> FileItem(字段名按 p115client 返回结构防御性提取)。"""
+    """115 行数据 -> FileItem。
+
+    目录行无 fid 键(id=cid, 子目录浏览用); 文件行有 fid/pick_code。
+    兼容旧格式(t==1 标记目录)。
+    """
     name = row.get("n") or row.get("name") or "?"
-    is_dir = row.get("t") == 1 or "pick_code" not in row or not row.get("pick_code")
+    is_dir = "fid" not in row or row.get("t") == 1
+    if is_dir:
+        fid = row.get("cid") or row.get("fid")
+    else:
+        fid = row.get("pick_code") or row.get("fid")
     return FileItem(
-        id=str(row.get("pick_code") or row.get("fid") or row.get("cid")),
+        id=str(fid or 0),
         name=name,
         size=int(row.get("s") or 0),
         is_dir=is_dir,
-        mtime=float(row.get("t") or 0) if not is_dir else None,
+        mtime=float(row.get("tp") or row.get("t") or 0) if not is_dir else None,
     )
 
 

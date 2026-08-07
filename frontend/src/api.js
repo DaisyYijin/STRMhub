@@ -70,6 +70,8 @@ export const accountApi = {
   drivers: () => http.get('/api/accounts/drivers'),
   rules: (id) => http.get(`/api/accounts/${id}/rules`),
   saveRules: (id, rules) => http.put(`/api/accounts/${id}/rules`, { rules }),
+  browse: (id, parent) => http.get(
+    `/api/accounts/${id}/browse${parent ? `?parent=${encodeURIComponent(parent)}` : ''}`),
 }
 
 export const qrcodeApi = {
@@ -94,6 +96,7 @@ export const scrapeApi = {
 export const organizeApi = {
   plan: (path) => http.post('/api/organize/plan', { path }),
   execute: (planJson) => http.post('/api/organize/execute', { plan_json: planJson }),
+  run: (accountId) => http.post('/api/organize/run', { account_id: accountId }),
 }
 
 export const automationApi = {

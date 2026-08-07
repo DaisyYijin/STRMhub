@@ -12,3 +12,4 @@ p123client>=0.0.5
 
 # 扫码登录二维码生成
 qrcode>=7.0
+pypinyin>=0.50
