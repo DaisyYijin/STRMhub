@@ -1,18 +1,42 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { accountApi } from '../api'
+import { computed, onMounted, ref, watch } from 'vue'
+import { accountApi, qrcodeApi } from '../api'
+
+const props = defineProps({
+  driverType: { type: String, default: '' },
+})
 
 const accounts = ref([])
 const drivers = ref([])
 const form = ref({ name: '', driver_type: '', credential: '', config_json: '' })
 const msg = ref('')
 
+// 扫码登录弹窗状态
+const qrShow = ref(false)
+const qrImg = ref('')
+const qrToken = ref('')
+const qrUid = ref('')
+const qrStatus = ref('')
+const qrTimer = ref(null)
+
 async function load() {
   accounts.value = await accountApi.list()
   drivers.value = await accountApi.drivers()
 }
 
-onMounted(load)
+onMounted(() => { form.value.driver_type = props.driverType; load() })
+
+watch(() => props.driverType, (t) => {
+  form.value.driver_type = t
+  load()
+})
+
+const filtered = computed(() =>
+  props.driverType
+    ? accounts.value.filter((a) => a.driver_type === props.driverType)
+    : accounts.value)
+
+const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
 async function create() {
   msg.value = ''
@@ -27,7 +51,7 @@ async function create() {
       credential: form.value.credential,
       config,
     })
-    form.value = { name: '', driver_type: drivers.value[0]?.name || '', credential: '', config_json: '' }
+    form.value = { ...form.value, name: '', credential: '', config_json: '' }
     await load()
     msg.value = { type: 'ok', text: '账户已创建' }
   } catch (e) {
@@ -40,20 +64,77 @@ async function remove(id) {
   await accountApi.remove(id)
   await load()
 }
+
+// ---- 115 扫码登录 ----
+async function startQrcode() {
+  try {
+    const data = await qrcodeApi.start('p115')
+    qrToken.value = data.qr_token
+    qrUid.value = data.qr_uid
+    qrImg.value = qrcodeApi.image(data.image_url)
+    qrStatus.value = 'waiting'
+    qrShow.value = true
+    qrTimer.value = setInterval(pollQrcode, 2000)
+  } catch (e) {
+    msg.value = { type: 'err', text: e.message }
+  }
+}
+
+async function pollQrcode() {
+  try {
+    const data = await qrcodeApi.poll('p115', qrToken.value, qrUid.value)
+    qrStatus.value = data.status
+    if (data.status === 'confirmed') {
+      clearInterval(qrTimer.value)
+      qrTimer.value = null
+      // 自动创建账户
+      await accountApi.create({
+        name: `115-${Date.now().toString().slice(-6)}`,
+        driver_type: 'p115',
+        credential: data.cookies,
+      })
+      qrShow.value = false
+      msg.value = { type: 'ok', text: '扫码登录成功, 账户已创建' }
+      await load()
+    } else if (data.status === 'expired' || data.status === 'error') {
+      clearInterval(qrTimer.value)
+      qrTimer.value = null
+      msg.value = { type: 'err', text: data.status === 'expired' ? '二维码已过期, 请重新生成' : '登录失败' }
+      qrShow.value = false
+    }
+  } catch (e) {
+    clearInterval(qrTimer.value)
+    qrTimer.value = null
+    msg.value = { type: 'err', text: e.message }
+    qrShow.value = false
+  }
+}
+
+function closeQrcode() {
+  if (qrTimer.value) { clearInterval(qrTimer.value); qrTimer.value = null }
+  qrShow.value = false
+}
 </script>
 
 <template>
-  <h1>网盘账户</h1>
+  <h1>{{ driverLabel(props.driverType) || '网盘' }}管理</h1>
+
   <div class="card">
     <h2>新增账户</h2>
+    <div class="row" style="margin-bottom: 10px">
+      <button v-if="props.driverType === 'p115'" class="primary" @click="startQrcode">
+        115 扫码登录
+      </button>
+      <span class="muted">也可手动填写凭据:</span>
+    </div>
     <div class="grid2">
       <div>
         <label>名称</label>
-        <input v-model="form.name" placeholder="如: 我的115" />
+        <input v-model="form.name" :placeholder="`如: 我的${driverLabel(props.driverType) || '网盘'}`" />
       </div>
       <div>
         <label>驱动类型</label>
-        <select v-model="form.driver_type">
+        <select v-model="form.driver_type" :disabled="!!props.driverType">
           <option v-for="d in drivers" :key="d.name" :value="d.name">{{ d.label }} ({{ d.name }})</option>
         </select>
       </div>
@@ -71,18 +152,38 @@ async function remove(id) {
       <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
     </div>
   </div>
+
   <div class="card">
-    <h2>账户列表(凭据已加密存储)</h2>
+    <h2>{{ props.driverType ? `${driverLabel(props.driverType)}账户列表` : '账户列表' }}(凭据已加密存储)</h2>
     <table>
       <tr><th>ID</th><th>名称</th><th>驱动</th><th>状态</th><th>操作</th></tr>
-      <tr v-for="a in accounts" :key="a.id">
+      <tr v-for="a in filtered" :key="a.id">
         <td>{{ a.id }}</td>
         <td>{{ a.name }}</td>
         <td><code>{{ a.driver_type }}</code></td>
         <td><span class="badge" :class="a.status === 'ok' ? 'ok' : 'err'">{{ a.status }}</span></td>
         <td><button class="danger" @click="remove(a.id)">删除</button></td>
       </tr>
-      <tr v-if="!accounts.length"><td colspan="5" class="muted">暂无账户</td></tr>
+      <tr v-if="!filtered.length"><td colspan="5" class="muted">暂无账户</td></tr>
     </table>
+  </div>
+
+  <!-- 扫码登录弹窗 -->
+  <div v-if="qrShow" class="modal-mask" @click.self="closeQrcode">
+    <div class="modal">
+      <h2 style="margin-top: 0">115 扫码登录</h2>
+      <div style="text-align: center">
+        <img :src="qrImg" alt="二维码" style="width: 220px; height: 220px; border: 1px solid var(--line); border-radius: 8px" />
+        <p class="muted">打开 115 手机 App → 扫一扫 登录</p>
+        <p>
+          <span v-if="qrStatus === 'waiting'" class="warn-c">等待扫码...</span>
+          <span v-else-if="qrStatus === 'scanned'" class="ok">已扫码, 请在手机上确认</span>
+          <span v-else-if="qrStatus === 'confirmed'" class="ok">登录成功</span>
+        </p>
+      </div>
+      <div class="row" style="justify-content: center; margin-top: 10px">
+        <button @click="closeQrcode">关闭</button>
+      </div>
+    </div>
   </div>
 </template>

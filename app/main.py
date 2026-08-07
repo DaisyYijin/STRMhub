@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from . import config
 from . import web
-from .api import accounts, auth, automation, organize, playback, scrape, tasks
+from .api import accounts, auth, automation, organize, playback, qrcode, scrape, tasks
 from .db.session import init_db
 
 
@@ -51,6 +51,7 @@ app.include_router(playback.router)
 app.include_router(scrape.router)
 app.include_router(organize.router)
 app.include_router(automation.router)
+app.include_router(qrcode.router)
 
 # 前端静态托管(最后注册, 不影响 /api)
 app.include_router(web.router)

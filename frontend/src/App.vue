@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { authApi, isAuthed, setToken } from './api'
+import { computed, onMounted, ref, watch } from 'vue'
+import { accountApi, authApi, isAuthed, qrcodeApi, setToken } from './api'
 import Login from './views/Login.vue'
 import Dashboard from './views/Dashboard.vue'
 import Accounts from './views/Accounts.vue'
@@ -10,36 +10,67 @@ import Organize from './views/Organize.vue'
 import Automation from './views/Automation.vue'
 
 const view = ref(localStorage.getItem('strmhub_view') || 'dashboard')
+const driverFilter = ref(localStorage.getItem('strmhub_driver') || '')
 const authed = ref(isAuthed())
 const health = ref('...')
+const drivers = ref([])
 
-const views = [
+// 基础菜单(与网盘无关)
+const baseViews = [
   { id: 'dashboard', label: '总览', comp: Dashboard },
-  { id: 'accounts', label: '网盘账户', comp: Accounts },
   { id: 'tasks', label: 'STRM 任务', comp: Tasks },
   { id: 'scrape', label: '刮削与海报墙', comp: Scrape },
   { id: 'organize', label: '目录整理', comp: Organize },
   { id: 'automation', label: 'Webhook 联动', comp: Automation },
 ]
 
-const current = computed(() => views.find((v) => v.id === view.value) || views[0])
+// 网盘管理菜单(按驱动类型动态生成, 如 115 网盘管理 / 123 云盘管理)
+const accountViews = computed(() => drivers.value.map((d) => ({
+  id: `accounts:${d.name}`,
+  label: `${d.label}管理`,
+  comp: Accounts,
+  driver: d.name,
+})))
+
+const current = computed(() => {
+  if (view.value.startsWith('accounts:')) {
+    return accountViews.value.find((v) => v.id === view.value)
+      || { id: 'accounts', label: '网盘账户', comp: Accounts, driver: driverFilter.value }
+  }
+  return baseViews.find((v) => v.id === view.value) || baseViews[0]
+})
+
+async function loadDrivers() {
+  if (!authed.value) return
+  try {
+    drivers.value = await accountApi.drivers()
+  } catch { /* 忽略 */ }
+}
 
 function switchView(id) {
   view.value = id
+  if (id.startsWith('accounts:')) {
+    driverFilter.value = id.split(':')[1]
+    localStorage.setItem('strmhub_driver', driverFilter.value)
+  }
   localStorage.setItem('strmhub_view', id)
 }
 
 async function logout() {
   setToken('')
   authed.value = false
+  drivers.value = []
   view.value = 'dashboard'
 }
+
+watch(authed, (v) => { if (v) loadDrivers() })
 
 onMounted(async () => {
   try {
     const h = await fetch('/api/health').then((r) => r.json())
     health.value = h.status
   } catch { health.value = 'offline' }
+  if (authed.value) loadDrivers()
 })
 </script>
 
@@ -51,7 +82,10 @@ onMounted(async () => {
     <aside class="side">
       <div class="logo">STRMhub</div>
       <nav>
-        <a v-for="v in views" :key="v.id" :class="{ active: view === v.id }"
+        <a v-for="v in baseViews" :key="v.id" :class="{ active: view === v.id }"
+           href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
+        <div v-if="accountViews.length" class="nav-group">网盘管理</div>
+        <a v-for="v in accountViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
       </nav>
       <div class="side-foot">
@@ -60,7 +94,7 @@ onMounted(async () => {
       </div>
     </aside>
     <main class="main">
-      <component :is="current.comp" />
+      <component :is="current.comp" :driver-type="current.driver || ''" />
     </main>
   </div>
 </template>
@@ -76,8 +110,9 @@ onMounted(async () => {
 .side nav a {
   color: var(--muted); padding: 7px 10px; border-radius: 6px; font-size: 13px;
 }
-.side nav a:hover { background: #0b1220; color: var(--text); }
-.side nav a.active { background: #0e7490; color: #fff; }
+.side nav a:hover { background: var(--hover); color: var(--text); }
+.side nav a.active { background: var(--accent); color: #fff; }
+.side nav .nav-group { font-size: 11px; color: var(--muted); padding: 10px 10px 2px; }
 .side-foot { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .main { flex: 1; padding: 22px 26px; max-width: 1100px; }
 </style>
