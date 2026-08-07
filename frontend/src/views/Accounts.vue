@@ -105,7 +105,12 @@ const tabs = [
   { id: 'syntax', label: '语法说明' },
   { id: 'dict', label: '分类字典' },
 ]
-const accTab = ref('info')
+// tab 状态持久化: 刷新后停留在当前 tab
+const accTab = ref(localStorage.getItem('strmhub_acctab') || 'info')
+function setTab(t) {
+  accTab.value = t
+  localStorage.setItem('strmhub_acctab', t)
+}
 
 
 // ---- 二级分类字典(genre_ids/语种/国家地区) ----
@@ -660,7 +665,7 @@ function closeQrcode() {
     <div v-else class="card acc-card">
       <div class="acc-tabs">
         <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
-                @click="accTab = t.id">{{ t.label }}</button>
+                @click="setTab(t.id)">{{ t.label }}</button>
       </div>
 
       <!-- 账号信息 -->
