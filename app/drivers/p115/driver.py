@@ -10,7 +10,8 @@ from __future__ import annotations
 import os
 
 from ..base import DriverMeta, FileItem
-from ..common import AccountGate, is_blocked_response
+from ..common import (AccountGate, CredentialExpired, is_blocked_response,
+                      is_credential_expired)
 
 
 class P115Driver:
@@ -41,7 +42,10 @@ class P115Driver:
         )
 
     def _check_blocked(self, payload) -> None:
-        if is_blocked_response(str(payload)):
+        text = str(payload)
+        if is_credential_expired(text):
+            raise CredentialExpired("115 登录已过期, 请重新扫码登录")
+        if is_blocked_response(text):
             self.gate.report_blocked()
             raise RuntimeError("115 接口触发风控, 已进入冷却")
 

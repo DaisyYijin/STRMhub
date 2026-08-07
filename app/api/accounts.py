@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..drivers import registry
+from ..drivers.common import CredentialExpired
 from ..services.account import AccountService
 from .auth import require_user
 
@@ -109,6 +110,10 @@ def browse_account_dirs(account_id: int, parent: str = "",
     try:
         driver = _accounts.driver_for(acc)
         items = driver.list_files(parent or "0")
+    except CredentialExpired as exc:
+        # 凭据过期: 标记账户状态, 前端提示重新扫码
+        _accounts.set_status(account_id, "expired")
+        raise HTTPException(status_code=401, detail=str(exc))
     except Exception as exc:
         _log.exception("请求处理异常")
         raise HTTPException(status_code=400, detail=f"浏览目录失败: {exc}")

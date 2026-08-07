@@ -20,11 +20,32 @@ BLOCKED_MARKERS = (
     "验证码",
 )
 
+# 凭据过期/需要重新登录的特征(115 等网盘 cookie 过期后返回)
+CREDENTIAL_EXPIRED_MARKERS = (
+    "请先验证安全密钥",
+    "安全密钥",
+    "登录已过期",
+    "登录状态已过期",
+    "请先登录",
+    "need login",
+    "please login",
+)
+
+
+class CredentialExpired(RuntimeError):
+    """凭据已失效(需重新登录)。"""
+
 
 def is_blocked_response(text: str) -> bool:
     """根据响应文本判断是否触发风控/封控。"""
     lower = (text or "").lower()
     return any(m.lower() in lower for m in BLOCKED_MARKERS)
+
+
+def is_credential_expired(text: str) -> bool:
+    """根据响应文本判断凭据是否过期(需重新登录)。"""
+    lower = (text or "").lower()
+    return any(m.lower() in lower for m in CREDENTIAL_EXPIRED_MARKERS)
 
 
 class RateLimiter:

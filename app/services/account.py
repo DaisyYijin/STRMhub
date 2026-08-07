@@ -96,6 +96,13 @@ class AccountService:
             s.refresh(acc)
             return acc
 
+    def set_status(self, account_id: int, status: str) -> None:
+        """更新账户状态(ok | error | expired)。"""
+        with session_scope() as s:
+            acc = s.get(Account, account_id)
+            if acc is not None:
+                acc.status = status
+
     def driver_for(self, account: Account):
         """解密凭据并实例化驱动。"""
         credential = ""

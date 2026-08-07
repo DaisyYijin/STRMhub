@@ -46,7 +46,7 @@ const filtered = computed(() =>
 // 115 单账号模式: 取第一个(后端 upsert 保证唯一)
 const acct = computed(() => filtered.value[0] || {})
 
-const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s || '-')
+const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s === 'expired' ? '登录过期' : s || '-')
 
 const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
@@ -467,6 +467,9 @@ function closeQrcode() {
               <span class="acc-name">{{ acct.name }}</span>
               <span v-if="acct.info?.vip" class="badge ok">{{ acct.info.vip }}</span>
               <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(acct.status) }}</span>
+            </div>
+            <div v-if="acct.status === 'expired'" class="msg err" style="margin: 4px 0 0">
+              凭据已过期, 请点击下方「重新扫码登录」更新登录状态
             </div>
             <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
             <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>

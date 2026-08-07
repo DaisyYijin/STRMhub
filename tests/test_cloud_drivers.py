@@ -156,3 +156,58 @@ class TestP123Driver:
 
 def client_calls(driver) -> int:
     return driver.client.list_calls
+
+
+class TestCredentialExpired:
+    def test_credential_expired_detection(self):
+        from app.drivers.common import (CredentialExpired, is_credential_expired)
+        assert is_credential_expired("请先验证安全密钥")
+        assert is_credential_expired("登录已过期, 请重新登录")
+        assert is_credential_expired("please login first")
+        assert not is_credential_expired("ok")
+        assert not is_credential_expired("您的访问被阻断")  # 风控不是过期
+
+    def test_p115_driver_raises_credential_expired(self):
+        from app.drivers.common import CredentialExpired
+        from app.drivers.p115.driver import P115Driver
+
+        class ExpiredClient:
+            def fs_files(self, payload):
+                return {"state": False, "data": [],
+                        "error": "请先验证安全密钥"}
+
+        driver = P115Driver(client=ExpiredClient())
+        try:
+            driver.list_files("0")
+            assert False, "应抛出 CredentialExpired"
+        except CredentialExpired as exc:
+            assert "重新扫码" in str(exc)
+
+    def test_browse_marks_account_expired(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        from app.drivers.common import CredentialExpired
+        import app.api.accounts as accounts_mod
+
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            acc = c.post("/api/accounts", headers=h, json={
+                "name": "过期账户", "driver_type": "local",
+                "credential": ""}).json()
+            # 模拟 115 过期: monkeypatch driver_for 抛 CredentialExpired
+            orig = accounts_mod._accounts.driver_for
+            def boom(acc_obj):
+                raise CredentialExpired("115 登录已过期, 请重新扫码登录")
+            accounts_mod._accounts.driver_for = boom
+            try:
+                r = c.get(f"/api/accounts/{acc['id']}/browse", headers=h)
+                assert r.status_code == 401
+                assert "重新扫码" in r.json()["detail"]
+            finally:
+                accounts_mod._accounts.driver_for = orig
+            # 账户状态被标记为 expired
+            mine = [a for a in c.get("/api/accounts",
+                                     headers=h).json() if a["id"] == acc["id"]][0]
+            assert mine["status"] == "expired"
