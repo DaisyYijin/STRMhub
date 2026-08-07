@@ -1,26 +1,31 @@
+# STRMhub 一键部署配置
+# 使用方式: 保存为 docker-compose.yml, 然后执行: docker compose up -d
+# 首次使用前请修改: STRMHUB_ADMIN_PASSWORD(必改)、EMBY_HOST、EMBY_API_KEY
+
 services:
   strmhub:
-    # 方式一(推荐): 直接拉取 ghcr.io 预构建镜像
-    # 首次使用请先: docker pull ghcr.io/daisyyijin/strmhub:latest
+    # 直接拉取官方镜像(由 GitHub Actions 自动构建发布)
     image: ghcr.io/daisyyijin/strmhub:latest
-    pull_policy: always
-    # 方式二: 本地构建(开发/无镜像时), 注释掉上面两行并取消下面注释
-    # build: .
-
     container_name: strmhub
-    restart: unless-stopped
+    restart: always
     ports:
-      - "6060:6060"            # 管理页面/API
-      - "6086:6086"            # Emby 302 反代(Emby 客户端改连此端口)
-    volumes:
-      - ./data:/app/data       # 数据库/密钥/配置持久化(必须挂载)
-      - ./strm:/strm           # 可选: 本地驱动生成的 .strm 输出目录(反代读取用)
+      - 6060:6060      # 管理页面/API(改 6060 左侧可换访问端口)
+      - 6086:6086      # Emby 302 反代(Emby 客户端改连此端口)
     environment:
-      - STRMHUB_ADMIN_PASSWORD=change-me   # 必改: 管理后台登录密码
-      - EMBY_HOST=http://127.0.0.1:8096    # 上游 Emby/Jellyfin 地址(容器内按需调整)
-      - EMBY_API_KEY=                       # Emby API Key(PlaybackInfo 改写/Path 查询用)
-      # - STRMHUB_DATA=/app/data           # 默认即 /app/data, 一般无需覆盖
-      # - TMDB_API_KEY=                    # 可选: 刮削用
+      # 必改: 管理台登录密码
+      - STRMHUB_ADMIN_PASSWORD=change-me
+      # Emby/Jellyfin 地址与 API Key(302 反代必需; 容器网络下可用 宿主机IP)
+      - EMBY_HOST=http://127.0.0.1:8096
+      - EMBY_API_KEY=
+      # 可选: TMDB API Key, 用于刮削 https://www.themoviedb.org/settings/api
+      # - TMDB_API_KEY=
+      # 可选: 数据目录(默认 /app/data)
+      # - STRMHUB_DATA=/app/data
+    volumes:
+      # 必挂: 数据持久化(密钥/数据库/凭据, 改左侧为你的宿主机目录)
+      - ./data:/app/data
+      # 可选: STRM 输出目录(本地驱动生成 + 反代读取)
+      - ./strm:/strm
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:6060/api/health')"]
       interval: 30s

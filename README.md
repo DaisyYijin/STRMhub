@@ -20,29 +20,52 @@
 - 已安装 Docker 与 Docker Compose v2
 - 服务器开放端口 **6060**(管理台)与 **6086**(Emby 302 反代)
 
-### 步骤
+### 一键配置(推荐 · 复制即用)
+
+**保存下面的内容为 `docker-compose.yml`**(改好两处:密码必改、Emby 按需),然后 `docker compose up -d` 即可,无需 clone 仓库:
+
+```yaml
+services:
+  strmhub:
+    image: ghcr.io/daisyyijin/strmhub:latest   # 官方镜像(CI 自动发布)
+    container_name: strmhub
+    restart: always
+    ports:
+      - 6060:6060      # 管理页面/API
+      - 6086:6086      # Emby 302 反代(Emby 客户端改连此端口)
+    environment:
+      - STRMHUB_ADMIN_PASSWORD=change-me      # ← 必改: 管理台密码
+      - EMBY_HOST=http://127.0.0.1:8096       # ← Emby 地址(容器内按需改宿主机IP)
+      - EMBY_API_KEY=                          # ← Emby API Key(302 必需)
+      # - TMDB_API_KEY=                       # 可选: 刮削用
+    volumes:
+      - ./data:/app/data       # 数据持久化(密钥/数据库, 务必备份)
+      - ./strm:/strm           # 可选: STRM 输出目录
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:6060/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+```
 
 ```bash
-# 方式 A(最简): 一行拉取部署 —— 不 clone 仓库, compose 文件直接引用远程
+docker compose up -d          # 自动拉取镜像并启动
+```
+
+### 其他部署方式
+
+```bash
+# 方式 2: 远程引用 compose 文件(不下载)
 mkdir -p strmhub && cd strmhub && mkdir -p data strm
 docker compose -f https://raw.githubusercontent.com/DaisyYijin/STRMhub/main/docker-compose.yml up -d
-# 国内网络若 raw 不可达, 用 jsDelivr CDN 源:
-# docker compose -f https://cdn.jsdelivr.net/gh/DaisyYijin/STRMhub@main/docker-compose.yml up -d
+# 国内备用: https://cdn.jsdelivr.net/gh/DaisyYijin/STRMhub@main/docker-compose.yml
 
-# 方式 B: 下载 compose 文件后本地运行
-curl -sSL -o docker-compose.yml https://raw.githubusercontent.com/DaisyYijin/STRMhub/main/docker-compose.yml
-# (国内备用: https://cdn.jsdelivr.net/gh/DaisyYijin/STRMhub@main/docker-compose.yml)
-mkdir -p data strm
-docker compose up -d          # 自动从 ghcr.io 拉取镜像
-
-# 方式 C: 本地构建(修改代码/无 ghcr 镜像时)
+# 方式 3: 本地构建(改代码时用)
 git clone https://github.com/DaisyYijin/STRMhub.git
 cd STRMhub && mkdir -p data strm
 docker compose up -d --build
 ```
-
-> 三种方式启动前都建议先编辑 compose 文件, 把 `STRMHUB_ADMIN_PASSWORD` 改为自己的密码
-> (方式 A 可先 `curl` 下载到本地改好再 `up`)。
 
 ### 使用
 
