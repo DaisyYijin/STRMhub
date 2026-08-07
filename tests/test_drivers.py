@@ -14,7 +14,7 @@ class TestRegistry:
     def test_local_registered(self):
         names = [m.name for m in list_drivers()]
         assert "local" in names
-        assert get_meta("local").label == "本地文件系统"
+        assert get_meta("local").label == "本地文件"
 
     def test_create_unknown(self):
         with pytest.raises(KeyError):

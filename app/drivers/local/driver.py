@@ -20,7 +20,7 @@ class LocalDriver(FolderCreator):
     def meta(self) -> DriverMeta:
         return DriverMeta(
             name="local",
-            label="本地文件系统",
+            label="本地文件",
             auth_type="none",
             capabilities=("download", "delete", "mkdir", "move"),
         )
@@ -95,7 +95,7 @@ def register() -> None:
 
     _register(_factory, DriverMeta(
         name="local",
-        label="本地文件系统",
+        label="本地文件",
         auth_type="none",
         capabilities=("download", "delete", "mkdir", "move"),
     ))

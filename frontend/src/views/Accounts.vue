@@ -26,6 +26,8 @@ const qrError = ref('')
 
 // 115 页面: 扫码专用(不显示手动表单); 其他驱动/全部账户: 保留手动表单
 const isP115 = computed(() => props.driverType === 'p115')
+// 驱动视图(有 driverType)统一卡片+tab; 全部账户视图保留列表
+const isCard = computed(() => !!props.driverType)
 
 async function load() {
   try {
@@ -557,6 +559,7 @@ watch(accTab, (t) => {
 async function create() {
   msg.value = ''
   try {
+    if (!form.value.driver_type && props.driverType) form.value.driver_type = props.driverType
     let config = {}
     if (form.value.config_json.trim()) {
       config = JSON.parse(form.value.config_json)
@@ -656,17 +659,39 @@ function closeQrcode() {
   <h1>{{ driverLabel(props.driverType) || '网盘' }}管理</h1>
 
   <!-- 115 页面: 单账号卡片 -->
-  <div v-if="isP115">
-    <!-- 未登录: 引导登录卡 -->
-    <div v-if="!filtered.length" class="card">
-      <h2>115 账号登录</h2>
-      <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
-      <div class="row" style="margin-bottom: 10px">
-        <button class="primary" :disabled="qrBusy" @click="startQrcode">
-          {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
-        </button>
-      </div>
-      <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+  <div v-if="isCard">
+    <!-- 未登录: 引导登录卡(按驱动) -->
+    <div v-if="!filtered.length" class="card" style="max-width: 560px">
+      <h2>{{ driverLabel(props.driverType) }}账号</h2>
+      <!-- 115: 扫码 -->
+      <template v-if="isP115">
+        <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
+        <div class="row" style="margin-bottom: 10px">
+          <button class="primary" :disabled="qrBusy" @click="startQrcode">
+            {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
+          </button>
+        </div>
+        <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+      </template>
+      <!-- 123: 账号密码 -->
+      <template v-else-if="props.driverType === 'p123'">
+        <p class="muted" style="margin-top: 0">填写 123 云盘账号与密码(格式: 手机号:密码), 创建后自动登录。</p>
+        <div class="row" style="margin-bottom: 10px; gap: 8px">
+          <input v-model="form.name" placeholder="名称(可选), 如 我的123" style="max-width: 200px" />
+          <input v-model="form.credential" placeholder="手机号:密码" style="flex: 1" />
+          <button class="primary" @click="create">创建账号</button>
+        </div>
+        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+      </template>
+      <!-- 本地文件: 直接创建 -->
+      <template v-else>
+        <p class="muted" style="margin-top: 0">本地文件系统无需登录, 创建后即可用于 STRM 生成与整理归档。</p>
+        <div class="row" style="margin-bottom: 10px; gap: 8px">
+          <input v-model="form.name" placeholder="名称, 如 我的本地文件" style="max-width: 240px" />
+          <button class="primary" @click="create">创建</button>
+        </div>
+        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+      </template>
     </div>
 
     <!-- 已登录: 账户管理卡(八 tab) -->
@@ -687,10 +712,11 @@ function closeQrcode() {
               <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ statusLabel(acct.status) }}</span>
             </div>
             <div v-if="acct.status === 'expired'" class="msg err" style="margin: 4px 0 0">
-              凭据已过期, 请点击下方「重新扫码登录」更新登录状态
+              凭据已过期, 请重新登录更新状态
             </div>
             <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
             <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>
+            <div class="muted" v-if="!acct.info || !Object.keys(acct.info).length">驱动: {{ driverLabel(props.driverType) }}(该驱动暂不支持账号信息拉取)</div>
           </div>
         </div>
         <div class="acc-space" v-if="acct.info?.total_size">
@@ -705,9 +731,15 @@ function closeQrcode() {
           <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
         </div>
         <div class="row" style="margin-top: 14px">
-          <button class="primary" :disabled="qrBusy" @click="startQrcode">
-            {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
-          </button>
+          <template v-if="isP115">
+            <button class="primary" :disabled="qrBusy" @click="startQrcode">
+              {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
+            </button>
+          </template>
+          <template v-else-if="props.driverType === 'p123'">
+            <input v-model="form.credential" placeholder="更新凭据(手机号:密码)" style="max-width: 260px" />
+            <button class="primary" @click="create">更新凭据</button>
+          </template>
           <button class="danger" @click="remove(acct.id)">删除账户</button>
           <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
         </div>
@@ -925,36 +957,7 @@ function closeQrcode() {
     </div>
   </div>
 
-  <!-- 其他驱动/全部账户: 手动表单 -->
-  <div v-else class="card">
-    <h2>新增账户</h2>
-    <div class="grid2">
-      <div>
-        <label>名称</label>
-        <input v-model="form.name" :placeholder="`如: 我的${driverLabel(props.driverType) || '网盘'}`" />
-      </div>
-      <div>
-        <label>驱动类型</label>
-        <select v-model="form.driver_type" :disabled="!!props.driverType">
-          <option v-for="d in drivers" :key="d.name" :value="d.name">{{ d.label }} ({{ d.name }})</option>
-        </select>
-      </div>
-      <div>
-        <label>凭据(115 Cookie / 123 账号密码 / WebDAV user:pass, 按驱动)</label>
-        <input v-model="form.credential" placeholder="留空表示无需登录" />
-      </div>
-      <div>
-        <label>配置 JSON(如 WebDAV 的 base_url)</label>
-        <input v-model="form.config_json" placeholder='{"base_url":"https://dav.example.com"}' />
-      </div>
-    </div>
-    <div class="row" style="margin-top: 10px">
-      <button class="primary" @click="create">创建</button>
-      <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
-    </div>
-  </div>
-
-  <div class="card" v-if="!isP115">
+  <div class="card" v-if="!isCard">
     <h2>{{ props.driverType ? `${driverLabel(props.driverType)}账户列表` : '账户列表' }}(凭据已加密存储)</h2>
     <table>
       <tr><th>ID</th><th>账号</th><th>驱动</th><th>信息</th><th>状态</th><th>操作</th></tr>

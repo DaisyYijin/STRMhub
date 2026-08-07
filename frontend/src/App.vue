@@ -26,8 +26,11 @@ const baseViews = [
   { id: 'scrape', label: '刮削与海报墙', comp: Scrape },
   { id: 'organize', label: '目录整理', comp: Organize },
   { id: 'automation', label: 'Webhook 联动', comp: Automation },
-  { id: 'logs', label: '实时日志', comp: Logs },
+  { id: 'logs', label: '实时日志', comp: Logs },  // 日志页(不进菜单, 由右上角按钮进入)
 ]
+
+// 菜单项(排除日志页)
+const menuViews = computed(() => baseViews.filter((v) => v.id !== 'logs'))
 
 // 网盘管理菜单(按驱动类型动态生成, 如 115 网盘管理 / 123 云盘管理)
 const accountViews = computed(() => drivers.value.map((d) => ({
@@ -116,7 +119,7 @@ onMounted(async () => {
     <aside class="side">
       <div class="logo">STRMhub</div>
       <nav>
-        <a v-for="v in baseViews" :key="v.id" :class="{ active: view === v.id }"
+        <a v-for="v in menuViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
         <div v-if="accountViews.length || driversError" class="nav-group nav-toggle"
              :class="{ open: netpanOpen }" @click="toggleNetpan">
@@ -139,6 +142,10 @@ onMounted(async () => {
     <main class="main">
       <component :is="current.comp" :driver-type="current.driver || ''" />
     </main>
+
+    <!-- 右上角: 实时日志入口 -->
+    <button class="log-fab" :class="{ on: view === 'logs' }" title="实时日志"
+            @click="switchView('logs')">📄</button>
   </div>
 </template>
 
