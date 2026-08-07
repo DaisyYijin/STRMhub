@@ -671,6 +671,10 @@ function closeQrcode() {
 
   <!-- 驱动管理页: 顶部卡(登录/账户) + 规则 tab 区(驱动级, 不依赖账户) -->
   <div v-if="isCard" class="card acc-card">
+      <div class="acc-tabs">
+        <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
+                @click="setTab(t.id)">{{ t.label }}</button>
+      </div>
       <template v-if="accTab === 'info'">
       <template v-if="!filtered.length">
         <h2>{{ driverLabel(props.driverType) }}账号</h2>
@@ -743,11 +747,7 @@ function closeQrcode() {
         <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
       </template>
     </template>
-      <div class="acc-tabs">
-        <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
-                @click="setTab(t.id)">{{ t.label }}</button>
-      </div>
-            <!-- 整理归档 -->
+
       <template v-if="accTab === 'organize'">
         <h2 style="margin-top: 0">整理归档</h2>
         <p class="muted" style="margin-top: 0">选择三个目录: 点击"选择"浏览网盘目录(无需填 cid)。开始整理后, 扫描等待整理目录并识别分类。</p>

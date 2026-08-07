@@ -14,3 +14,5 @@ p123client>=0.0.5
 qrcode>=7.0
 pypinyin>=0.50
 pyyaml>=6.0
+httpx[http2]
+qrcode>=7.0

@@ -50,6 +50,11 @@ describe('Accounts.vue mount repro', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(w.text()).toContain('测试昵称')
     expect(w.text()).toContain('重新扫码登录')
+    // 账号信息内容必须出现在 tab 栏之后(曾平铺在 tab 上方)
+    const html = w.html()
+    const tabIdx = html.indexOf('整理归档')
+    const infoIdx = html.indexOf('测试昵称')
+    expect(infoIdx).toBeGreaterThan(tabIdx)
   })
   it('已登录(local 有账户)渲染不报错', async () => {
     accountApi.list.mockResolvedValue([{ ...loggedAccount, driver_type: 'local' }])
