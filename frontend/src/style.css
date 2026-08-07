@@ -196,3 +196,14 @@ code { background: var(--code-bg); border: 1px solid var(--line); border-radius:
 .log-lv { color: #60a5fa; margin-right: 8px; }
 .log-err .log-msg { color: #f87171; }
 .log-warn .log-msg { color: #fbbf24; }
+
+/* 日志面板开关按钮 */
+.log-toggle {
+  background: #374151; border: none; color: #9ca3af; border-radius: 5px;
+  padding: 3px 10px; cursor: pointer; font-size: 12px;
+}
+.log-toggle.on { background: var(--accent); color: #fff; }
+.log-errbar {
+  background: #7f1d1d; color: #fecaca; padding: 4px 12px;
+  font-size: 12px; flex-shrink: 0;
+}

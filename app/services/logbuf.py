@@ -44,7 +44,11 @@ _installed = False
 
 
 def install() -> None:
-    """挂载环形缓冲到 root logger(幂等), 并保证控制台输出仍在。"""
+    """挂载环形缓冲到 root 与 uvicorn loggers(幂等), 并保证控制台输出仍在。
+
+    注意: uvicorn.access 默认 propagate=False, 必须直接挂 handler,
+    否则访问日志收不到(面板会长期为空)。
+    """
     global _installed
     if _installed:
         return
@@ -53,8 +57,14 @@ def install() -> None:
     # 控制台输出(uvicorn log_config 已重置过, 这里补回)
     if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
         root.addHandler(logging.StreamHandler())
-    if _handler not in root.handlers:
-        root.addHandler(_handler)
+    targets = [root]
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.INFO)
+        targets.append(lg)
+    for lg in targets:
+        if _handler not in lg.handlers:
+            lg.addHandler(_handler)
     _installed = True
 
 

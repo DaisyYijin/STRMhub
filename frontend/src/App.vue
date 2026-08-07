@@ -85,6 +85,7 @@ const logShow = ref(false)
 const logLines = ref([])
 const logPaused = ref(false)
 const logAutoScroll = ref(true)
+const logError = ref('')
 const logBox = ref(null)
 let logEs = null
 
@@ -96,10 +97,13 @@ function logLevelClass(level) {
 
 async function logOpen() {
   logShow.value = true
+  logError.value = ''
   try {
     const data = await http.get('/api/logs?tail=200')
     logLines.value = data.lines || []
-  } catch { /* 401 等忽略 */ }
+  } catch (e) {
+    logError.value = `历史日志加载失败: ${e.message}`
+  }
   const token = localStorage.getItem('strmhub_token') || ''
   if (logEs) logEs.close()
   logEs = new EventSource(`/api/logs/stream?token=${encodeURIComponent(token)}`)
@@ -107,6 +111,7 @@ async function logOpen() {
     if (logPaused.value) return
     try {
       const ln = JSON.parse(e.data)
+      if (ln.error) { logError.value = `SSE 连接失败: ${ln.error}`; return }
       logLines.value.push(ln)
       if (logLines.value.length > 1000) {
         logLines.value.splice(0, logLines.value.length - 1000)
@@ -115,6 +120,9 @@ async function logOpen() {
         nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
       }
     } catch { /* 心跳忽略 */ }
+  }
+  logEs.onerror = () => {
+    logError.value = 'SSE 连接断开, 自动重连中...'
   }
 }
 
@@ -191,15 +199,16 @@ onMounted(async () => {
     <div v-if="logShow" class="log-panel">
       <div class="log-head">
         <span class="log-title">实时日志</span>
-        <label style="display:flex; align-items:center; gap:4px; font-size:12px">
-          <input type="checkbox" v-model="logPaused" /> 暂停
-        </label>
-        <label style="display:flex; align-items:center; gap:4px; font-size:12px">
-          <input type="checkbox" v-model="logAutoScroll" /> 自动滚动
-        </label>
+        <button class="log-toggle" :class="{ on: !logPaused }" @click="logPaused = !logPaused">
+          {{ logPaused ? '已暂停' : '实时' }}
+        </button>
+        <button class="log-toggle" :class="{ on: logAutoScroll }" @click="logAutoScroll = !logAutoScroll">
+          自动滚动 {{ logAutoScroll ? '开' : '关' }}
+        </button>
         <button class="log-btn" @click="logClear">清空</button>
         <button class="log-btn" @click="logClose">关闭</button>
       </div>
+      <div v-if="logError" class="log-errbar">{{ logError }}</div>
       <div ref="logBox" class="log-body">
         <div v-for="(ln, i) in logLines" :key="i" class="log-line" :class="logLevelClass(ln.level)">
           <span class="log-ts">{{ new Date(ln.ts * 1000).toLocaleTimeString() }}</span>

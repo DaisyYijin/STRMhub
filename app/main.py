@@ -24,6 +24,8 @@ async def lifespan(_app: FastAPI):
     init_db()
     from .services.logbuf import install as install_logbuf
     install_logbuf()  # 日志环形缓冲(日志面板)
+    import logging
+    logging.getLogger("strmhub").info("STRMhub 启动完成, version=%s", APP_VERSION)
     yield
 
 
