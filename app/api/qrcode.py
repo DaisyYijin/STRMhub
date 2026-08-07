@@ -29,6 +29,10 @@ def start_qrcode(body: StartIn, _: str = Depends(require_user)):
         return qrcode_login.start(body.driver_type)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # 未知异常: 返回具体信息便于排查
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"二维码生成失败: {exc}")
 
 
 @router.post("/poll")

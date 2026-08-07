@@ -18,6 +18,8 @@ const qrToken = ref('')
 const qrUid = ref('')
 const qrStatus = ref('')
 const qrTimer = ref(null)
+const qrBusy = ref(false)
+const qrError = ref('')
 
 async function load() {
   try {
@@ -69,6 +71,10 @@ async function remove(id) {
 
 // ---- 115 扫码登录 ----
 async function startQrcode() {
+  if (qrBusy.value) return
+  qrBusy.value = true
+  qrError.value = ''
+  msg.value = ''
   try {
     const data = await qrcodeApi.start('p115')
     qrToken.value = data.qr_token
@@ -78,7 +84,11 @@ async function startQrcode() {
     qrShow.value = true
     qrTimer.value = setInterval(pollQrcode, 2000)
   } catch (e) {
-    msg.value = { type: 'err', text: e.message }
+    // 错误直接显示在按钮旁, 便于发现
+    qrError.value = `扫码登录不可用: ${e.message}`
+    console.error('[STRMhub] 扫码登录失败:', e)
+  } finally {
+    qrBusy.value = false
   }
 }
 
@@ -124,11 +134,13 @@ function closeQrcode() {
   <div class="card">
     <h2>新增账户</h2>
     <div class="row" style="margin-bottom: 10px">
-      <button v-if="props.driverType === 'p115'" class="primary" @click="startQrcode">
-        115 扫码登录
+      <button v-if="props.driverType === 'p115'" class="primary"
+              :disabled="qrBusy" @click="startQrcode">
+        {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
       </button>
       <span class="muted">也可手动填写凭据:</span>
     </div>
+    <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
     <div class="grid2">
       <div>
         <label>名称</label>

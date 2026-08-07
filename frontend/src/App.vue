@@ -15,6 +15,7 @@ const authed = ref(isAuthed())
 const health = ref('...')
 const drivers = ref([])
 const driversError = ref('')
+const netpanOpen = ref(localStorage.getItem('strmhub_netpan_open') !== '0')
 
 // 基础菜单(与网盘无关)
 const baseViews = [
@@ -74,6 +75,11 @@ function switchView(id) {
   localStorage.setItem('strmhub_view', id)
 }
 
+function toggleNetpan() {
+  netpanOpen.value = !netpanOpen.value
+  localStorage.setItem('strmhub_netpan_open', netpanOpen.value ? '1' : '0')
+}
+
 async function logout() {
   setToken('')
   authed.value = false
@@ -104,12 +110,17 @@ onMounted(async () => {
       <nav>
         <a v-for="v in baseViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
-        <div v-if="accountViews.length || driversError" class="nav-group">网盘管理</div>
-        <div v-if="driversError" class="nav-error">{{ driversError }}</div>
-        <a v-for="v in accountViews" :key="v.id" :class="{ active: view === v.id }"
-           href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
-        <a v-if="driversError" :class="{ active: view === 'accounts:all' }"
-           href="#" @click.prevent="switchView('accounts:all')">{{ fallbackAccountView.label }}</a>
+        <div v-if="accountViews.length || driversError" class="nav-group nav-toggle"
+             @click="toggleNetpan">
+          <span class="arrow">{{ netpanOpen ? '▾' : '▸' }}</span> 网盘管理
+        </div>
+        <template v-if="netpanOpen">
+          <div v-if="driversError" class="nav-error">{{ driversError }}</div>
+          <a v-for="v in accountViews" :key="v.id" :class="{ active: view === v.id }"
+             href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
+          <a v-if="driversError" :class="{ active: view === 'accounts:all' }"
+             href="#" @click.prevent="switchView('accounts:all')">{{ fallbackAccountView.label }}</a>
+        </template>
       </nav>
       <div class="side-foot">
         <span class="muted">后端: {{ health }}</span>
@@ -136,6 +147,9 @@ onMounted(async () => {
 .side nav a:hover { background: var(--hover); color: var(--text); }
 .side nav a.active { background: var(--accent); color: #fff; }
 .side nav .nav-group { font-size: 11px; color: var(--muted); padding: 10px 10px 2px; }
+.side nav .nav-toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; }
+.side nav .nav-toggle:hover { color: var(--text); }
+.side nav .arrow { font-size: 10px; }
 .side nav .nav-error { font-size: 11px; color: var(--bad); padding: 4px 10px; word-break: break-all; }
 .side-foot { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .main { flex: 1; padding: 22px 26px; max-width: 1100px; }
