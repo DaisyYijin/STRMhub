@@ -113,6 +113,50 @@ class QrcodeLoginService:
             apps.append({"key": k, "label": APP_LABELS.get(k, k)})
         return apps
 
+    def fetch_account_info(self, driver_type: str, credential: str) -> dict:
+        """用凭据拉取账号基本信息(昵称/头像/容量/VIP)。失败时返回 {} 不影响登录。
+
+        115: client.user_my_info() -> {uname, vip{is_vip,is_forever,expire_str}, face{face_s}}
+             client.fs_index_info(payload=0) -> data.space_info{all_total, all_use, all_remain}
+        """
+        if driver_type != "p115":
+            return {}
+        try:
+            cls = self._client_class(driver_type)
+            client = cls(credential)
+        except Exception:
+            return {}
+        info = {}
+        try:
+            data = (client.user_my_info() or {}).get("data") or {}
+            info["nickname"] = data.get("uname") or ""
+            vip = data.get("vip") or {}
+            if vip.get("is_forever"):
+                info["vip"] = "永久 VIP"
+            elif vip.get("is_vip"):
+                info["vip"] = "VIP"
+            else:
+                info["vip"] = ""
+            if vip.get("expire_str"):
+                info["vip_expire"] = vip["expire_str"]
+            face = data.get("face") or {}
+            if face.get("face_s"):
+                info["avatar"] = face["face_s"]
+        except Exception:
+            pass
+        try:
+            space = ((client.fs_index_info(payload=0) or {}).get("data") or {})\
+                .get("space_info") or {}
+            total = space.get("all_total") or {}
+            used = space.get("all_use") or {}
+            info["total_size"] = total.get("size", 0)
+            info["used_size"] = used.get("size", 0)
+            info["total_size_fmt"] = total.get("size_format", "")
+            info["used_size_fmt"] = used.get("size_format", "")
+        except Exception:
+            pass
+        return info
+
     @staticmethod
     def _svg_data_uri(content: str) -> str:
         """二维码内容 -> SVG data URI(避免另开图片接口与防盗链问题)。"""

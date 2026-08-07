@@ -28,6 +28,7 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     credential_enc: Mapped[str] = mapped_column(Text, default="")   # AES-GCM hex
     config_json: Mapped[str] = mapped_column(Text, default="{}")    # 驱动配置(如 root)
+    info_json: Mapped[str] = mapped_column(Text, default="{}")      # 账号信息(昵称/容量/头像等)
     status: Mapped[str] = mapped_column(String(16), default="ok")   # ok | error
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)
 

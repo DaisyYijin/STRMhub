@@ -29,6 +29,20 @@ class FakeP115Client:
         assert app  # 设备参数必须传递
         return {"data": {"cookie": cls.cookies}}
 
+    def __init__(self, credential=""):
+        self.credential = credential
+
+    def user_my_info(self):
+        return {"data": {"uname": "测试用户",
+                          "vip": {"is_vip": True, "is_forever": True},
+                          "face": {"face_s": "https://img.example.com/a.png"}}}
+
+    def fs_index_info(self, payload=0):
+        return {"data": {"space_info": {
+            "all_total": {"size": 10 * 2 ** 30, "size_format": "10.0 GB"},
+            "all_use": {"size": 2 * 2 ** 30, "size_format": "2.0 GB"},
+            "all_remain": {"size": 8 * 2 ** 30, "size_format": "8.0 GB"}}}}
+
 
 @pytest.fixture(autouse=True)
 def reset_fake():
@@ -98,6 +112,31 @@ class TestQrcodeLogin:
         with pytest.raises(RuntimeError, match="获取二维码失败"):
             svc.start("p115")
 
+    def test_fetch_account_info(self):
+        """扫码确认后拉取账号信息: 昵称/VIP/头像/容量。"""
+        svc = QrcodeLoginService(client_cls=FakeP115Client)
+        info = svc.fetch_account_info("p115", "UID=123; CID=456")
+        assert info["nickname"] == "测试用户"
+        assert info["vip"] == "永久 VIP"
+        assert info["avatar"] == "https://img.example.com/a.png"
+        assert info["total_size"] == 10 * 2 ** 30
+        assert info["total_size_fmt"] == "10.0 GB"
+        assert info["used_size_fmt"] == "2.0 GB"
+        # 非 115 驱动返回空
+        assert svc.fetch_account_info("local", "x") == {}
+
+    def test_fetch_account_info_graceful_failure(self):
+        """信息接口抛异常时返回 {} 不影响登录。"""
+        class BrokenClient(FakeP115Client):
+            def user_my_info(self):
+                raise RuntimeError("boom")
+
+            def fs_index_info(self, payload=0):
+                raise RuntimeError("boom2")
+
+        svc = QrcodeLoginService(client_cls=BrokenClient)
+        assert svc.fetch_account_info("p115", "x") == {}
+
     def test_time_sign_int_normalized_to_str(self):
         """115 返回 int 时间戳时, start 必须输出字符串(否则 poll 422)。"""
         class IntFieldsClient(FakeP115Client):
@@ -127,3 +166,40 @@ class TestQrcodeLogin:
         import base64
         svg = base64.b64decode(result["qr_image"].split(",", 1)[1]).decode("utf-8")
         assert "<svg" in svg
+
+
+class TestQrcodeApiAutoCreate:
+    """API 集成: poll confirmed 时自动创建账户(monkeypatch 服务层)。"""
+
+    def test_poll_confirmed_auto_creates_account(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        def fake_poll(driver_type, uid, time, sign, app="web"):
+            return {"status": "confirmed",
+                    "cookies": "UID=123; CID=456"}
+
+        def fake_info(driver_type, credential):
+            return {"nickname": "扫码用户", "vip": "VIP",
+                    "total_size_fmt": "10.0 GB"}
+
+        monkeypatch.setattr("app.api.qrcode.qrcode_login.poll", fake_poll)
+        monkeypatch.setattr(
+            "app.api.qrcode.qrcode_login.fetch_account_info", fake_info)
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            r = c.post("/api/accounts/qrcode/poll", headers=h, json={
+                "driver_type": "p115", "uid": "U", "time": "T",
+                "sign": "S", "app": "android"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["status"] == "confirmed"
+            assert body["account"]["name"] == "扫码用户"
+            assert body["account"]["driver_type"] == "p115"
+            assert body["account"]["info"]["vip"] == "VIP"
+            assert body["account"]["info"]["device"] == "android"
+            # 列表中出现自动创建的账户
+            accounts = c.get("/api/accounts", headers=h).json()
+            assert any(a["name"] == "扫码用户" for a in accounts)

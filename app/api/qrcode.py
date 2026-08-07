@@ -1,13 +1,20 @@
-"""扫码登录 API: 生成二维码(SVG data URI) / 轮询状态(新 API: uid/time/sign + app)。"""
+"""扫码登录 API: 生成二维码(SVG data URI) / 轮询状态(新 API: uid/time/sign + app)。
+
+扫码确认后自动创建账户并拉取账号信息(昵称/容量/头像等), 无需前端手动建户。
+"""
 from __future__ import annotations
+
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..services.account import AccountService
 from ..services.qrcode import qrcode_login
 from .auth import require_user
 
 router = APIRouter(prefix="/api/accounts/qrcode", tags=["qrcode"])
+_accounts = AccountService()
 
 
 class StartIn(BaseModel):
@@ -20,6 +27,20 @@ class PollIn(BaseModel):
     time: str
     sign: str
     app: str = "web"
+
+
+def _auto_create_account(driver_type: str, cookies: str, app: str = "web") -> dict:
+    """扫码确认后: 拉取账号信息并自动创建账户, 返回账户 dict。"""
+    info = qrcode_login.fetch_account_info(driver_type, cookies)
+    info["device"] = app  # 登录设备(扫码时选择)
+    nickname = (info.get("nickname") or "").strip()
+    name = nickname or f"{driver_type}-{secrets.token_hex(3)}"
+    try:
+        acc = _accounts.create(name, driver_type, credential=cookies, info=info)
+    except ValueError:  # 名字重复(昵称撞车): 加随机后缀
+        name = f"{name}-{secrets.token_hex(3)}"
+        acc = _accounts.create(name, driver_type, credential=cookies, info=info)
+    return _accounts.to_dict(acc)
 
 
 @router.post("/start")
@@ -40,13 +61,23 @@ def start_qrcode(body: StartIn, _: str = Depends(require_user)):
 
 @router.post("/poll")
 def poll_qrcode(body: PollIn, _: str = Depends(require_user)):
-    """轮询扫码状态; confirmed 时返回 cookies(可直接创建账户)。"""
+    """轮询扫码状态; confirmed 时自动创建账户并返回 account(含账号信息)。"""
     try:
-        return qrcode_login.poll(body.driver_type, body.uid, body.time,
-                                 body.sign, body.app)
+        result = qrcode_login.poll(body.driver_type, body.uid, body.time,
+                                   body.sign, body.app)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"轮询失败: {exc}")
+    if result["status"] == "confirmed":
+        try:
+            result["account"] = _auto_create_account(
+                body.driver_type, result["cookies"], body.app)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            result["status"] = "error"
+            result["error"] = f"自动创建账户失败: {exc}"
+    return result

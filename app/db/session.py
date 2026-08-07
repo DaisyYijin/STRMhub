@@ -34,6 +34,20 @@ _engine = None
 _SessionLocal = None
 
 
+def _migrate_columns(engine) -> None:
+    """轻量迁移: 旧库补充新列(create_all 不会加列)。"""
+    import sqlalchemy as sa
+    from sqlalchemy import inspect
+    insp = inspect(engine)
+    if "accounts" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("accounts")}
+    with engine.begin() as conn:
+        if "info_json" not in cols:
+            conn.execute(sa.text(
+                "ALTER TABLE accounts ADD COLUMN info_json TEXT DEFAULT '{}'"))
+
+
 def init_db(db_path=None) -> None:
     """初始化引擎与表结构(幂等)。"""
     global _engine, _SessionLocal
@@ -41,6 +55,7 @@ def init_db(db_path=None) -> None:
         _engine = _make_engine(db_path)
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
         Base.metadata.create_all(_engine)
+        _migrate_columns(_engine)
 
 
 def session_scope():

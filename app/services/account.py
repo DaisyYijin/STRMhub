@@ -17,7 +17,7 @@ from ..security.crypto import decrypt_credential, encrypt_credential
 
 class AccountService:
     def create(self, name: str, driver_type: str, credential: str = "",
-               config: dict | None = None) -> Account:
+               config: dict | None = None, info: dict | None = None) -> Account:
         if not registry.get_meta(driver_type):
             raise KeyError(f"未知驱动类型: {driver_type}")
         with session_scope() as s:
@@ -29,6 +29,7 @@ class AccountService:
                 driver_type=driver_type,
                 credential_enc=encrypt_credential(credential) if credential else "",
                 config_json=json.dumps(config or {}, ensure_ascii=False),
+                info_json=json.dumps(info or {}, ensure_ascii=False),
             )
             s.add(acc)
             s.flush()
@@ -67,6 +68,7 @@ class AccountService:
             "name": acc.name,
             "driver_type": acc.driver_type,
             "config": json.loads(acc.config_json or "{}"),
+            "info": json.loads(acc.info_json or "{}"),
             "status": acc.status,
             "created_at": acc.created_at.isoformat() if acc.created_at else None,
         }
