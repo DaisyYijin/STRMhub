@@ -19,8 +19,10 @@ const scanModes = [
 ]
 
 async function load() {
-  tasks.value = await taskApi.list()
-  accounts.value = await accountApi.list()
+  try {
+    tasks.value = await taskApi.list()
+    accounts.value = await accountApi.list()
+  } catch { /* 401 已由全局事件处理 */ }
 }
 
 onMounted(load)

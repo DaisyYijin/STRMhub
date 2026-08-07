@@ -33,6 +33,16 @@ export async function api(method, path, body) {
   let data = null
   try { data = text ? JSON.parse(text) : null } catch { data = null }
   if (!resp.ok) {
+    // token 失效: 清除本地凭据并通知 UI 回到登录页(登录接口本身除外)
+    if (resp.status === 401 && !path.startsWith('/api/auth/')) {
+      setToken('')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('strmhub-unauthorized'))
+      }
+      const err = new Error('登录已过期, 请重新登录')
+      err.status = 401
+      throw err
+    }
     const err = new Error(normalizeError(resp, data))
     err.status = resp.status
     throw err

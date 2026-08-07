@@ -20,8 +20,10 @@ const qrStatus = ref('')
 const qrTimer = ref(null)
 
 async function load() {
-  accounts.value = await accountApi.list()
-  drivers.value = await accountApi.drivers()
+  try {
+    accounts.value = await accountApi.list()
+    drivers.value = await accountApi.drivers()
+  } catch { /* 401 已由全局事件处理 */ }
 }
 
 onMounted(() => { form.value.driver_type = props.driverType; load() })

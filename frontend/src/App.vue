@@ -84,6 +84,8 @@ async function logout() {
 watch(authed, (v) => { if (v) loadDrivers() })
 
 onMounted(async () => {
+  // token 过期: 自动回到登录页
+  window.addEventListener('strmhub-unauthorized', () => { authed.value = false })
   try {
     const h = await fetch('/api/health').then((r) => r.json())
     health.value = h.status

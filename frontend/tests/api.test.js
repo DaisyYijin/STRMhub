@@ -16,10 +16,12 @@ function mockStorage() {
 beforeEach(() => {
   mockStorage()
   globalThis.fetch = vi.fn()
+  globalThis.window = { dispatchEvent: vi.fn() }
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  delete globalThis.window
 })
 
 describe('token 管理', () => {
@@ -70,7 +72,29 @@ describe('api()', () => {
       ok: false, status: 401,
       text: async () => JSON.stringify({ detail: '凭据无效' }),
     })
-    await expect(api('GET', '/api/me')).rejects.toThrow('凭据无效')
+    await expect(api('GET', '/api/me')).rejects.toThrow('登录已过期')
+  })
+
+  it('401 清除 token 并触发登出事件(非登录接口)', async () => {
+    setToken('stale-token')
+    globalThis.fetch.mockResolvedValue({
+      ok: false, status: 401,
+      text: async () => JSON.stringify({ detail: '凭据无效或已过期' }),
+    })
+    await expect(api('GET', '/api/accounts/drivers')).rejects.toThrow('登录已过期')
+    expect(getToken()).toBe('')  // token 已清除
+    expect(globalThis.window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'strmhub-unauthorized' }))
+  })
+
+  it('登录接口 401 不触发登出事件', async () => {
+    globalThis.fetch.mockResolvedValue({
+      ok: false, status: 401,
+      text: async () => JSON.stringify({ detail: '密码错误' }),
+    })
+    await expect(api('POST', '/api/auth/login', { password: 'x' }))
+      .rejects.toThrow('密码错误')
+    expect(globalThis.window.dispatchEvent).not.toHaveBeenCalled()
   })
 
   it('非 JSON 响应容错', async () => {
