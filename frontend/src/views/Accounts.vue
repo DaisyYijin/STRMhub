@@ -102,7 +102,10 @@ async function startQrcode() {
 async function pollQrcode() {
   try {
     const data = await qrcodeApi.poll('p115', {
-      uid: qrUid.value, time: qrTime.value, sign: qrSign.value, app: qrApp.value,
+      uid: String(qrUid.value || ''),
+      time: String(qrTime.value || ''),
+      sign: String(qrSign.value || ''),
+      app: qrApp.value || 'web',
     })
     qrStatus.value = data.status
     if (data.status === 'confirmed') {
@@ -117,17 +120,23 @@ async function pollQrcode() {
       qrShow.value = false
       msg.value = { type: 'ok', text: '扫码登录成功, 账户已创建' }
       await load()
-    } else if (data.status === 'expired' || data.status === 'error') {
+    } else if (data.status === 'expired') {
       clearInterval(qrTimer.value)
       qrTimer.value = null
-      msg.value = { type: 'err', text: data.status === 'expired' ? '二维码已过期, 请重新生成' : '登录失败' }
-      qrShow.value = false
+      qrError.value = '二维码已过期, 请关闭后重新生成'
+      qrStatus.value = 'expired'
+    } else if (data.status === 'cancelled') {
+      clearInterval(qrTimer.value)
+      qrTimer.value = null
+      qrError.value = '已取消扫码, 请重新生成'
+      qrStatus.value = 'cancelled'
     }
   } catch (e) {
-    clearInterval(qrTimer.value)
-    qrTimer.value = null
-    msg.value = { type: 'err', text: e.message }
-    qrShow.value = false
+    // 轮询失败: 停止轮询但保留弹窗, 便于用户看到错误后重新操作
+    if (qrTimer.value) { clearInterval(qrTimer.value); qrTimer.value = null }
+    qrStatus.value = 'error'
+    qrError.value = `轮询失败: ${e.message}`
+    console.error('[STRMhub] 扫码轮询失败:', e)
   }
 }
 
@@ -208,10 +217,16 @@ function closeQrcode() {
           <span v-if="qrStatus === 'waiting'" class="warn-c">等待扫码...</span>
           <span v-else-if="qrStatus === 'scanned'" class="ok">已扫码, 请在手机上确认</span>
           <span v-else-if="qrStatus === 'confirmed'" class="ok">登录成功</span>
+          <span v-else-if="qrStatus === 'expired'" class="err">二维码已过期, 请重新生成</span>
+          <span v-else-if="qrStatus === 'cancelled'" class="err">已取消扫码</span>
+          <span v-else-if="qrStatus === 'error'" class="err">轮询失败(网络/服务异常)</span>
         </p>
-      </div>
-      <div class="row" style="justify-content: center; margin-top: 10px">
-        <button @click="closeQrcode">关闭</button>
+        <p v-if="qrError" class="msg err" style="margin-top: 4px">{{ qrError }}</p>
+        <div class="row" style="justify-content: center; margin-top: 10px">
+          <button @click="closeQrcode">关闭</button>
+          <button v-if="qrStatus === 'expired' || qrStatus === 'error' || qrStatus === 'cancelled'"
+                  class="primary" style="margin-left: 8px" @click="startQrcode">重新生成</button>
+        </div>
       </div>
     </div>
   </div>

@@ -98,6 +98,21 @@ class TestQrcodeLogin:
         with pytest.raises(RuntimeError, match="获取二维码失败"):
             svc.start("p115")
 
+    def test_time_sign_int_normalized_to_str(self):
+        """115 返回 int 时间戳时, start 必须输出字符串(否则 poll 422)。"""
+        class IntFieldsClient(FakeP115Client):
+            @classmethod
+            def login_qrcode_token(cls):
+                return {"data": {"uid": "U7", "time": 1730000000,
+                                 "sign": "abc", "qrcode": "x"}}
+
+        svc = QrcodeLoginService(client_cls=IntFieldsClient)
+        result = svc.start("p115")
+        assert result["uid"] == "U7"
+        assert result["time"] == "1730000000"
+        assert result["sign"] == "abc"
+        assert isinstance(result["time"], str)
+
     def test_qrcode_empty_fallback_url(self):
         class NoQrcodeClient(FakeP115Client):
             @classmethod

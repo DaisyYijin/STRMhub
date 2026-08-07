@@ -59,8 +59,8 @@ class QrcodeLoginService:
         return {
             "driver_type": driver_type,
             "uid": str(uid),
-            "time": data.get("time", ""),
-            "sign": data.get("sign", ""),
+            "time": str(data.get("time") or ""),
+            "sign": str(data.get("sign") or ""),
             "qr_image": self._svg_data_uri(content),
             "apps": self._app_list(),
         }
