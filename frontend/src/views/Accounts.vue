@@ -280,10 +280,12 @@ function pickerBack() {
   picker.value.parent = prev?.id || ''
   loadPickerDirs()
 }
-function selectThisDir() {
+async function selectThisDir() {
   orgDirs.value[picker.value.field] = { ...picker.value.current }
   picker.value = null
-  orgMsg.value = ''
+  orgMsg.value = { type: 'ok', text: '目录已选择并自动保存' }
+  // 选择即保存, 防止用户忘记点"保存目录"刷新后丢失
+  await saveRules('organize', ['organize_dirs'])
 }
 function closePicker() { picker.value = null }
 

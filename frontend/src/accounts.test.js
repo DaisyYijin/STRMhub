@@ -14,7 +14,7 @@ vi.mock('./api', () => ({
 }))
 
 import Accounts from './views/Accounts.vue'
-import { accountApi } from './api'
+import { accountApi, driverRulesApi } from './api'
 
 const loggedAccount = {
   id: 1, name: '扫码用户', driver_type: 'p115', status: 'ok',
@@ -66,6 +66,30 @@ describe('Accounts.vue mount repro', () => {
     await new Promise((r) => setTimeout(r, 30))
     expect(w.vm.msg).toBe('')
     expect(w.vm.qrError).toBe('')
+  })
+  it('目录保存后刷新读回不丢失(保存->读回链路)', async () => {
+    accountApi.list.mockResolvedValue([loggedAccount])
+    const saved = { rules: {} }
+    driverRulesApi.save.mockImplementation(async (driver, rules) => {
+      saved.rules = rules
+      return { ok: true }
+    })
+    const w = mount(Accounts, { props: { driverType: 'p115' } })
+    await new Promise((r) => setTimeout(r, 30))
+    // 选择目录 -> 保存
+    w.vm.orgDirs.pending = { id: '342', name: '待整理' }
+    await w.vm.saveRules('organize', ['organize_dirs'])
+    expect(saved.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
+    // 选择目录即自动保存(无需手动点保存按钮)
+    w.vm.picker = { field: 'pending', parent: '', stack: [], dirs: [],
+                    current: { id: '342', name: '待整理' } }
+    await w.vm.selectThisDir()
+    expect(saved.rules.organize_dirs.pending).toEqual({ id: '342', name: '待整理' })
+    // 模拟刷新: 后端返回保存的值, 重新加载
+    driverRulesApi.rules.mockResolvedValue({ rules: saved.rules })
+    await w.vm.loadRules()
+    expect(w.vm.orgDirs.pending).toEqual({ id: '342', name: '待整理' })
+    expect(w.vm.orgDirs.existing).toEqual({})
   })
   it('已登录(local 有账户)渲染不报错', async () => {
     accountApi.list.mockResolvedValue([{ ...loggedAccount, driver_type: 'local' }])
