@@ -27,8 +27,10 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # 首次推送需 PAT(写 packages 权限); 创建后放入仓库 Secrets:
+          #   gh secret set GHCR_TOKEN --repo DaisyYijin/STRMhub
+          username: daisyyijin
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Compute tags
         id: meta
