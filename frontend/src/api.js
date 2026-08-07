@@ -82,9 +82,8 @@ export const driverRulesApi = {
 
 export const qrcodeApi = {
   start: (driverType) => http.post('/api/accounts/qrcode/start', { driver_type: driverType }),
-  poll: (driverType, { uid, time, sign, app }) => http.post('/api/accounts/qrcode/poll', {
-    driver_type: driverType, uid, time, sign, app,
-  }),
+  poll: (driverType, { uid = '', time = '', sign = '', app = 'web', uni_id = '' } = {}) =>
+    http.post('/api/accounts/qrcode/poll', { driver_type: driverType, uid, time, sign, app, uni_id }),
 }
 
 export const taskApi = {

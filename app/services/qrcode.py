@@ -168,3 +168,48 @@ class QrcodeLoginService:
 
 
 qrcode_login = QrcodeLoginService()
+
+
+class P123QrcodeLoginService:
+    """123 云盘扫码登录(p123client: generate -> 轮询 result, loginStatus 3 拿 token)。"""
+
+    @staticmethod
+    def start() -> dict:
+        from p123client import P123Client
+        resp = P123Client.login_qrcode_generate()
+        data = resp.get("data") or {}
+        uni_id = str(data.get("uniID") or data.get("uniId") or "")
+        qr = (data.get("qrCode") or data.get("qrCodeUrl")
+              or data.get("url") or "")
+        if not uni_id:
+            raise RuntimeError(f"123 二维码生成失败: {resp}")
+        content = qr or uni_id
+        return {
+            "driver_type": "p123",
+            "uni_id": uni_id,
+            "qr_image": QrcodeLoginService._svg_data_uri(content),
+            "apps": [],
+        }
+
+    @staticmethod
+    def poll(uni_id: str) -> dict:
+        """轮询扫码状态: 0 等待 / 1 已扫 / 2 取消 / 3 已登录 / 4 失效。"""
+        from p123client import P123Client
+        resp = P123Client.login_qrcode_result({"uniID": uni_id})
+        data = resp.get("data") or {}
+        status = int(data.get("loginStatus") or 0)
+        if status == 3:
+            token = (data.get("token") or data.get("accessToken")
+                     or data.get("access_token") or "")
+            if not token:
+                raise RuntimeError(f"123 登录结果缺少 token: {resp}")
+            return {"status": "confirmed", "cookies": token,
+                    "info": {"device": "扫码登录"}}
+        if status == 2:
+            return {"status": "cancelled"}
+        if status == 4:
+            return {"status": "expired"}
+        return {"status": "waiting"}
+
+
+p123_qrcode_login = P123QrcodeLoginService()

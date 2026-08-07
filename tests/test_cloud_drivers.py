@@ -96,26 +96,30 @@ class TestP115Driver:
 
 
 class FakeP123Client:
+    """新契约(p123client >= 0.0.5): fs_list 收 payload dict, 返回 lastFileId。"""
+
     def __init__(self, pages=None, blocked=False):
         self.pages = pages or [
-            [{"FileId": 200, "FileName": "a.mp4", "Size": 2048, "Type": 0}]
+            [{"FileID": 200, "FileName": "a.mp4", "Size": 2048, "Type": 2}]
         ]
         self.blocked = blocked
         self.list_calls = 0
 
-    def fs_list(self, parentFileId=None, limit=100, page=1, inDirectSpace=False):
+    def fs_list(self, payload=None, **kw):
         self.list_calls += 1
         if self.blocked:
             return {"data": {"fileList": []}, "code": 429,
                     "message": "操作频繁, 请稍后再试"}
+        payload = payload or {}
+        page = payload.get("page", 1)
         rows = self.pages[page - 1] if page - 1 < len(self.pages) else []
-        return {"data": {"fileList": rows, "total": len(self.pages) * 100}}
+        return {"data": {"fileList": rows, "lastFileId": -1}}
 
-    def download_info(self, fileId=None):
-        return {"DownloadUrl": f"https://dl.123pan.com/{fileId}"}
+    def download_info(self, fileId=None, **kw):
+        return {"data": {"DownloadUrl": f"https://dl.123pan.com/{fileId}"}}
 
-    def user_info(self):
-        return {"user_id": 1}
+    def user_info(self, **kw):
+        return {"data": {"user_id": 1}}
 
 
 class TestP123Driver:

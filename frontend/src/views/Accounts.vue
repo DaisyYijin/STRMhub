@@ -17,6 +17,7 @@ const qrImg = ref('')
 const qrUid = ref('')
 const qrTime = ref('')
 const qrSign = ref('')
+const qrUniId = ref('')
 const qrApp = ref('web')
 const qrApps = ref([])
 const qrStatus = ref('')
@@ -99,6 +100,7 @@ function applyPreset() {
 
 // ---- 账户页 tab ----
 const tabs = [
+  { id: 'info', label: '账号信息' },
   { id: 'organize', label: '整理归档' },
   { id: 'identify', label: '识别规则' },
   { id: 'ai', label: 'AI 辅助' },
@@ -109,7 +111,7 @@ const tabs = [
   { id: 'dict', label: '分类字典' },
 ]
 // tab 状态持久化: 刷新后停留在当前 tab
-const accTab = ref(localStorage.getItem('strmhub_acctab') || 'organize')
+const accTab = ref(localStorage.getItem('strmhub_acctab') || 'info')
 function setTab(t) {
   accTab.value = t
   localStorage.setItem('strmhub_acctab', t)
@@ -596,10 +598,11 @@ async function startQrcode() {
   qrError.value = ''
   msg.value = ''
   try {
-    const data = await qrcodeApi.start('p115')
+    const data = await qrcodeApi.start(props.driverType)
     qrUid.value = data.uid
     qrTime.value = data.time
     qrSign.value = data.sign
+    qrUniId.value = data.uni_id
     qrImg.value = data.qr_image  // SVG data URI
     qrApps.value = data.apps || []
     qrApp.value = data.apps?.find((a) => a.key === 'web')?.key
@@ -618,12 +621,15 @@ async function startQrcode() {
 
 async function pollQrcode() {
   try {
-    const data = await qrcodeApi.poll('p115', {
-      uid: String(qrUid.value || ''),
-      time: String(qrTime.value || ''),
-      sign: String(qrSign.value || ''),
-      app: qrApp.value || 'web',
-    })
+    const payload = props.driverType === 'p123'
+      ? { uni_id: String(qrUniId.value || '') }
+      : {
+          uid: String(qrUid.value || ''),
+          time: String(qrTime.value || ''),
+          sign: String(qrSign.value || ''),
+          app: qrApp.value || 'web',
+        }
+    const data = await qrcodeApi.poll(props.driverType, payload)
     qrStatus.value = data.status
     if (data.status === 'confirmed') {
       clearInterval(qrTimer.value)
@@ -664,8 +670,8 @@ function closeQrcode() {
   <h1>{{ driverLabel(props.driverType) || '网盘' }}管理</h1>
 
   <!-- 驱动管理页: 顶部卡(登录/账户) + 规则 tab 区(驱动级, 不依赖账户) -->
-  <div v-if="isCard">
-    <div class="card" style="max-width: 640px">
+  <div v-if="isCard" class="card acc-card">
+      <template v-if="accTab === 'info'">
       <template v-if="!filtered.length">
         <h2>{{ driverLabel(props.driverType) }}账号</h2>
         <template v-if="isP115">
@@ -678,12 +684,18 @@ function closeQrcode() {
           <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
         </template>
         <template v-else-if="props.driverType === 'p123'">
-          <p class="muted" style="margin-top: 0">填写 123 云盘账号与密码(格式: 手机号:密码), 创建后自动登录。</p>
+          <p class="muted" style="margin-top: 0">使用 123 云盘 App 扫码登录(推荐), 或使用手机号:密码登录。</p>
+          <div class="row" style="margin-bottom: 10px">
+            <button class="primary" :disabled="qrBusy" @click="startQrcode">
+              {{ qrBusy ? '生成二维码中...' : '123 扫码登录' }}
+            </button>
+          </div>
           <div class="row" style="margin-bottom: 10px; gap: 8px">
             <input v-model="form.name" placeholder="名称(可选), 如 我的123" style="max-width: 200px" />
             <input v-model="form.credential" placeholder="手机号:密码" style="flex: 1" />
-            <button class="primary" @click="create">创建账号</button>
+            <button class="primary" @click="create">账号密码登录</button>
           </div>
+          <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
           <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
         </template>
         <template v-else>
@@ -718,7 +730,7 @@ function closeQrcode() {
           <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
         </div>
         <div class="row" style="margin-top: 14px">
-          <template v-if="isP115">
+          <template v-if="isP115 || props.driverType === 'p123'">
             <button class="primary" :disabled="qrBusy" @click="startQrcode">{{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}</button>
           </template>
           <template v-else-if="props.driverType === 'p123'">
@@ -730,9 +742,7 @@ function closeQrcode() {
         </div>
         <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
       </template>
-    </div>
-
-    <div class="card acc-card" style="margin-top: 14px">
+    </template>
       <div class="acc-tabs">
         <button v-for="t in tabs" :key="t.id" :class="{ 'tab-on': accTab === t.id }"
                 @click="setTab(t.id)">{{ t.label }}</button>
@@ -946,7 +956,6 @@ function closeQrcode() {
           <span class="muted">{{ ex[1] }}</span>
         </p>
       </template>
-    </div>
   </div>
 
   <div class="card" v-if="!isCard">
