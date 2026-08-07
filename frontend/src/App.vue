@@ -133,7 +133,8 @@ async function logOpen() {
   logError.value = ''
   try {
     const data = await http.get('/api/logs?tail=200')
-    logLines.value = data.lines || []
+    // 最新日志显示在第一行
+    logLines.value = (data.lines || []).reverse()
   } catch (e) {
     logError.value = `历史日志加载失败: ${e.message}`
   }
@@ -145,12 +146,10 @@ async function logOpen() {
     try {
       const ln = JSON.parse(e.data)
       if (ln.error) { logError.value = `SSE 连接失败: ${ln.error}`; return }
-      logLines.value.push(ln)
-      if (logLines.value.length > 1000) {
-        logLines.value.splice(0, logLines.value.length - 1000)
-      }
+      logLines.value.unshift(ln)  // 新日志插入第一行
+      if (logLines.value.length > 1000) logLines.value.length = 1000
       if (logAutoScroll.value) {
-        nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
+        nextTick(() => { if (logBox.value) logBox.value.scrollTop = 0 })
       }
     } catch { /* 心跳忽略 */ }
   }
@@ -224,10 +223,13 @@ onMounted(async () => {
       </div>
     </aside>
     <main class="main">
-      <component :is="current.comp" :driver-type="current.driver || ''" />
+      <!-- 页面内容(logShow 时被日志面板覆盖) -->
+      <div v-if="!logShow">
+        <component :is="current.comp" :driver-type="current.driver || ''" />
+      </div>
 
-      <!-- 实时日志(页面内嵌, 点击右上角按钮展开/收起) -->
-      <div v-if="logShow" class="log-panel">
+      <!-- 实时日志(点击📄覆盖整个页面区域) -->
+      <div v-else class="log-panel">
         <div class="log-head">
           <span class="log-title">实时日志</span>
           <button class="log-toggle" :class="{ on: !logPaused }" @click="logPaused = !logPaused">
@@ -237,7 +239,7 @@ onMounted(async () => {
             自动滚动 {{ logAutoScroll ? '开' : '关' }}
           </button>
           <button class="log-btn" @click="logClear">清空</button>
-          <button class="log-btn" @click="logClose">收起</button>
+          <button class="log-btn" @click="logClose">返回</button>
         </div>
         <div v-if="logError" class="log-errbar">{{ logError }}</div>
         <div ref="logBox" class="log-body">
