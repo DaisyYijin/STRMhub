@@ -253,8 +253,13 @@ async function loadPickerDirs() {
   pickerBusy.value = true
   pickerErr.value = ''
   picker.value.diagnose = null
+  if (!acct.value.id) {
+    pickerErr.value = '请先创建/登录账户'
+    pickerBusy.value = false
+    return
+  }
   try {
-    const data = await accountApi.browse(acct.id, picker.value.parent)
+    const data = await accountApi.browse(acct.value.id, picker.value.parent)
     picker.value.dirs = data.dirs || []
     picker.value.diagnose = data.diagnose || null
   } catch (e) {
@@ -281,16 +286,6 @@ function selectThisDir() {
   orgMsg.value = ''
 }
 function closePicker() { picker.value = null }
-
-async function saveOrgDirs() {
-  orgMsg.value = ''
-  try {
-    await accountApi.saveRules(acct.id, rules.value)
-    orgMsg.value = { type: 'ok', text: '目录与规则已保存' }
-  } catch (e) {
-    orgMsg.value = { type: 'err', text: e.message }
-  }
-}
 
 async function startOrganize() {
   orgMsg.value = ''
@@ -550,10 +545,14 @@ async function loadRules() {
       rules.value.ai.mode = rules.value.ai.enabled ? 'assist' : 'off'
     }
     categoryYaml.value = r.category_yaml || CATEGORY_YAML_DEFAULT
+    // 防御: 历史脏数据(对象嵌套)只取 {id, name}
+    const pickDir = (x) => (x && typeof x === 'object' && typeof x.name === 'string'
+      ? { id: String(x.id ?? ''), name: x.name } : {})
+    const od = r.organize_dirs || {}
     orgDirs.value = {
-      pending: { ...(r.organize_dirs?.pending || {}) },
-      existing: { ...(r.organize_dirs?.existing || {}) },
-      redundant: { ...(r.organize_dirs?.redundant || {}) },
+      pending: pickDir(od.pending),
+      existing: pickDir(od.existing),
+      redundant: pickDir(od.redundant),
     }
   } catch { /* 忽略 */ }
 }

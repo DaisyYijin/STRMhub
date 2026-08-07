@@ -42,6 +42,12 @@ function translateMsg(msg) {
     if (path.startsWith('/api/logs/stream')) path = '/api/logs/stream (实时日志流)'
     out = out.replace(m[0], `${m[1]} - 请求: ${m[2]} ${path} → ${m[4]}`)
   }
+  // httpx 网络请求: 'HTTP Request: GET https://... "HTTP/2 200 OK"'
+  const hm = out.match(/HTTP Request: (\w+) (\S+)(?: "([^"]*)")?/)
+  if (hm) {
+    const method = hm[1] === 'GET' ? '请求' : hm[1] === 'POST' ? '提交' : hm[1]
+    out = out.replace(hm[0], `网络${method}: ${hm[2]}${hm[3] ? ' → ' + hm[3] : ''}`)
+  }
   // 隐藏 URL 中的登录令牌
   out = out.replace(/(token=)[A-Za-z0-9_.\-]{20,}/g, '$1[已隐藏]')
   return out
