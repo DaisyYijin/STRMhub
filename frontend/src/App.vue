@@ -145,7 +145,7 @@ onMounted(async () => {
 
     <!-- 右上角: 实时日志入口 -->
     <button class="log-fab" :class="{ on: view === 'logs' }" title="实时日志"
-            @click="switchView('logs')">📄</button>
+            @click="switchView('logs')">📄 实时日志</button>
   </div>
 </template>
 

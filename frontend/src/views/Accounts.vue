@@ -50,7 +50,9 @@ const acct = computed(() => filtered.value[0] || {})
 
 const statusLabel = (s) => (s === 'ok' ? '正常' : s === 'error' ? '异常' : s === 'expired' ? '登录过期' : s || '-')
 
-const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
+// 驱动名 -> 中文名静态映射(标题兜底, 不依赖 drivers 接口加载)
+const DRIVER_NAMES = { p115: '115 网盘', p123: '123 云盘', local: '本地文件' }
+const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || DRIVER_NAMES[t] || t
 
 // 登录设备 key -> 中文名(兼容历史数据存的 key; 新数据已存中文名)
 const DEVICE_LABELS = {
@@ -676,6 +678,7 @@ function closeQrcode() {
       <!-- 123: 账号密码 -->
       <template v-else-if="props.driverType === 'p123'">
         <p class="muted" style="margin-top: 0">填写 123 云盘账号与密码(格式: 手机号:密码), 创建后自动登录。</p>
+        <p class="muted" style="margin-top: -4px">创建后可用完整功能: 整理归档/识别规则/AI 辅助/重命名规则/二级分类策略等(与 115 网盘一致)。</p>
         <div class="row" style="margin-bottom: 10px; gap: 8px">
           <input v-model="form.name" placeholder="名称(可选), 如 我的123" style="max-width: 200px" />
           <input v-model="form.credential" placeholder="手机号:密码" style="flex: 1" />
@@ -685,7 +688,8 @@ function closeQrcode() {
       </template>
       <!-- 本地文件: 直接创建 -->
       <template v-else>
-        <p class="muted" style="margin-top: 0">本地文件系统无需登录, 创建后即可用于 STRM 生成与整理归档。</p>
+        <p class="muted" style="margin-top: 0">本地文件无需登录, 创建后即可用于 STRM 生成与整理归档。</p>
+        <p class="muted" style="margin-top: -4px">创建后可用完整功能: 整理归档/识别规则/AI 辅助/重命名规则/二级分类策略等(与 115 网盘一致)。</p>
         <div class="row" style="margin-bottom: 10px; gap: 8px">
           <input v-model="form.name" placeholder="名称, 如 我的本地文件" style="max-width: 240px" />
           <button class="primary" @click="create">创建</button>
