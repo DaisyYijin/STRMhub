@@ -71,10 +71,9 @@ export const accountApi = {
 
 export const qrcodeApi = {
   start: (driverType) => http.post('/api/accounts/qrcode/start', { driver_type: driverType }),
-  poll: (driverType, qrToken, qrUid) => http.post('/api/accounts/qrcode/poll', {
-    driver_type: driverType, qr_token: qrToken, qr_uid: qrUid,
+  poll: (driverType, { uid, time, sign, app }) => http.post('/api/accounts/qrcode/poll', {
+    driver_type: driverType, uid, time, sign, app,
   }),
-  image: (url) => `/api/accounts/qrcode/image?url=${encodeURIComponent(url)}`,
 }
 
 export const taskApi = {

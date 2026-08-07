@@ -14,8 +14,11 @@ const msg = ref('')
 // 扫码登录弹窗状态
 const qrShow = ref(false)
 const qrImg = ref('')
-const qrToken = ref('')
 const qrUid = ref('')
+const qrTime = ref('')
+const qrSign = ref('')
+const qrApp = ref('web')
+const qrApps = ref([])
 const qrStatus = ref('')
 const qrTimer = ref(null)
 const qrBusy = ref(false)
@@ -77,9 +80,13 @@ async function startQrcode() {
   msg.value = ''
   try {
     const data = await qrcodeApi.start('p115')
-    qrToken.value = data.qr_token
-    qrUid.value = data.qr_uid
-    qrImg.value = qrcodeApi.image(data.image_url)
+    qrUid.value = data.uid
+    qrTime.value = data.time
+    qrSign.value = data.sign
+    qrImg.value = data.qr_image  // SVG data URI
+    qrApps.value = data.apps || []
+    qrApp.value = data.apps?.find((a) => a.key === 'web')?.key
+      || data.apps?.[0]?.key || 'web'
     qrStatus.value = 'waiting'
     qrShow.value = true
     qrTimer.value = setInterval(pollQrcode, 2000)
@@ -94,7 +101,9 @@ async function startQrcode() {
 
 async function pollQrcode() {
   try {
-    const data = await qrcodeApi.poll('p115', qrToken.value, qrUid.value)
+    const data = await qrcodeApi.poll('p115', {
+      uid: qrUid.value, time: qrTime.value, sign: qrSign.value, app: qrApp.value,
+    })
     qrStatus.value = data.status
     if (data.status === 'confirmed') {
       clearInterval(qrTimer.value)
@@ -189,6 +198,12 @@ function closeQrcode() {
       <div style="text-align: center">
         <img :src="qrImg" alt="二维码" style="width: 220px; height: 220px; border: 1px solid var(--line); border-radius: 8px" />
         <p class="muted">打开 115 手机 App → 扫一扫 登录</p>
+        <p style="margin: 6px 0">
+          <label for="qr-app">登录设备:</label>
+          <select id="qr-app" v-model="qrApp" style="margin-left: 8px">
+            <option v-for="a in qrApps" :key="a.key" :value="a.key">{{ a.label }}</option>
+          </select>
+        </p>
         <p>
           <span v-if="qrStatus === 'waiting'" class="warn-c">等待扫码...</span>
           <span v-else-if="qrStatus === 'scanned'" class="ok">已扫码, 请在手机上确认</span>

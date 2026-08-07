@@ -1,90 +1,129 @@
-"""网盘扫码登录服务(当前支持 115)。
+"""网盘扫码登录服务(当前支持 115, 基于 p115client 0.0.9.x 新 API)。
 
-115 流程(p115client):
-  1. login_qrcode_token() -> (qr_token, qr_uid)
-  2. 前端展示二维码 https://qrcodeapi.115.com/api/1.0/web/1.0/token?qr_token=&qr_uid=
-  3. 轮询 login_qrcode_scan(qr_token, qr_uid):
-     data.status: 0=等待扫码 1=已扫码待确认 2=确认成功
-  4. 成功后从 client.cookies 提取 Cookie 字符串, 用于创建账户
-
-实现为防御式(探测方法名/返回值形态), 真实联调需安装 p115client。
+流程(p115strmhelper api.py 同款, 已验证):
+  1. P115Client.login_qrcode_token() -> data: {uid, time, sign, qrcode}
+     qrcode 为二维码内容(可能为空, 空则用 https://115.com/scan/dg-{uid})
+  2. 前端展示二维码(SVG 由后端生成) + 选择登录设备(app)
+  3. P115Client.login_qrcode_scan_status({"uid","time","sign"}) 轮询:
+     data.status: 0=等待 1=已扫码待确认 2=确认成功 -1=过期 -2=用户取消
+  4. status==2: P115Client.login_qrcode_scan_result(uid, app=设备)
+     -> data.cookie dict -> "k=v; ..." cookie 字符串(用于创建账户)
 """
 from __future__ import annotations
 
-import json
+import io
+
+# 设备 key -> 中文名(APP_TO_SSOENT 的常见项)
+APP_LABELS = {
+    "web": "网页版",
+    "desktop": "桌面客户端",
+    "android": "安卓",
+    "harmony": "鸿蒙",
+    "alipaymini": "支付宝小程序",
+    "qandroid": "安卓(默认)",
+    "ios": "iOS",
+    "os_windows": "Windows",
+}
+DEFAULT_APPS = [("web", "网页版"), ("android", "安卓"), ("harmony", "鸿蒙"),
+                ("alipaymini", "支付宝小程序")]
 
 
 class QrcodeLoginService:
-    def start(self, driver_type: str, client=None) -> dict:
-        """生成二维码, 返回 {driver_type, qr_token, qr_uid, image_url}。"""
-        client = client or self._make_client(driver_type)
-        if driver_type == "p115":
-            if not hasattr(client, "login_qrcode_token"):
-                raise RuntimeError("p115client 版本不支持扫码登录, 请升级")
-            tok = client.login_qrcode_token()
-            if isinstance(tok, tuple) and len(tok) >= 2:
-                qr_token, qr_uid = tok[0], tok[1]
-            else:
-                qr_token = (tok or {}).get("qr_token") or (tok or {}).get("token")
-                qr_uid = (tok or {}).get("qr_uid") or (tok or {}).get("uid")
-            if not qr_token or not qr_uid:
-                raise RuntimeError("获取二维码失败")
-            image_url = (
-                "https://qrcodeapi.115.com/api/1.0/web/1.0/token"
-                f"?qr_token={qr_token}&qr_uid={qr_uid}")
-            return {"driver_type": driver_type, "qr_token": qr_token,
-                    "qr_uid": qr_uid, "image_url": image_url}
-        raise ValueError(f"驱动 {driver_type} 不支持扫码登录")
+    def __init__(self, client_cls=None):
+        # 可注入 fake 客户端类(测试用); None 时延迟导入 p115client.P115Client
+        self.client_cls = client_cls
 
-    def poll(self, driver_type: str, qr_token: str, qr_uid: str,
-             client=None) -> dict:
+    def _client_class(self, driver_type: str):
+        if driver_type != "p115":
+            raise ValueError(f"驱动 {driver_type} 不支持扫码登录")
+        if self.client_cls is not None:
+            return self.client_cls
+        try:
+            from p115client import P115Client
+        except ImportError as exc:
+            raise RuntimeError(
+                "115 扫码登录需要 p115client: pip install p115client") from exc
+        return P115Client
+
+    def start(self, driver_type: str) -> dict:
+        """生成二维码, 返回 {driver_type, uid, time, sign, qr_image, apps}。"""
+        cls = self._client_class(driver_type)
+        if not hasattr(cls, "login_qrcode_token"):
+            raise RuntimeError("p115client 版本不支持扫码登录, 请升级")
+        resp = cls.login_qrcode_token()
+        data = resp.get("data") or {}
+        uid = data.get("uid")
+        if not uid:
+            raise RuntimeError(f"获取二维码失败: {resp}")
+        content = data.get("qrcode") or f"https://115.com/scan/dg-{uid}"
+        return {
+            "driver_type": driver_type,
+            "uid": str(uid),
+            "time": data.get("time", ""),
+            "sign": data.get("sign", ""),
+            "qr_image": self._svg_data_uri(content),
+            "apps": self._app_list(),
+        }
+
+    def poll(self, driver_type: str, uid: str, time: str, sign: str,
+             app: str = "web") -> dict:
         """轮询扫码状态。
 
-        返回: {"status": "waiting"|"scanned"|"confirmed"|"expired"|"error",
-               "cookies": "k=v; ..."(仅 confirmed)}
+        返回 {"status": "waiting"|"scanned"|"confirmed"|"expired"|"cancelled"|"error",
+              "cookies": "k=v; ..."(仅 confirmed)}
         """
-        client = client or self._make_client(driver_type)
-        if driver_type == "p115":
-            if not hasattr(client, "login_qrcode_scan"):
-                raise RuntimeError("p115client 版本不支持扫码轮询")
-            result = client.login_qrcode_scan(qr_token, qr_uid)
-            data = result.get("data") or {} if isinstance(result, dict) else {}
-            status = int(data.get("status") or 0)
-            if status == 2:
-                cookies = self._extract_cookies(client)
-                return {"status": "confirmed", "cookies": cookies}
-            if status == 1:
-                return {"status": "scanned"}
-            if status in (-1, -2, -3):
-                return {"status": "expired"}
-            return {"status": "waiting"}
-        raise ValueError(f"驱动 {driver_type} 不支持扫码登录")
+        cls = self._client_class(driver_type)
+        if not hasattr(cls, "login_qrcode_scan_status"):
+            raise RuntimeError("p115client 版本不支持扫码轮询, 请升级")
+        payload = {"uid": uid, "time": time, "sign": sign}
+        result = cls.login_qrcode_scan_status(payload)
+        status = int((result.get("data") or {}).get("status") or 0)
+        if status == 2:
+            return {"status": "confirmed",
+                    "cookies": self._confirm(cls, uid, app)}
+        if status == 1:
+            return {"status": "scanned"}
+        if status == -1:
+            return {"status": "expired"}
+        if status == -2:
+            return {"status": "cancelled"}
+        return {"status": "waiting"}
 
     @staticmethod
-    def _extract_cookies(client) -> str:
-        """从 client 提取 Cookie 字符串。"""
-        try:
-            cookies = client.cookies
-        except AttributeError:
-            return ""
-        if isinstance(cookies, dict):
-            return "; ".join(f"{k}={v}" for k, v in cookies.items())
-        # http.cookiejar 形态
-        try:
-            return "; ".join(f"{c.name}={c.value}" for c in cookies)
-        except TypeError:
-            return str(cookies)
+    def _confirm(cls, uid: str, app: str) -> str:
+        """扫码确认后获取 cookie 字符串。"""
+        if not hasattr(cls, "login_qrcode_scan_result"):
+            raise RuntimeError("p115client 版本不支持扫码结果获取, 请升级")
+        res = cls.login_qrcode_scan_result(uid, app=app)
+        cookie = (res.get("data") or {}).get("cookie") or {}
+        return "; ".join(f"{k}={v}" for k, v in cookie.items() if k and v)
 
     @staticmethod
-    def _make_client(driver_type: str):
-        if driver_type == "p115":
-            try:
-                from p115client import P115Client
-            except ImportError as exc:
-                raise RuntimeError(
-                    "115 扫码登录需要 p115client: pip install p115client") from exc
-            return P115Client()
-        raise ValueError(f"驱动 {driver_type} 不支持扫码登录")
+    def _app_list() -> list[dict]:
+        """可用登录设备列表(优先读 p115client.const.AVAILABLE_APPS)。"""
+        apps = []
+        try:
+            from p115client.const import AVAILABLE_APPS
+            keys = [a for a in AVAILABLE_APPS if a in APP_LABELS]
+        except Exception:
+            keys = [k for k, _ in DEFAULT_APPS]
+        if not keys:
+            keys = [k for k, _ in DEFAULT_APPS]
+        for k in keys:
+            apps.append({"key": k, "label": APP_LABELS.get(k, k)})
+        return apps
+
+    @staticmethod
+    def _svg_data_uri(content: str) -> str:
+        """二维码内容 -> SVG data URI(避免另开图片接口与防盗链问题)。"""
+        import base64
+        import qrcode
+        import qrcode.image.svg
+        img = qrcode.make(content, image_factory=qrcode.image.svg.SvgPathImage)
+        buf = io.BytesIO()
+        img.save(buf)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/svg+xml;base64,{b64}"
 
 
 qrcode_login = QrcodeLoginService()
