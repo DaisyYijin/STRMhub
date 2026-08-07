@@ -36,6 +36,39 @@ class AccountService:
             s.refresh(acc)
             return acc
 
+    def upsert(self, driver_type: str, name: str, credential: str = "",
+               info: dict | None = None) -> tuple[Account, bool]:
+        """单账号模式: 同驱动已有账户则更新(凭据+信息+名称), 否则新建。
+
+        返回 (账户, 是否新建)。新建时 name 撞唯一约束会抛 ValueError。
+        """
+        with session_scope() as s:
+            acc = s.scalar(select(Account).where(
+                Account.driver_type == driver_type))
+            if acc is not None:
+                if credential:
+                    acc.credential_enc = encrypt_credential(credential)
+                acc.info_json = json.dumps(info or {}, ensure_ascii=False)
+                acc.status = "ok"
+                if name and acc.name != name:
+                    acc.name = name
+                s.flush()
+                s.refresh(acc)
+                return acc, False
+            if not registry.get_meta(driver_type):
+                raise KeyError(f"未知驱动类型: {driver_type}")
+            acc = Account(
+                name=name,
+                driver_type=driver_type,
+                credential_enc=encrypt_credential(credential) if credential else "",
+                config_json="{}",
+                info_json=json.dumps(info or {}, ensure_ascii=False),
+            )
+            s.add(acc)
+            s.flush()
+            s.refresh(acc)
+            return acc, True
+
     def get(self, account_id: int) -> Account | None:
         with session_scope() as s:
             return s.get(Account, account_id)

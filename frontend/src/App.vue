@@ -111,14 +111,15 @@ onMounted(async () => {
         <a v-for="v in baseViews" :key="v.id" :class="{ active: view === v.id }"
            href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
         <div v-if="accountViews.length || driversError" class="nav-group nav-toggle"
-             @click="toggleNetpan">
-          <span class="arrow">{{ netpanOpen ? '▾' : '▸' }}</span> 网盘管理
+             :class="{ open: netpanOpen }" @click="toggleNetpan">
+          <span class="arrow"></span> 网盘管理
         </div>
         <template v-if="netpanOpen">
           <div v-if="driversError" class="nav-error">{{ driversError }}</div>
-          <a v-for="v in accountViews" :key="v.id" :class="{ active: view === v.id }"
+          <a v-for="v in accountViews" :key="v.id" class="nav-sub"
+             :class="{ active: view === v.id }"
              href="#" @click.prevent="switchView(v.id)">{{ v.label }}</a>
-          <a v-if="driversError" :class="{ active: view === 'accounts:all' }"
+          <a v-if="driversError" class="nav-sub" :class="{ active: view === 'accounts:all' }"
              href="#" @click.prevent="switchView('accounts:all')">{{ fallbackAccountView.label }}</a>
         </template>
       </nav>
@@ -146,10 +147,22 @@ onMounted(async () => {
 }
 .side nav a:hover { background: var(--hover); color: var(--text); }
 .side nav a.active { background: var(--accent); color: #fff; }
-.side nav .nav-group { font-size: 11px; color: var(--muted); padding: 10px 10px 2px; }
-.side nav .nav-toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; }
-.side nav .nav-toggle:hover { color: var(--text); }
-.side nav .arrow { font-size: 10px; }
+.side nav .nav-group {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  padding: 7px 10px; border-radius: 6px;
+  cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.side nav .nav-group:hover { background: var(--hover); color: var(--text); }
+.side nav .nav-group .arrow {
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform .15s ease;
+}
+.side nav .nav-group.open .arrow { transform: rotate(90deg); }
+.side nav .nav-sub { padding-left: 22px; font-size: 12.5px; }
 .side nav .nav-error { font-size: 11px; color: var(--bad); padding: 4px 10px; word-break: break-all; }
 .side-foot { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
 .main { flex: 1; padding: 22px 26px; max-width: 1100px; }

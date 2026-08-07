@@ -29,18 +29,20 @@ class PollIn(BaseModel):
     app: str = "web"
 
 
-def _auto_create_account(driver_type: str, cookies: str, app: str = "web") -> dict:
-    """扫码确认后: 拉取账号信息并自动创建账户, 返回账户 dict。"""
+def _auto_upsert_account(driver_type: str, cookies: str, app: str = "web") -> dict:
+    """扫码确认后: 拉取账号信息并自动建户/更新(单账号模式), 返回账户 dict。"""
     info = qrcode_login.fetch_account_info(driver_type, cookies)
     info["device"] = app  # 登录设备(扫码时选择)
     nickname = (info.get("nickname") or "").strip()
     name = nickname or f"{driver_type}-{secrets.token_hex(3)}"
     try:
-        acc = _accounts.create(name, driver_type, credential=cookies, info=info)
+        acc, created = _accounts.upsert(driver_type, name, cookies, info)
     except ValueError:  # 名字重复(昵称撞车): 加随机后缀
         name = f"{name}-{secrets.token_hex(3)}"
-        acc = _accounts.create(name, driver_type, credential=cookies, info=info)
-    return _accounts.to_dict(acc)
+        acc, created = _accounts.upsert(driver_type, name, cookies, info)
+    result = _accounts.to_dict(acc)
+    result["action"] = "created" if created else "updated"
+    return result
 
 
 @router.post("/start")
@@ -73,7 +75,7 @@ def poll_qrcode(body: PollIn, _: str = Depends(require_user)):
         raise HTTPException(status_code=500, detail=f"轮询失败: {exc}")
     if result["status"] == "confirmed":
         try:
-            result["account"] = _auto_create_account(
+            result["account"] = _auto_upsert_account(
                 body.driver_type, result["cookies"], body.app)
         except Exception as exc:
             import traceback

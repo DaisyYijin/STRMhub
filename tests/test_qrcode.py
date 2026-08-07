@@ -198,8 +198,39 @@ class TestQrcodeApiAutoCreate:
             assert body["status"] == "confirmed"
             assert body["account"]["name"] == "扫码用户"
             assert body["account"]["driver_type"] == "p115"
+            assert body["account"]["action"] == "created"
             assert body["account"]["info"]["vip"] == "VIP"
             assert body["account"]["info"]["device"] == "android"
             # 列表中出现自动创建的账户
             accounts = c.get("/api/accounts", headers=h).json()
             assert any(a["name"] == "扫码用户" for a in accounts)
+
+    def test_poll_confirmed_upserts_same_account(self, monkeypatch):
+        """单账号模式: 再次扫码确认 -> 更新同一账户(action=updated), 不新增。"""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        def fake_poll(driver_type, uid, time, sign, app="web"):
+            return {"status": "confirmed", "cookies": "UID=999; CID=888"}
+
+        def fake_info(driver_type, credential):
+            return {"nickname": "扫码用户", "vip": "永久 VIP",
+                    "total_size_fmt": "20.0 GB"}
+
+        monkeypatch.setattr("app.api.qrcode.qrcode_login.poll", fake_poll)
+        monkeypatch.setattr(
+            "app.api.qrcode.qrcode_login.fetch_account_info", fake_info)
+        with TestClient(app) as c:
+            token = c.post("/api/auth/login",
+                           json={"password": "testpass"}).json()["token"]
+            h = {"Authorization": f"Bearer {token}"}
+            for _ in range(2):  # 连续两次扫码确认
+                r = c.post("/api/accounts/qrcode/poll", headers=h, json={
+                    "driver_type": "p115", "uid": "U", "time": "T",
+                    "sign": "S", "app": "web"})
+                assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["account"]["action"] == "updated"
+            accounts = c.get("/api/accounts", headers=h).json()
+            p115s = [a for a in accounts if a["driver_type"] == "p115"]
+            assert len(p115s) == 1  # 只有一个 115 账户

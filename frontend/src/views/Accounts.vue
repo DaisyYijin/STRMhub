@@ -49,11 +49,20 @@ const filtered = computed(() =>
     ? accounts.value.filter((a) => a.driver_type === props.driverType)
     : accounts.value)
 
+// 115 单账号模式: 取第一个(后端 upsert 保证唯一)
+const acct = computed(() => filtered.value[0] || {})
+
 const driverLabel = (t) => drivers.value.find((d) => d.name === t)?.label || t
 
 const fmtSize = (fmt, size) => fmt || (size ? `${(size / 1024 ** 3).toFixed(1)} GB` : '')
 
 const deviceLabel = (key) => DEVICE_LABELS[key] || key || ''
+
+const usedPct = (info) => {
+  const { used_size: used, total_size: total } = info || {}
+  if (!used || !total) return 0
+  return Math.min(100, Math.round((used / total) * 100))
+}
 
 async function create() {
   msg.value = ''
@@ -121,9 +130,10 @@ async function pollQrcode() {
     if (data.status === 'confirmed') {
       clearInterval(qrTimer.value)
       qrTimer.value = null
-      // 后端已自动创建账户(含账号信息)
+      // 后端已自动建户/更新(单账号模式)
       qrShow.value = false
-      msg.value = { type: 'ok', text: `扫码登录成功, 账户「${data.account?.name || ''}」已自动创建` }
+      const action = data.account?.action === 'updated' ? '已更新' : '已自动创建'
+      msg.value = { type: 'ok', text: `扫码登录成功, 账户「${data.account?.name || ''}」${action}` }
       await load()
     } else if (data.status === 'expired') {
       clearInterval(qrTimer.value)
@@ -154,16 +164,54 @@ function closeQrcode() {
 <template>
   <h1>{{ driverLabel(props.driverType) || '网盘' }}管理</h1>
 
-  <!-- 115 页面: 扫码专用 -->
-  <div v-if="isP115" class="card">
-    <h2>115 账号登录</h2>
-    <div class="row" style="margin-bottom: 10px">
-      <button class="primary" :disabled="qrBusy" @click="startQrcode">
-        {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
-      </button>
-      <span class="muted">使用 115 手机 App 扫码, 登录后自动创建账号并获取账号信息</span>
+  <!-- 115 页面: 单账号卡片 -->
+  <div v-if="isP115">
+    <!-- 已登录: 账户信息卡 -->
+    <div v-if="filtered.length" class="card acc-card">
+      <div class="acc-head">
+        <img v-if="acct.info?.avatar" :src="acct.info.avatar" class="acc-big-avatar" alt="头像" />
+        <div class="acc-head-info">
+          <div class="acc-title">
+            <span class="acc-name">{{ acct.name }}</span>
+            <span v-if="acct.info?.vip" class="badge ok">{{ acct.info.vip }}</span>
+            <span class="badge" :class="acct.status === 'ok' ? 'ok' : 'err'">{{ acct.status }}</span>
+          </div>
+          <div class="muted" v-if="acct.info?.nickname && acct.info.nickname !== acct.name">昵称: {{ acct.info.nickname }}</div>
+          <div class="muted" v-if="acct.info?.device">登录设备: {{ deviceLabel(acct.info.device) }}</div>
+        </div>
+      </div>
+      <div class="acc-space" v-if="acct.info?.total_size">
+        <div class="space-row">
+          <span>容量</span>
+          <span class="muted">
+            已用 {{ fmtSize(acct.info.used_size_fmt, acct.info.used_size) }}
+            / 总 {{ fmtSize(acct.info.total_size_fmt, acct.info.total_size) }}
+            ({{ usedPct(acct.info) }}%)
+          </span>
+        </div>
+        <div class="space-bar"><div class="space-fill" :style="{ width: usedPct(acct.info) + '%' }"></div></div>
+      </div>
+      <div class="row" style="margin-top: 14px">
+        <button class="primary" :disabled="qrBusy" @click="startQrcode">
+          {{ qrBusy ? '生成二维码中...' : '重新扫码登录(换号)' }}
+        </button>
+        <button class="danger" @click="remove(acct.id)">删除账户</button>
+        <div v-if="msg" class="msg" :class="msg.type">{{ msg.text }}</div>
+      </div>
+      <div v-if="qrError" class="msg err" style="margin-top: 8px">{{ qrError }}</div>
     </div>
-    <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+
+    <!-- 未登录: 引导登录卡 -->
+    <div v-else class="card">
+      <h2>115 账号登录</h2>
+      <p class="muted" style="margin-top: 0">使用 115 手机 App 扫码登录, 登录后自动创建账号并获取账号信息(容量/头像/昵称等)。</p>
+      <div class="row" style="margin-bottom: 10px">
+        <button class="primary" :disabled="qrBusy" @click="startQrcode">
+          {{ qrBusy ? '生成二维码中...' : '115 扫码登录' }}
+        </button>
+      </div>
+      <div v-if="qrError" class="msg err" style="margin-top: 0">{{ qrError }}</div>
+    </div>
   </div>
 
   <!-- 其他驱动/全部账户: 手动表单 -->
@@ -195,7 +243,7 @@ function closeQrcode() {
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" v-if="!isP115">
     <h2>{{ props.driverType ? `${driverLabel(props.driverType)}账户列表` : '账户列表' }}(凭据已加密存储)</h2>
     <table>
       <tr><th>ID</th><th>账号</th><th>驱动</th><th>信息</th><th>状态</th><th>操作</th></tr>
