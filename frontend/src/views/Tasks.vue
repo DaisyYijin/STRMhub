@@ -7,7 +7,8 @@ const accounts = ref([])
 const form = ref({
   name: '', account_id: null, remote_path: '', local_output: '',
   scan_mode: 'incremental_missing', extensions: '', base_url: '', token: '',
-  extra: { subtitle: false, image: false, nfo: false, other_ext: '', concurrency: 4 },
+  extra: { subtitle: false, image: false, nfo: false, other_ext: '', concurrency: 4,
+           metadata_sync: 'off' },
 })
 const msg = ref('')
 const runningId = ref(null)
@@ -51,6 +52,7 @@ async function create() {
           ? form.value.extra.otherExt.split(',').map((x) => x.trim()).filter(Boolean)
           : [],
         concurrency: form.value.extra.concurrency,
+        metadata_sync: form.value.extra.metadata_sync || 'off',
       },
       extensions,
       base_url: form.value.base_url,
@@ -177,6 +179,15 @@ async function toggleLife(t) {
       <div>
         <label>伴生下载并发(独立限流, 建议 2-5)</label>
         <input type="number" v-model.number="form.extra.concurrency" min="1" max="10" />
+      </div>
+      <div>
+        <label>元数据同步(LitePan 模式): nfo/图片与网盘双向补缺, 均不覆盖已有</label>
+        <select v-model="form.extra.metadata_sync">
+          <option value="off">关闭</option>
+          <option value="local_primary">local_primary(本地为主, 双向补缺)</option>
+          <option value="cloud_primary">cloud_primary(网盘为主, 只下载补齐)</option>
+          <option value="bidirectional">bidirectional(对等双向补缺)</option>
+        </select>
       </div>
     </div>
     <div class="row" style="margin-top: 10px">

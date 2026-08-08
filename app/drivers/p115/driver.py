@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from ..base import DriverMeta, FileItem
+from ..base import AuthField, DriverMeta, FileItem
 from ..common import (AccountGate, CredentialExpired, is_blocked_response,
                       is_credential_expired)
 
@@ -101,6 +101,17 @@ class P115Driver:
         url = self.client.download_url(item.id, user_agent="Mozilla/5.0")
         return url, {}
 
+    def upload(self, local_path: str, parent_id: str, name: str) -> bool:
+        """上传本地文件到 115 目录(元数据回传, p115client fs.upload)。"""
+        try:
+            self.gate.wait()
+            from pathlib import Path
+            self.client.fs.upload(parent_id, file=Path(local_path),
+                                  filename=name)
+            return True
+        except Exception:
+            return False
+
     def create_folder(self, parent_id: str, name: str) -> str:
         """创建目录, 返回新目录 id; 已存在则返回已有目录 id。"""
         self.gate.wait()
@@ -165,5 +176,9 @@ def register() -> None:
         name="p115",
         label="115 网盘",
         auth_type="cookie",
+        auth_methods=("qrcode", "cookie"),
+        auth_fields=(
+            AuthField(name="credential", label="Cookie", type="textarea", placeholder="CID=...;SEID=..."),
+        ),
         capabilities=("download", "delete", "mkdir", "move"),
     ))

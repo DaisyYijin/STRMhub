@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..base import DriverMeta, FileItem, FolderCreator
+from ..base import AuthField, DriverMeta, FileItem, FolderCreator
 
 
 class LocalDriver(FolderCreator):
@@ -22,6 +22,10 @@ class LocalDriver(FolderCreator):
             name="local",
             label="本地文件",
             auth_type="none",
+            auth_methods=("none",),
+            auth_fields=(
+                AuthField(name="root", label="本地根目录", type="text", required=False, placeholder="/"),
+            ),
             capabilities=("download", "delete", "mkdir", "move"),
         )
 
@@ -68,6 +72,17 @@ class LocalDriver(FolderCreator):
         d.mkdir(parents=True, exist_ok=True)
         return str(d)
 
+    def upload(self, local_path: str, parent_id: str, name: str) -> bool:
+        """上传本地文件到目录(元数据回传)。"""
+        import shutil
+        dest = Path(parent_id) / name
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, dest)
+            return True
+        except OSError:
+            return False
+
     def move(self, item: FileItem, dest_parent_id: str,
              new_name: str | None = None) -> FileItem:
         """移动(可同时重命名)。返回移动后的条目。"""
@@ -97,5 +112,9 @@ def register() -> None:
         name="local",
         label="本地文件",
         auth_type="none",
+        auth_methods=("none",),
+        auth_fields=(
+            AuthField(name="root", label="本地根目录", type="text", required=False, placeholder="/"),
+        ),
         capabilities=("download", "delete", "mkdir", "move"),
     ))

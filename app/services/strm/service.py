@@ -35,6 +35,8 @@ class TaskResult:
     extra_downloaded: int = 0
     extra_failed: int = 0
     extra_skipped: int = 0
+    meta_uploaded: int = 0      # 元数据回传网盘(LitePan 模式)
+    meta_downloaded: int = 0    # 元数据从网盘补齐
     total_remote: int = 0
     error: str = ""
     records: list = field(default_factory=list)  # 新快照记录(path, file_key, size, mtime)
@@ -118,6 +120,12 @@ class StrmService:
             if result.extra_failed:
                 _log.warning("[strm] %d 个伴生文件下载失败", result.extra_failed)
 
+        # 元数据同步(LitePan 模式): local_primary/cloud_primary/bidirectional
+        meta_mode = (extra or {}).get("metadata_sync") or "off"
+        if meta_mode != "off":
+            result.meta_uploaded, result.meta_downloaded = (
+                self._metadata_sync(driver, out_root, candidates, meta_mode))
+
         # 防误删清理: 仅当远端扫描非空(避免远端异常导致全库误删)
         if candidates:
             result.cleaned, aborted = self._cleanup_stale(
@@ -180,6 +188,69 @@ class StrmService:
             done = sum(1 for r in results if r)
             failed = len(results) - done
         return skipped, done, failed
+
+    _META_EXTS = {".nfo", ".jpg", ".jpeg", ".png", ".webp",
+                     ".srt", ".ass", ".vtt", ".ssa"}
+
+    def _metadata_sync(self, driver, out_root: Path,
+                       candidates: list[scanner.Candidate],
+                       mode: str) -> tuple[int, int]:
+        """元数据回传/补齐(LitePan 模式)。
+
+        - local_primary/bidirectional: 双向补缺(本地刮削/下载的 nfo 图片上传
+          网盘同目录, 网盘有而本地无的下载回来; 都不覆盖已有)
+        - cloud_primary: 仅网盘 -> 本地补齐(不上传, 云端为权威)
+        只处理与视频同目录的元数据(同名 stem 匹配); 作品根 tvshow.nfo 暂不涉及。
+        """
+        do_upload = mode in ("local_primary", "bidirectional")
+        do_download = mode in ("local_primary", "cloud_primary", "bidirectional")
+        if not hasattr(driver, "upload"):
+            _log.warning("[strm] 驱动不支持上传, 元数据同步仅执行下载方向")
+            do_upload = False
+        # 目录去重: parent_id -> (rel_dirs, 视频 stems)
+        dirs: dict[str, tuple[list[str], set[str]]] = {}
+        for c in candidates:
+            entry = dirs.setdefault(c.parent_id or "0", (c.rel_dirs, set()))
+            entry[1].add(_stem_of(c.item.name))
+        uploaded = downloaded = 0
+        for parent_id, (rel_dirs, stems) in dirs.items():
+            local_dir = out_root.joinpath(*rel_dirs)
+            try:
+                remote_rows = driver.list_files(parent_id)
+            except Exception:
+                continue
+            remote_by_name = {r.name.lower(): r for r in remote_rows}
+            # 下载补齐(网盘有、本地无)
+            if do_download:
+                for r in remote_rows:
+                    if r.is_dir or not r.name.lower().endswith(tuple(self._META_EXTS)):
+                        continue
+                    if _stem_of(r.name) not in stems:
+                        continue
+                    target = local_dir / r.name
+                    if target.exists():
+                        continue
+                    try:
+                        url, _h = driver.resolve_download(r)
+                        if url and _download_http(url, target):
+                            downloaded += 1
+                    except Exception:
+                        continue
+            # 上传补齐(本地有、网盘无)
+            if do_upload and local_dir.exists():
+                for lp in local_dir.iterdir():
+                    if not lp.is_file() or lp.suffix.lower() not in self._META_EXTS:
+                        continue
+                    if _stem_of(lp.name) not in stems:
+                        continue
+                    if lp.name.lower() in remote_by_name:
+                        continue  # 网盘已有 -> 不覆盖(LitePan 补缺语义)
+                    try:
+                        if driver.upload(str(lp), parent_id, lp.name):
+                            uploaded += 1
+                    except Exception:
+                        continue
+        return uploaded, downloaded
 
     def _cleanup_stale(self, out_root: Path, seen: set[Path],
                        max_ratio: float) -> tuple[int, bool]:

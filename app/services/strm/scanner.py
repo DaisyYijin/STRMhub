@@ -25,6 +25,7 @@ MAX_FILES = 3000  # 单任务上限, 防止失控(参考 LitePan maxScanFiles)
 class Candidate:
     item: FileItem
     rel_dirs: list[str]  # 相对 remote_path 的目录链(不含自身)
+    parent_id: str = "0"  # 所在目录(网盘)的 id, 供元数据回传定位
 
 
 def should_generate(name: str, extensions: set[str], min_size: int = 0) -> bool:
@@ -64,12 +65,14 @@ def _walk(driver, parent_id: str, dirs: list[str], extensions: set[str],
             if lower.endswith(tuple(SKIP_EXTENSIONS)):
                 if extra_exts and lower.endswith(tuple(extra_exts)):
                     # 伴生文件候选(下载用, 不生成 STRM)
-                    extras.append(Candidate(item=item, rel_dirs=list(dirs)))
+                    extras.append(Candidate(item=item, rel_dirs=list(dirs),
+                                        parent_id=parent_id))
                 continue
             if extensions and not lower.endswith(tuple(extensions)):
                 continue
             if min_size and item.size < min_size:
                 continue
-            out.append(Candidate(item=item, rel_dirs=list(dirs)))
+            out.append(Candidate(item=item, rel_dirs=list(dirs),
+                                 parent_id=parent_id))
             if len(out) > MAX_FILES:
                 raise RuntimeError(f"文件数超过上限 {MAX_FILES}, 请收窄扫描范围")

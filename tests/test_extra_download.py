@@ -114,3 +114,87 @@ def test_run_extra_failure_tolerated(tmp_path, monkeypatch):
     assert result.generated == 1  # strm 正常
     assert result.extra_failed == 1
     assert not result.error  # 不阻塞主流程
+
+
+class MetaSyncDriver(FakeDriver):
+    """带上传能力的驱动: 记录上传; 网盘侧可预置元数据文件。"""
+
+    def __init__(self, root, remote_nfo=None):
+        super().__init__(root)
+        self.uploaded: list[str] = []
+        self.remote_nfo = remote_nfo  # 网盘已有元数据名(模拟远程存在)
+
+    def upload(self, local_path, parent_id, name):
+        self.uploaded.append(name)
+        return True
+
+
+def test_metadata_sync_local_primary(tmp_path, monkeypatch):
+    """local_primary: 本地 nfo 上传(网盘无) + 网盘字幕下载(本地无), 均不覆盖已有。"""
+    from app.services.strm.service import StrmService
+    (tmp_path / "电影.mkv").write_bytes(b"v")
+    (tmp_path / "电影.srt").write_bytes(b"S")   # 网盘已有字幕 -> 下载补齐
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "电影.nfo").write_bytes(b"N")         # 本地刮削产物 -> 上传补齐
+
+    driver = MetaSyncDriver(tmp_path)
+
+    def fake_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"SRT")
+        return True
+
+    monkeypatch.setattr("app.services.strm.service._download_http",
+                        fake_download)
+    svc = StrmService()
+    result = svc.run(
+        driver, "0", str(out), "incremental_missing",
+        {".mkv"}, "http://hub:6060", "tok1",
+        extra={"metadata_sync": "local_primary", "concurrency": 4})
+    # 上传: 本地 nfo 网盘没有 -> 上传
+    assert result.meta_uploaded == 1
+    assert "电影.nfo" in driver.uploaded
+    # 下载: 网盘字幕本地没有 -> 下载
+    assert result.meta_downloaded == 1
+    assert (out / "电影.srt").read_bytes() == b"SRT"
+
+
+def test_metadata_sync_cloud_primary_no_upload(tmp_path, monkeypatch):
+    """cloud_primary: 只下载补齐, 不上传。"""
+    from app.services.strm.service import StrmService
+    (tmp_path / "电影.mkv").write_bytes(b"v")
+    (tmp_path / "电影.nfo").write_bytes(b"N")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    driver = MetaSyncDriver(tmp_path)
+
+    def fake_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"X")
+        return True
+
+    monkeypatch.setattr("app.services.strm.service._download_http",
+                        fake_download)
+    result = StrmService().run(
+        driver, "0", str(out), "incremental_missing",
+        {".mkv"}, "http://hub:6060", "tok1",
+        extra={"metadata_sync": "cloud_primary"})
+    assert result.meta_uploaded == 0
+    assert driver.uploaded == []
+
+
+def test_metadata_sync_driver_without_upload(tmp_path, monkeypatch):
+    """驱动无上传能力(如 123): 自动降级为仅下载, 不报错。"""
+    from app.services.strm.service import StrmService
+    (tmp_path / "电影.mkv").write_bytes(b"v")
+    out = tmp_path / "out"
+    out.mkdir()
+    driver = FakeDriver(tmp_path)  # 无 upload
+    result = StrmService().run(
+        driver, "0", str(out), "incremental_missing",
+        {".mkv"}, "http://hub:6060", "tok1",
+        extra={"metadata_sync": "bidirectional"})
+    assert result.generated == 1
+    assert result.meta_uploaded == 0
