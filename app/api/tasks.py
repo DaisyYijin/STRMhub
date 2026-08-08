@@ -20,6 +20,7 @@ class TaskIn(BaseModel):
     extensions: list[str] = []
     base_url: str = ""
     token: str = ""
+    extra: dict = {}
 
 
 @router.get("")
@@ -34,7 +35,8 @@ def create_task(body: TaskIn, _: str = Depends(require_user)):
             account_id=body.account_id, name=body.name,
             remote_path=body.remote_path, local_output=body.local_output,
             scan_mode=body.scan_mode, extensions=body.extensions,
-            base_url=body.base_url, token=body.token)
+            base_url=body.base_url, token=body.token,
+            extra=body.extra)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _tasks.to_dict(t)

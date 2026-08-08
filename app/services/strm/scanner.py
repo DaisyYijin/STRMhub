@@ -36,26 +36,35 @@ def should_generate(name: str, extensions: set[str], min_size: int = 0) -> bool:
 
 
 def collect_candidates(driver, root_id: str, extensions: set[str],
-                       min_size: int = 0) -> list[Candidate]:
-    """深度优先遍历(每目录一次 API), 返回媒体候选与相对路径链。
+                       min_size: int = 0,
+                       extra_exts: set[str] | None = None):
+    """深度优先遍历(每目录一次 API), 返回 (媒体候选, 伴生文件候选)。
 
+    extra_exts: 伴生文件扩展名白名单(如 .srt/.nfo/.jpg), 命中且与视频
+    同名的文件作为伴生候选收集(不生成 STRM, 由调用方下载)。
     超过 MAX_FILES 直接抛异常(避免失控); 目录超深跳过。
     """
     out: list[Candidate] = []
-    _walk(driver, root_id, [], extensions, min_size, out)
-    return out
+    extras: list[Candidate] = []
+    _walk(driver, root_id, [], extensions, min_size, out, extras, extra_exts or set())
+    return out, extras
 
 
 def _walk(driver, parent_id: str, dirs: list[str], extensions: set[str],
-          min_size: int, out: list[Candidate], depth: int = 0) -> None:
+          min_size: int, out: list[Candidate], extras: list[Candidate],
+          extra_exts: set[str], depth: int = 0) -> None:
     if depth > MAX_DEPTH:
         return
     for item in driver.list_files(parent_id):
         if item.is_dir:
-            _walk(driver, item.id, dirs + [item.name], extensions, min_size, out, depth + 1)
+            _walk(driver, item.id, dirs + [item.name], extensions, min_size,
+                  out, extras, extra_exts, depth + 1)
         else:
             lower = item.name.lower()
             if lower.endswith(tuple(SKIP_EXTENSIONS)):
+                if extra_exts and lower.endswith(tuple(extra_exts)):
+                    # 伴生文件候选(下载用, 不生成 STRM)
+                    extras.append(Candidate(item=item, rel_dirs=list(dirs)))
                 continue
             if extensions and not lower.endswith(tuple(extensions)):
                 continue

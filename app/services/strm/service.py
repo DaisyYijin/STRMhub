@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,8 @@ VALID_MODES = {"incremental_missing", "incremental_update", "full_sync"}
 
 _STRM_SUFFIX = ".strm"
 
+_log = logging.getLogger("strmhub.strm")
+
 
 @dataclass
 class TaskResult:
@@ -29,6 +32,9 @@ class TaskResult:
     skipped: int = 0            # 已存在/未变化跳过
     cleaned: int = 0            # 清理的失效 strm
     cleanup_aborted: bool = False  # 清理被阈值保护中止
+    extra_downloaded: int = 0
+    extra_failed: int = 0
+    extra_skipped: int = 0
     total_remote: int = 0
     error: str = ""
     records: list = field(default_factory=list)  # 新快照记录(path, file_key, size, mtime)
@@ -48,7 +54,8 @@ class StrmService:
             extensions: set[str], base_url: str, token: str,
             min_size: int = 0,
             snapshot: dict | None = None,
-            cleanup_max_ratio: float = DEFAULT_CLEANUP_MAX_RATIO) -> TaskResult:
+            cleanup_max_ratio: float = DEFAULT_CLEANUP_MAX_RATIO,
+            extra: dict | None = None) -> TaskResult:
         """执行任务。
 
         snapshot: {rel_path: (size, mtime)} 上次快照; 非 full 模式下
@@ -59,14 +66,17 @@ class StrmService:
             raise ValueError(f"未知扫描模式: {scan_mode}")
 
         result = TaskResult()
+        extra_exts = _extra_extensions(extra)
         try:
-            candidates = scanner.collect_candidates(driver, remote_path, extensions, min_size)
+            candidates, extra_cands = scanner.collect_candidates(
+                driver, remote_path, extensions, min_size, extra_exts)
         except Exception as exc:  # 远端不可达/超限
             result.error = str(exc)
             return result
 
         result.total_remote = len(candidates)
         out_root = Path(local_output)
+        out_root.mkdir(parents=True, exist_ok=True)
         seen: set[Path] = set()
         use_snapshot = scan_mode != "full_sync" and snapshot is not None
 
@@ -100,6 +110,14 @@ class StrmService:
             result.records.append(
                 (rel_path, item.id, item.size, item.mtime or 0.0))
 
+        # 伴生文件下载(AutoFilm 方案): 独立并发池, 同名匹配, 本地已有跳过
+        if extra_exts and extra_cands:
+            result.extra_skipped, result.extra_downloaded, result.extra_failed = (
+                self._download_extras(driver, out_root, candidates,
+                                      extra_cands, extra or {}))
+            if result.extra_failed:
+                _log.warning("[strm] %d 个伴生文件下载失败", result.extra_failed)
+
         # 防误删清理: 仅当远端扫描非空(避免远端异常导致全库误删)
         if candidates:
             result.cleaned, aborted = self._cleanup_stale(
@@ -110,6 +128,58 @@ class StrmService:
                     "清理中止: 待删 .strm 比例超过安全阈值, 请人工确认"
 
         return result
+
+    def _download_extras(self, driver, out_root: Path,
+                         candidates: list[scanner.Candidate],
+                         extras: list[scanner.Candidate],
+                         extra_cfg: dict) -> tuple[int, int, int]:
+        """伴生文件下载: 与视频同目录同名(stem 相同)才下载。
+
+        独立线程池并发(extra.concurrency, 默认 4), 本地已存在跳过
+        (过期重下由删除本地文件触发); 失败不阻塞主流程。
+        返回 (skipped, downloaded, failed)。
+        """
+        concurrency = max(1, int(extra_cfg.get("concurrency") or 4))
+        video_map: set[tuple[str, str]] = set()
+        for c in candidates:
+            video_map.add((_stem_of(c.item.name), "/".join(c.rel_dirs)))
+        tasks = []
+        for ex in extras:
+            key = (_stem_of(ex.item.name), "/".join(ex.rel_dirs))
+            if key not in video_map:
+                continue
+            target = out_root.joinpath(*ex.rel_dirs, ex.item.name)
+            if target.exists():
+                continue
+            tasks.append((ex, target))
+        skipped = len(extras) - len(tasks)
+        if not tasks:
+            return skipped, 0, 0
+
+        def _dl(ex: scanner.Candidate, target: Path) -> bool:
+            try:
+                url, _headers = driver.resolve_download(ex.item)
+                if not url:
+                    return False
+                target.parent.mkdir(parents=True, exist_ok=True)
+                return _download_http(url, target)
+            except Exception:
+                return False
+
+        if concurrency == 1:
+            done = failed = 0
+            for ex, target in tasks:
+                if _dl(ex, target):
+                    done += 1
+                else:
+                    failed += 1
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                results = list(pool.map(lambda t: _dl(t[0], t[1]), tasks))
+            done = sum(1 for r in results if r)
+            failed = len(results) - done
+        return skipped, done, failed
 
     def _cleanup_stale(self, out_root: Path, seen: set[Path],
                        max_ratio: float) -> tuple[int, bool]:
@@ -138,6 +208,49 @@ class StrmService:
             except OSError:
                 pass
         return cleaned, False
+
+
+def _stem_of(name: str) -> str:
+    return Path(name).stem.lower()
+
+
+def _extra_extensions(extra: dict | None) -> set[str]:
+    """由 extra 配置构建伴生扩展名白名单(AutoFilm 方案)。"""
+    if not extra:
+        return set()
+    exts: set[str] = set()
+    if extra.get("subtitle"):
+        exts |= {".srt", ".ass", ".vtt", ".ssa"}
+    if extra.get("image"):
+        exts |= {".jpg", ".jpeg", ".png", ".webp"}
+    if extra.get("nfo"):
+        exts |= {".nfo"}
+    for e in (extra.get("other_ext") or []):
+        e = str(e).lower()
+        exts.add(e if e.startswith(".") else f".{e}")
+    return exts
+
+
+def _download_http(url: str, dest: Path) -> bool:
+    """下载 URL 到文件(可被测试替换)。"""
+    import httpx
+    try:
+        with httpx.Client(timeout=60) as client:
+            with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    return False
+                tmp = dest.with_suffix(dest.suffix + ".part")
+                with open(tmp, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        f.write(chunk)
+                tmp.replace(dest)
+        return True
+    except Exception:
+        try:
+            dest.with_suffix(dest.suffix + ".part").unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
 
 
 def _mode_writer(scan_mode: str) -> str:

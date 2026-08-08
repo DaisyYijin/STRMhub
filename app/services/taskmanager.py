@@ -27,7 +27,8 @@ class TaskManager:
     def create(self, account_id: int, name: str, remote_path: str, local_output: str,
                scan_mode: str = "incremental_missing",
                extensions: list[str] | None = None,
-               base_url: str = "", token: str = "") -> Task:
+               base_url: str = "", token: str = "",
+               extra: dict | None = None) -> Task:
         with session_scope() as s:
             task = Task(
                 account_id=account_id,
@@ -35,6 +36,7 @@ class TaskManager:
                 remote_path=remote_path,
                 local_output=local_output,
                 scan_mode=scan_mode,
+                extra_json=json.dumps(extra or {}, ensure_ascii=False),
                 extensions_json=json.dumps(extensions or []),
                 base_url=base_url,
                 token=token or _gen_token(),
@@ -80,6 +82,7 @@ class TaskManager:
             driver = _accounts.driver_for(account)
             extensions = task_to_extensions(task.extensions_json)
             snapshot = self._load_snapshot(account.id)
+            extra = json.loads(task.extra_json or "{}")
             result = _strm.run(
                 driver=driver,
                 remote_path=task.remote_path,
@@ -89,6 +92,7 @@ class TaskManager:
                 base_url=task.base_url or f"http://localhost:{config.ADMIN_PORT}",
                 token=task.token,
                 snapshot=snapshot,
+                extra=extra,
             )
             if result.records:
                 self._save_snapshot(account.id, result.records)
@@ -152,6 +156,7 @@ class TaskManager:
             "local_output": t.local_output,
             "scan_mode": t.scan_mode,
             "extensions": json.loads(t.extensions_json or "[]"),
+            "extra": json.loads(t.extra_json or "{}"),
             "base_url": t.base_url,
             "token": t.token,
             "status": t.status,

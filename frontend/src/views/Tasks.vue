@@ -7,6 +7,7 @@ const accounts = ref([])
 const form = ref({
   name: '', account_id: null, remote_path: '', local_output: '',
   scan_mode: 'incremental_missing', extensions: '', base_url: '', token: '',
+  extra: { subtitle: false, image: false, nfo: false, other_ext: '', concurrency: 4 },
 })
 const msg = ref('')
 const runningId = ref(null)
@@ -42,6 +43,15 @@ async function create() {
       remote_path: form.value.remote_path,
       local_output: form.value.local_output,
       scan_mode: form.value.scan_mode,
+      extra: {
+        subtitle: form.value.extra.subtitle,
+        image: form.value.extra.image,
+        nfo: form.value.extra.nfo,
+        other_ext: form.value.extra.otherExt
+          ? form.value.extra.otherExt.split(',').map((x) => x.trim()).filter(Boolean)
+          : [],
+        concurrency: form.value.extra.concurrency,
+      },
       extensions,
       base_url: form.value.base_url,
       token: form.value.token,
@@ -142,6 +152,31 @@ async function toggleLife(t) {
       <div>
         <label>token(留空自动生成)</label>
         <input v-model="form.token" />
+      </div>
+      <div>
+        <label>伴生文件下载(AutoFilm 方案): 与视频同名的字幕/海报/nfo 一并下载到本地</label>
+        <div class="row" style="gap: 14px; flex-wrap: wrap">
+          <label style="display:flex; align-items:center; gap:4px">
+            <input type="checkbox" v-model="form.extra.subtitle" /> 字幕(.srt/.ass/.vtt)
+          </label>
+          <label style="display:flex; align-items:center; gap:4px">
+            <input type="checkbox" v-model="form.extra.image" /> 图片(.jpg/.png)
+          </label>
+          <label style="display:flex; align-items:center; gap:4px">
+            <input type="checkbox" v-model="form.extra.nfo" /> nfo
+          </label>
+          <label style="display:flex; align-items:center; gap:4px">
+            <input type="checkbox" v-model="form.extra.other_ext" /> 自定义扩展名
+          </label>
+        </div>
+      </div>
+      <div v-if="form.extra.other_ext">
+        <label>自定义扩展名(逗号分隔, 如 zip,md)</label>
+        <input v-model="form.extra.otherExt" placeholder="zip,md" />
+      </div>
+      <div>
+        <label>伴生下载并发(独立限流, 建议 2-5)</label>
+        <input type="number" v-model.number="form.extra.concurrency" min="1" max="10" />
       </div>
     </div>
     <div class="row" style="margin-top: 10px">

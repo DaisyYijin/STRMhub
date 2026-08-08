@@ -55,6 +55,9 @@ def _migrate_columns(engine) -> None:
             if "life_cursor_json" not in tcols:
                 conn.execute(sa.text(
                     "ALTER TABLE tasks ADD COLUMN life_cursor_json TEXT DEFAULT '{}'"))
+            if "extra_json" not in tcols:
+                conn.execute(sa.text(
+                    "ALTER TABLE tasks ADD COLUMN extra_json TEXT DEFAULT '{}'"))
 
 
 def init_db(db_path=None) -> None:
