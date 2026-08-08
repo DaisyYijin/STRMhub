@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STRM 影视工具矩阵对比 — STRMhub vs 6 个成品项目</title>
+<style>
+  :root { --line:#e2e8f0; --bg:#f8fafc; --card:#fff; --accent:#2563eb; --ok:#16a34a; --no:#94a3b8; --warn:#d97706; --text:#1e293b; --muted:#64748b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; background:var(--bg); color:var(--text); padding:24px; line-height:1.6; }
+  h1 { font-size:24px; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  h2 { font-size:18px; margin:28px 0 10px; padding-left:8px; border-left:4px solid var(--accent); }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .card b { display:block; font-size:14px; }
+  .card span { font-size:12px; color:var(--muted); }
+  .card .tag { display:inline-block; font-size:11px; padding:1px 8px; border-radius:99px; background:#e0e7ff; color:#3730a3; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:12.5px; }
+  th, td { border:1px solid var(--line); padding:7px 9px; vertical-align:top; text-align:left; }
+  th { background:#f1f5f9; font-size:12.5px; white-space:nowrap; }
+  td.feat { font-weight:600; white-space:nowrap; background:#f8fafc; }
+  .ok { color:var(--ok); font-weight:600; }
+  .no { color:var(--no); }
+  .warn { color:var(--warn); }
+  .y { color:var(--ok); font-weight:700; }
+  .n { color:#cbd5e1; }
+  .note { color:var(--muted); font-size:11.5px; }
+  .best { background:#f0fdf4; }
+  .sec { color:var(--muted); font-size:11.5px; }
+  .pros { color:var(--ok); } .cons { color:#dc2626; }
+  .detail h3 { font-size:15px; margin:18px 0 6px; }
+  .detail p { font-size:13px; margin-bottom:8px; }
+  ul { margin:4px 0 8px 18px; font-size:13px; }
+  li { margin-bottom:3px; }
+  .hl { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:14px 16px; font-size:13.5px; }
+  .hl b { color:#b45309; }
+  @media (max-width: 900px) { table { font-size:11px; } td.feat { white-space:normal; } }
+</style>
+</head>
+<body>
+
+<h1>STRM 影视工具矩阵对比</h1>
+<div class="sub">STRMhub(自研) vs 成品目录 6 个项目 · 功能对比 + 实现方式对比(标注优劣) · 2026-08</div>
+
+<h2>一、项目总览</h2>
+<div class="cards">
+  <div class="card"><b>STRMhub</b><span>自研 STRM 生成 + 网盘管理 + 整理归档 + 302 反代</span><span class="tag">Python/FastAPI + Vue3</span></div>
+  <div class="card"><b>AutoFilm</b><span>Alist→STRM 生成 + 动漫追番 + 海报渲染(定时)</span><span class="tag">Rust 单二进制</span></div>
+  <div class="card"><b>LitePan</b><span>多网盘聚合 + STRM + 刮削 + 整理 + WebDAV/FUSE(全流程)</span><span class="tag">Go + Vue3</span></div>
+  <div class="card"><b>MoviePilot 插件</b><span>p115strmhelper 等: MP 生态内 STRM 一条龙</span><span class="tag">Python 插件 + Rust</span></div>
+  <div class="card"><b>embyExternalUrl</b><span>Emby/Plex 302 反代 + 外部播放器外链注入</span><span class="tag">nginx + njs</span></div>
+  <div class="card"><b>openStrm</b><span>115 目录树→STRM 生成 + WebUI + 302 反代</span><span class="tag">Next.js + nginx/njs</span></div>
+  <div class="card"><b>QMediaSync</b><span>115/百度/123→本地 STRM 同步 + 刮削整理 + Emby 联动</span><span class="tag">Go + Gin + Vue</span></div>
+</div>
+
+<h2>二、功能矩阵</h2>
+<table>
+<tr><th>功能</th><th>STRMhub</th><th>AutoFilm</th><th>LitePan</th><th>MP 插件</th><th>embyExternalUrl</th><th>openStrm</th><th>QMediaSync</th></tr>
+<tr><td class="feat">STRM 生成</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+<tr><td class="feat">302 播放反代</td><td class="y">✓ 内置(6086)</td><td class="n">✗(配 MediaWarp)</td><td class="y">✓ 双模式</td><td class="y">✓ 插件</td><td class="y">✓ 最强(nginx)</td><td class="y">✓ 内置</td><td class="y">✓ 内置</td></tr>
+<tr><td class="feat">刮削/海报墙</td><td class="warn">部分(计划中)</td><td class="y">✓ 海报渲染</td><td class="y">✓ TMDB+nfo</td><td class="y">✓ 复用 MP</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓ TMDB/Fanart</td></tr>
+<tr><td class="feat">目录整理/重命名</td><td class="y">✓ 三目录+模板</td><td class="n">✗(交给 MP)</td><td class="y">✓ TMDB 计划预览</td><td class="y">✓ 接管 MP</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td></tr>
+<tr><td class="feat">识别规则(黑名单/自定义词)</td><td class="y">✓</td><td class="n">✗</td><td class="warn">部分</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="warn">部分</td></tr>
+<tr><td class="feat">二级分类策略</td><td class="y">✓ YAML</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+<tr><td class="feat">网盘驱动</td><td class="y">115/123/本地</td><td class="warn">仅 Alist</td><td class="y">10 种</td><td class="y">115/123/CD2</td><td class="warn">Alist 系</td><td class="warn">115/OpenList</td><td class="y">115/百度/123/OpenList/CD2</td></tr>
+<tr><td class="feat">定时任务</td><td class="warn">手动+Webhook</td><td class="y">✓ cron</td><td class="y">✓</td><td class="y">✓ MP 调度</td><td class="n">✗</td><td class="n">✗ 手动</td><td class="y">✓ cron</td></tr>
+<tr><td class="feat">Webhook 联动</td><td class="y">✓ 动作链</td><td class="n">✗</td><td class="y">✓</td><td class="y">✓ 事件驱动</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td></tr>
+<tr><td class="feat">增量同步</td><td class="y">✓ 快照 diff</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ 事件推送</td><td class="n">—</td><td class="warn">全量树对比</td><td class="y">✓ 缓存比对</td></tr>
+<tr><td class="feat">防误删保护</td><td class="y">✓ 三层(空保护/阈值/确认)</td><td class="y">✓ 状态持久化</td><td class="y">✓</td><td class="y">✓ 二次确认</td><td class="n">—</td><td class="warn">仅布尔开关</td><td class="y">✓</td></tr>
+<tr><td class="feat">凭据加密</td><td class="y">✓ AES-GCM</td><td class="n">✗</td><td class="warn">部分</td><td class="warn">MP 生态</td><td class="n">—</td><td class="n">✗ 明文 JSON</td><td class="warn">环境变量</td></tr>
+<tr><td class="feat">扫码登录</td><td class="y">✓ 115/123</td><td class="n">✗</td><td class="y">✓ 多盘</td><td class="y">✓</td><td class="n">—</td><td class="warn">凭据</td><td class="y">✓</td></tr>
+<tr><td class="feat">WebUI</td><td class="y">✓ 亮色简洁</td><td class="n">✗ 无</td><td class="y">✓</td><td class="y">✓ MP 内</td><td class="n">✗ 无</td><td class="y">✓ Next.js</td><td class="y">✓ WebSocket</td></tr>
+<tr><td class="feat">Telegram 通知</td><td class="n">✗</td><td class="n">✗</td><td class="warn">部分</td><td class="y">✓ 深度</td><td class="n">✗</td><td class="y">✓</td><td class="warn">部分</td></tr>
+<tr><td class="feat">独立部署</td><td class="y">✓ Docker</td><td class="y">✓ Docker</td><td class="y">✓ Docker</td><td class="n">✗ 依赖 MP</td><td class="y">✓ 容器</td><td class="y">✓ 单容器</td><td class="y">✓ Docker/FNOS</td></tr>
+</table>
+
+<h2>三、实现方式对比(标注优劣)</h2>
+<table>
+<tr><th>技术点</th><th>STRMhub</th><th>最优方案(来源)与理由</th></tr>
+<tr class="best"><td class="feat">STRM 文件内容</td>
+<td>自建 token 短链(安全、可签名、路径不泄露)</td>
+<td><b>STRMhub 最佳</b>。openStrm/QMediaSync 内嵌完整直链(易泄露、换盘需全量重生成);AutoFilm 支持多模式。</td></tr>
+<tr class="best"><td class="feat">302 反代实现</td>
+<td>Python FastAPI 中转(易维护、易扩展,大流量是瓶颈)</td>
+<td><b>nginx+njs(embyExternalUrl/openStrm)性能与规则能力更强</b>:路径/UA/码率精细路由、PlaybackInfo 改写、多级缓存、内部重定向回源、转码/字幕/直播全套。STRMhub 可借鉴其路由规则与回源降级策略,但保持 Python 便于维护。</td></tr>
+<tr><td class="feat">数据存储</td>
+<td>SQLite(持久化、事务)</td>
+<td>SQLite 系(STRMhub/LitePan)优于 openStrm 的 JSON 文件(并发写竞态、重启丢任务态)。QMediaSync 默认外部 PG 门槛过高。</td></tr>
+<tr><td class="feat">驱动抽象</td>
+<td>注册表 + DriverMeta(够用)</td>
+<td>LitePan 的"最小契约 + 可选接口 + 反射表单 + 模板脚手架"最规范,新增网盘成本最低;QMediaSync driverImpl 次之。STRMhub 可引入模板化驱动脚手架。</td></tr>
+<tr><td class="feat">增量策略</td>
+<td>快照 diff(省扫描)</td>
+<td>三方案接近(快照/缓存比对);openStrm 全量树对比最粗放。QMediaSync 的两段式流水线并发(文件/路径双调度)对万级目录最有效,值得借鉴。</td></tr>
+<tr><td class="feat">任务触发</td>
+<td>手动 + Webhook 动作链</td>
+<td>AutoFilm 的 cron + QMediaSync 的 Emby 入库事件触发 + MP 插件的事件推送是完整组合;STRMhub 缺 cron 定时(下一步可加)。</td></tr>
+<tr><td class="feat">防误删</td>
+<td>三层保护(远端空/阈值/确认)</td>
+<td><b>STRMhub 最佳</b>(openStrm 仅布尔开关,有误删风险)。</td></tr>
+<tr><td class="feat">凭据安全</td>
+<td>AES-GCM 加密存储</td>
+<td><b>STRMhub 最佳</b>;openStrm 明文 JSON、QMediaSync 环境变量均较弱。</td></tr>
+<tr><td class="feat">并发与限流</td>
+<td>AccountGate 简单限流</td>
+<td>AutoFilm 的扫描/下载限流分离 + LitePan 的 singleflight/冷却防雪崩 + QMediaSync 三级 QPS 限速自愈,值得组合借鉴。</td></tr>
+<tr><td class="feat">前端</td>
+<td>Vue3 轻量 SPA</td>
+<td>LitePan embed+gzip 单文件部署最简;openStrm React 生态组件丰富但体积大。STRMhub 当前方案合适。</td></tr>
+</table>
+
+<h2>四、项目详评</h2>
+<div class="detail">
+
+<h3>1. AutoFilm(Rust) — "STRM 生成 + 追番 + 海报"三合一定时工具</h3>
+<ul class="pros"><li>Rust 单二进制 + alpine 部署极简;模块清晰、约 40+ 单元测试、CI 五平台</li>
+<li>Alist 官方 API 封装(非 WebDAV),token 自动重登、限速、BDMV 支持、内外网地址分离</li>
+<li>.strm 智能删除保护 + 状态持久化,防远端异常误清媒体库</li>
+<li>并发设计细:扫描与伴生下载限流分离、显式栈防递归爆栈</li></ul>
+<ul class="cons"><li>无 WebUI/无 API 触发/无通知,只能 cron</li><li>不做刮削/重命名(交给 MoviePilot),RSS 用正则解析较脆弱</li></ul>
+
+<h3>2. LitePan(Go) — 多网盘聚合 + 全流程影视整理(最接近 STRMhub 的对手)</h3>
+<ul class="pros"><li>驱动抽象最优:最小契约+可选接口+模板脚手架,10 个网盘驱动结构统一</li>
+<li>播放双模式(302 直链/代理流)+ Range/HTTP2/并行分片;Emby 反代重写 PlaybackInfo</li>
+<li>自动化流水线:整理→STRM→刮削→刷库串连;缓存 singleflight/防雪崩细节扎实</li>
+<li>单二进制 + embed 前端 + 纯 Go SQLite(CGO=0)</li></ul>
+<ul class="cons"><li>Beta 阶段;PolyForm 非商用许可;高度依赖各家非官方 API,风控波动大</li>
+<li>FUSE 需特权容器;前端 embed 重型预览库体积偏大</li></ul>
+
+<h3>3. MoviePilot 插件(p115strmhelper 等) — MP 生态内 STRM 一条龙</h3>
+<ul class="pros"><li>全链路自动化:整理事件→STRM→刮削→刷库→302 播放,用户无感知</li>
+<li>性能强(Rust 批量 + 8 写线程,官方 20s/10 万文件);推式生活事件监控</li>
+<li>功能密度极高:分享免转存、TG 命令、MCP、WebDAV、FUSE</li></ul>
+<ul class="cons"><li>单体过大(Rust/Python/线程/补丁混合),维护排障成本高</li>
+<li>强耦合 MP 版本,升级易破坏;插件禁用即全停;含 Sentry/分享数据上报(隐私敏感)</li></ul>
+
+<h3>4. embyExternalUrl(nginx+njs) — 302 反代与播放器外链的天花板</h3>
+<ul class="pros"><li>路由规则引擎最强:路径/UA/设备/码率/IP 精细路由,失败全覆盖回源</li>
+<li>PlaybackInfo 改写诱导客户端直链、两级缓存预热(详情页预加载秒开)</li>
+<li>115 深度适配(webCookie/转码 m3u8/字幕)、strm 内链跟随+sign 鉴权注入</li>
+<li>服务端注入 ExternalUrls → 全官方客户端可用(含 TV 端)</li></ul>
+<ul class="cons"><li>njs 受限子集难维护、调试靠日志;配置即代码学习曲线陡</li>
+<li>深度耦合 Emby/Plex 具体 API;强依赖 Alist 生态</li></ul>
+
+<h3>5. openStrm(Next.js) — 115 目录树→STRM + WebUI 的开源代表</h3>
+<ul class="pros"><li>115 官方导出接口扫大目录快;RxJS+Bottleneck 限流重试完善;Telegram 集成完整</li>
+<li>单容器全栈(MIT);302 反代继承 embyExternalUrl 成熟方案</li></ul>
+<ul class="cons"><li>STRM 内嵌完整 URL、增量全量树对比无快照、防误删仅布尔开关</li>
+<li>任务态存内存(重启丢)、JSON 文件并发写竞态、无定时/Webhook、默认弱口令</li></ul>
+
+<h3>6. QMediaSync(Go) — 网盘→本地 STRM 同步 + 刮削整理主力</h3>
+<ul class="pros"><li>两段式流水线并发(文件/路径双调度)+ 三级 QPS 限速自愈,万级目录实战打磨</li>
+<li>全量/增量分离 + 目录树缓存;过滤规则每目录可覆盖全局(视频扩展名/最小大小/排除名)</li>
+<li>元数据双向(下载/回传网盘)、Emby 入库事件触发增量、内嵌 302</li></ul>
+<ul class="cons"><li>需自备 115 AppID/TMDB/Fanart 等多组密钥;默认依赖外部 PostgreSQL 15</li>
+<li>README 极简、测试覆盖有限、main.go 单文件 49KB 集中式</li></ul>
+
+</div>
+
+<h2>五、对 STRMhub 的启示(按优先级)</h2>
+<div class="hl">
+<b>1. 加 cron 定时任务</b> — AutoFilm/QMediaSync 的 cron 触发,配合现有 Webhook,补齐"无人值守"能力。<br>
+<b>2. 302 反代增强</b> — 借鉴 embyExternalUrl:PlaybackInfo 改写、按 UA/码率路由、失败降级回源、详情页直链预热(起播秒开)。<br>
+<b>3. 驱动脚手架</b> — 借鉴 LitePan 模板化驱动:最小契约+可选接口+脚手架,新增网盘成本降低。<br>
+<b>4. 大目录并发</b> — 借鉴 QMediaSync 两段式流水线与限流自愈,提升万级目录扫描性能。<br>
+<b>5. 刮削/海报墙落地</b> — LitePan/QMediaSync 的 TMDB 匹配+nfo 写入方案成熟,可对照实现。<br>
+<b>6. 播放双模式</b> — 302 直链失败时降级代理流(带 Range),兼容性更好(借鉴 LitePan)。<br>
+<b>7. TG 通知</b> — openStrm/MP 插件的 Telegram 集成,任务完成通知用户。
+</div>
+
+<div class="sub" style="margin-top:24px">数据来源:成品目录源码只读分析(AutoFilm-main / LitePan-main / MoviePilot-Plugins-main / embyExternalUrl-main / openStrm-main / qmediasync-main)与 STRMhub 当前实现。</div>
+
+</body>
+</html>
