@@ -46,6 +46,8 @@ class Task(Base):
     base_url: Mapped[str] = mapped_column(Text, default="")
     token: Mapped[str] = mapped_column(String(64), default="")
     status: Mapped[str] = mapped_column(String(16), default="idle")  # idle|running|done|error
+    monitor_life: Mapped[bool] = mapped_column(default=False)  # 115 生活事件监控(推送式增量)
+    life_cursor_json: Mapped[str] = mapped_column(Text, default="{}")
     last_run_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_utcnow)

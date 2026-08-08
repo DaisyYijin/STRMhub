@@ -23,6 +23,7 @@ async function load() {
     tasks.value = await taskApi.list()
     accounts.value = await accountApi.list()
   } catch { /* 401 已由全局事件处理 */ }
+  loadLife()
 }
 
 onMounted(load)
@@ -73,6 +74,31 @@ async function remove(id) {
 }
 
 const statusClass = (s) => ({ running: 'run', done: 'ok', error: 'err' }[s] || '')
+
+// 生活事件监控(115 推送式增量): 开关 + 状态
+const lifeMap = ref({})
+
+async function loadLife() {
+  const map = {}
+  for (const t of tasks.value) {
+    try {
+      map[t.id] = await taskApi.life(t.id)
+    } catch { /* 忽略 */ }
+  }
+  lifeMap.value = map
+}
+
+async function toggleLife(t) {
+  const cur = lifeMap.value[t.id]
+  const next = !cur?.monitor_life
+  try {
+    await taskApi.setLife(t.id, { monitor_life: next, interval: 10 })
+    lifeMap.value[t.id] = await taskApi.life(t.id)
+    msg.value = { type: 'ok', text: next ? '已开启生活事件监控(秒级增量)' : '已关闭生活事件监控' }
+  } catch (e) {
+    msg.value = { type: 'err', text: e.message }
+  }
+}
 </script>
 
 <template>
@@ -129,7 +155,7 @@ const statusClass = (s) => ({ running: 'run', done: 'ok', error: 'err' }[s] || '
     <table>
       <tr>
         <th>ID</th><th>名称</th><th>账户</th><th>模式</th><th>状态</th>
-        <th>最近运行</th><th>操作</th>
+        <th>事件监控</th><th>最近运行</th><th>操作</th>
       </tr>
       <tr v-for="t in tasks" :key="t.id">
         <td>{{ t.id }}</td>
@@ -137,6 +163,15 @@ const statusClass = (s) => ({ running: 'run', done: 'ok', error: 'err' }[s] || '
         <td>{{ accountName(t.account_id) }}</td>
         <td><code>{{ t.scan_mode }}</code></td>
         <td><span class="badge" :class="statusClass(t.status)">{{ t.status }}</span></td>
+        <td>
+          <button class="primary" :class="{ 'tab-on': lifeMap[t.id]?.monitor_life }"
+                  @click="toggleLife(t)">
+            {{ lifeMap[t.id]?.monitor_life ? '监控中' : '未监控' }}
+          </button>
+          <div class="muted" v-if="lifeMap[t.id]?.monitor_life">
+            已处理 {{ lifeMap[t.id]?.processed || 0 }} 事件
+          </div>
+        </td>
         <td class="muted">
           {{ t.last_run_at || '从未' }}
           <div v-if="t.last_error" class="err">{{ t.last_error }}</div>
@@ -150,7 +185,7 @@ const statusClass = (s) => ({ running: 'run', done: 'ok', error: 'err' }[s] || '
           </div>
         </td>
       </tr>
-      <tr v-if="!tasks.length"><td colspan="7" class="muted">暂无任务</td></tr>
+      <tr v-if="!tasks.length"><td colspan="8" class="muted">暂无任务</td></tr>
     </table>
     <div v-if="lastResult" class="card">
       <h2>运行结果</h2>

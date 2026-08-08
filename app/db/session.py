@@ -41,11 +41,20 @@ def _migrate_columns(engine) -> None:
     insp = inspect(engine)
     if "accounts" not in insp.get_table_names():
         return
-    cols = {c["name"] for c in insp.get_columns("accounts")}
+    acols = {c["name"] for c in insp.get_columns("accounts")}
     with engine.begin() as conn:
-        if "info_json" not in cols:
+        if "info_json" not in acols:
             conn.execute(sa.text(
                 "ALTER TABLE accounts ADD COLUMN info_json TEXT DEFAULT '{}'"))
+    if "tasks" in insp.get_table_names():
+        tcols = {c["name"] for c in insp.get_columns("tasks")}
+        with engine.begin() as conn:
+            if "monitor_life" not in tcols:
+                conn.execute(sa.text(
+                    "ALTER TABLE tasks ADD COLUMN monitor_life INTEGER DEFAULT 0"))
+            if "life_cursor_json" not in tcols:
+                conn.execute(sa.text(
+                    "ALTER TABLE tasks ADD COLUMN life_cursor_json TEXT DEFAULT '{}'"))
 
 
 def init_db(db_path=None) -> None:

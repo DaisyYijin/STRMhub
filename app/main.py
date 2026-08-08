@@ -11,8 +11,8 @@ from pydantic import BaseModel
 
 from . import config
 from . import web
-from .api import (accounts, auth, automation, drivers, logs, organize,
-                  playback, qrcode, scrape, tasks)
+from .api import (accounts, auth, auth_flow, automation, drivers, logs,
+                  organize, playback, qrcode, scrape, tasks)
 from .db.session import init_db
 
 APP_VERSION = "0.2.0"  # 发布版本(镜像/健康检查用, 与前端联动)
@@ -24,9 +24,12 @@ async def lifespan(_app: FastAPI):
     init_db()
     from .services.logbuf import install as install_logbuf
     install_logbuf()  # 日志环形缓冲(日志面板)
+    from .services.life_event import life_supervisor
+    life_supervisor.start()  # 115 生活事件监控(启用任务自动增量)
     import logging
     logging.getLogger("strmhub").info("STRMhub 启动完成, version=%s", APP_VERSION)
     yield
+    life_supervisor.stop()
 
 
 app = FastAPI(title="STRMhub", version=APP_VERSION, lifespan=lifespan)
@@ -54,6 +57,7 @@ def me(user: str = Depends(auth.require_user)):
 # 业务路由
 app.include_router(accounts.router)
 app.include_router(drivers.router)
+app.include_router(auth_flow.router)
 app.include_router(tasks.router)
 app.include_router(playback.router)
 app.include_router(scrape.router)

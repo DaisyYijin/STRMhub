@@ -91,6 +91,8 @@ export const taskApi = {
   create: (body) => http.post('/api/tasks', body),
   remove: (id) => http.del(`/api/tasks/${id}`),
   run: (id) => http.post(`/api/tasks/${id}/run`),
+  life: (id) => http.get(`/api/tasks/${id}/life`),
+  setLife: (id, body) => http.put(`/api/tasks/${id}/life`, body),
 }
 
 export const scrapeApi = {
