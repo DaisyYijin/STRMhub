@@ -98,6 +98,8 @@ class ScrapeService:
                 g.root, item["title"], self._int(item["year"]), item["tmdb_id"],
                 item["plot"], item["original_title"])
             poster = nfo_writer.write_poster(g.root, item["poster_path"], poster_downloader)
+            if tmdb.available():
+                self._write_tv_season_episode_nfo(g, item, tmdb, poster_downloader)
         else:
             nfo_writer.write_movie_nfo(
                 g.root, item["title"], self._int(item["year"]), item["tmdb_id"],
@@ -106,6 +108,43 @@ class ScrapeService:
             # 电影海报: 兼容 poster.jpg 与 同名-poster.jpg 均指向 poster.jpg
         if poster:
             result.posters += 1
+
+    def _write_tv_season_episode_nfo(self, g: WorkGroup, item: dict,
+                                     tmdb: TMDBClient, poster_downloader) -> None:
+        """按 LitePan 方式写季/集 nfo: 季目录 season.nfo+poster.jpg, 集同名 .nfo+-thumb.jpg。"""
+        episodes: dict[int, list[tuple[int, Path]]] = {}  # season -> [(episode, strm)]
+        for f in g.files:
+            m = EPISODE_RE.search(f.name)
+            if m:
+                sn, en = int(m.group(1)), int(m.group(2))
+                episodes.setdefault(sn, []).append((en, f))
+        if not episodes:
+            return
+        import time as _time
+        for sn in sorted(episodes):
+            detail = tmdb.tv_season_details(item["tmdb_id"], sn)
+            if not detail:
+                continue
+            season_dir = episodes[sn][0][1].parent
+            nfo_writer.write_season_nfo(
+                season_dir, sn, detail.get("name") or "",
+                detail.get("overview") or "", detail.get("air_date") or "")
+            if detail.get("poster_path"):
+                nfo_writer.write_poster(season_dir, detail["poster_path"],
+                                        poster_downloader)
+            ep_by_num = {e.get("episode_number"): e
+                         for e in (detail.get("episodes") or [])}
+            for en, strm_path in episodes[sn]:
+                ep = ep_by_num.get(en) or {}
+                nfo_writer.write_episode_nfo(
+                    strm_path,
+                    ep.get("name") or f"第 {en} 集",
+                    item["title"], ep.get("overview") or "",
+                    ep.get("air_date") or "",
+                    int(ep.get("id") or 0), sn, en)
+                nfo_writer.write_thumb(strm_path, ep.get("still_path"),
+                                       poster_downloader)
+            _time.sleep(0.25)  # TMDB 限流节流
 
     # ---- 海报墙索引 ----
     def _upsert_index(self, task_id: str, g: WorkGroup, item: dict) -> None:

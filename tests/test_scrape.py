@@ -54,6 +54,18 @@ def _fake_tmdb(api_key="k"):
                 "id": 1396, "overview": "老白", "original_name": "Breaking Bad",
                 "seasons": [{"season_number": 1, "episode_count": 7},
                             {"season_number": 2, "episode_count": 13}]})
+        if path == "/3/tv/1396/season/1":
+            return httpx.Response(200, json={
+                "id": 3627, "name": "第 1 季", "overview": "第一季简介",
+                "air_date": "2008-01-20", "poster_path": "/s1.jpg",
+                "episodes": [{
+                    "id": 62085, "name": "试播集", "overview": "第一集",
+                    "air_date": "2008-01-20", "episode_number": 1,
+                    "still_path": "/st1.jpg"}]})
+        if path == "/t/p/w500/s1.jpg":
+            return httpx.Response(200, content=b"IMG-S1")
+        if path == "/t/p/w500/st1.jpg":
+            return httpx.Response(200, content=b"IMG-ST1")
         if path == "/t/p/w500/avatar.jpg":
             return httpx.Response(200, content=b"IMG-A")
         if path == "/t/p/w500/bb.jpg":
@@ -112,6 +124,32 @@ class TestScrapeService:
         assert by_title["Avatar"]["tmdb_id"] == 19995
         bb = by_title["Breaking Bad"]
         assert bb["media_type"] == "tv" and bb["ep_tmdb"] == 20
+
+    def test_tv_season_episode_nfo(self, tmp_path: Path):
+        """剧集刮削生成季/集 nfo + 季海报 + 集缩略图(LitePan 方式)。"""
+        lib = tmp_path / "lib"
+        (lib / "Breaking Bad" / "Season 1").mkdir(parents=True)
+        (lib / "Breaking Bad" / "Season 1" / "S01E01.strm").write_text(
+            "http://hub:6060/y", encoding="utf-8")
+        (lib / "Breaking Bad" / "Season 1" / "S01E02.strm").write_text(
+            "http://hub:6060/y2", encoding="utf-8")
+        svc = ScrapeService()
+        result = svc.run(lib, "t1", tmdb=_fake_tmdb())
+        assert result.matched == 1
+        season_dir = lib / "Breaking Bad" / "Season 1"
+        assert (season_dir / "season.nfo").exists()
+        assert (season_dir / "poster.jpg").exists()
+        assert (season_dir / "S01E01.nfo").exists()
+        ep_nfo = (season_dir / "S01E01.nfo").read_text(encoding="utf-8")
+        assert "<episodedetails>" in ep_nfo
+        assert "<season>1</season>" in ep_nfo
+        assert "<episode>1</episode>" in ep_nfo
+        assert "试播集" in ep_nfo
+        assert "<showtitle>Breaking Bad</showtitle>" in ep_nfo
+        assert (season_dir / "S01E01-thumb.jpg").exists()
+        # 第二集无对应季详情集 -> 兜底标题"第 2 集"
+        assert (season_dir / "S01E02.nfo").exists()
+
 
     def test_run_without_key(self, tmp_path: Path):
         """无 TMDB key: 不写 nfo, 仅建索引(none 状态)。"""

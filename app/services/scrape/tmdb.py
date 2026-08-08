@@ -44,6 +44,10 @@ class TMDBClient:
     def tv_details(self, tmdb_id: int) -> dict:
         return self._get(f"/tv/{tmdb_id}", {})
 
+    def tv_season_details(self, tmdb_id: int, season: int) -> dict:
+        """剧集某一季详情(含集列表): GET /tv/{id}/season/{n}。"""
+        return self._get(f"/tv/{tmdb_id}/season/{season}", {})
+
     @staticmethod
     def poster_url(path: str, size: str = "w500") -> str:
         return f"https://image.tmdb.org/t/p/{size}{path}"
