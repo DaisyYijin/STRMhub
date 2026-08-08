@@ -144,3 +144,92 @@ class TestProxy:
             assert "host.docker.internal" in body["hint"]
         finally:
             proxy_mod.set_client(None)
+
+class TestProxyPrewarm:
+    """预热缓存 / 重定向链跟踪 / UA 屏蔽(吸收 embyExternalUrl/MediaWarp 思路)。"""
+
+    def test_prewarm_then_stream_302_from_cache(self, client, fake_emby,
+                                                monkeypatch):
+        """PlaybackInfo 后台预热 -> stream 直接 302 缓存直链(不再解析)。"""
+        from app.services.playback import playback
+
+        monkeypatch.setattr(
+            playback, "resolve_redirect",
+            lambda key, token="": ("https://cdn.example/v.mp4", ""))
+        proxy_mod._cache_clear()
+
+        r = client.post("/items/1/playbackinfo")
+        assert r.status_code == 200
+        # 预热是后台任务, 给事件循环一点时间
+        import time
+        for _ in range(20):
+            if proxy_mod._cache_get("1|ms1"):
+                break
+            time.sleep(0.05)
+        cached = proxy_mod._cache_get("1|ms1")
+        assert cached == "https://cdn.example/v.mp4"
+        # stream 请求直接命中缓存
+        r = client.get("/videos/1/stream.mkv?MediaSourceId=ms1",
+                       follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == "https://cdn.example/v.mp4"
+
+    def test_final_url_tracking(self, client, fake_emby, monkeypatch):
+        """strm 内容为重定向链: 302 前手动跟踪到最终地址(内网地址公网播放)。"""
+        strm_file = fake_emby
+        strm_file.write_text("http://internal:8080/a/redirect",
+                             encoding="utf-8")
+        seen = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            if request.url.path.startswith("/Items"):
+                return httpx.Response(200, json={
+                    "Items": [{
+                        "Id": "1",
+                        "MediaSources": [
+                            {"Id": "ms1", "Path": str(strm_file),
+                             "Container": "mkv"},
+                        ],
+                    }]})
+            if request.url.path == "/a/redirect":
+                return httpx.Response(302, headers={
+                    "location": "https://public-cdn.example/final.mp4"})
+            if request.url.path == "/final.mp4":
+                return httpx.Response(200, content=b"ok")
+            return httpx.Response(404, text="nf")
+
+        proxy_mod.set_client(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        proxy_mod._cache_clear()
+        r = client.get("/videos/1/stream.mkv?MediaSourceId=ms1",
+                       follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == "https://public-cdn.example/final.mp4"
+        assert "/a/redirect" in seen  # 反代主动跟踪了重定向链
+
+    def test_ua_blocklist(self, client, fake_emby, monkeypatch):
+        """PROXY_BLOCK_UA 命中的播放器被 403 屏蔽。"""
+        monkeypatch.setenv("PROXY_BLOCK_UA", "badplayer,leech")
+        r = client.get("/videos/1/stream.mkv?MediaSourceId=ms1",
+                       headers={"User-Agent": "BadPlayer/1.0"})
+        assert r.status_code == 403
+        r2 = client.get("/videos/1/stream.mkv?MediaSourceId=ms1",
+                        headers={"User-Agent": "EmbyClient/1.0"})
+        assert r2.status_code in (302, 404)  # 正常播放器不受影响
+
+    def test_track_redirect_loop_guard(self, monkeypatch):
+        """重定向链防循环: A<->B 互相跳转不卡死。"""
+        import asyncio
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/a":
+                return httpx.Response(302, headers={"location": "/b"})
+            return httpx.Response(302, headers={"location": "/a"})
+
+        async def run():
+            proxy_mod.set_client(httpx.AsyncClient(
+                transport=httpx.MockTransport(handler)))
+            return await proxy_mod._track_redirects("http://x/a")
+
+        url = asyncio.run(run())
+        assert url == "http://x/b" or url.startswith("http://x/")
