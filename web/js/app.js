@@ -582,6 +582,24 @@ function checkCookie() {
     .catch(e => toast('Cookie 检测失败：' + (e.message || '无效')));
 }
 
+// 手动导入 Cookie（绕过被 IP 风控的扫码登录），检测通过后后端自动保存
+function importCookie() {
+  const ck = document.getElementById('acc-cookie-paste').value.trim();
+  if (!ck) { toast('请先粘贴 Cookie'); return; }
+  if (!ck.includes('UID=') || !ck.includes('SEID=')) { toast('Cookie 格式不正确，缺少 UID/SEID 字段'); return; }
+  toast('正在验证并导入 Cookie...');
+  api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115', cookie: ck }) })
+    .then(data => {
+      if (!data.valid) { toast('导入失败：' + (data.message || 'Cookie 无效')); return; }
+      const box = document.getElementById('acc-status-box');
+      box.style.display = 'block';
+      document.getElementById('acc-username').textContent = data.username || '-';
+      document.getElementById('acc-capacity').textContent = data.capacity || '-';
+      toast('Cookie 导入成功，可直接使用目录选择与同步功能');
+    })
+    .catch(e => toast('导入失败：' + (e.message || '无效')));
+}
+
 // 诊断 115 连接：测试多种 UA 组合
 async function diagnose115() {
   toast('正在诊断 115 连接（约 10-20 秒）...');

@@ -336,12 +336,18 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 	}
 
 	// ===== Cookie 通道 =====
+	// 支持手动导入：请求带 cookie 字段时优先使用，检测通过后自动保存
 	cookie := strings.TrimSpace(req.Cookie)
 	if cookie == "" {
 		cookie, _ = h.get115Cookie()
 	}
 	if cookie == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "尚未绑定 115 账号"})
+		return
+	}
+	// 基本格式校验，避免保存明显无效的内容
+	if !strings.Contains(cookie, "UID=") || !strings.Contains(cookie, "SEID=") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cookie 格式不正确，需要包含 UID=...;CID=...;SEID=... 字段"})
 		return
 	}
 
@@ -424,6 +430,14 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		"message":  "Cookie 有效",
 		"channel":  "Cookie",
 	})
+
+	// 手动导入的 Cookie 检测通过后自动保存（绕过被风控的扫码登录接口）
+	if strings.TrimSpace(req.Cookie) != "" {
+		h.Config.SaveCookie(cookie)
+		h.Config.Save115Device("web")
+		h.upsert115Storage(cookie, "web", userName)
+		log.Printf("[115] 已导入并保存手动提供的 Cookie，账号=%s", userName)
+	}
 }
 
 // formatBytes 将字节数格式化为人类可读容量（如 1.50 GiB）
