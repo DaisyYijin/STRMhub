@@ -290,7 +290,7 @@ func (h *Handler) DeleteStorage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// CheckStorage 检测 Cookie 可用性（占位：后续接入 115 API 校验）
+// CheckStorage 检测 115 Cookie 可用性：调用 115 API 校验并返回账号名与容量
 func (h *Handler) CheckStorage(c *gin.Context) {
 	var req struct {
 		Type       string `json:"type"`
@@ -301,13 +301,79 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	// TODO: 调用 115 网盘 API 校验 Cookie，返回账号名与容量
+
+	// 获取 cookie：优先请求体传入 -> 数据库 Storage -> 配置文件
+	cookie := strings.TrimSpace(req.Cookie)
+	if cookie == "" {
+		var storage model.Storage
+		if err := h.DB.Where("type = ?", "115").First(&storage).Error; err == nil {
+			cookie = strings.TrimSpace(storage.Cookie)
+		}
+	}
+	if cookie == "" {
+		if ck, err := h.Config.LoadCookie(); err == nil {
+			cookie = strings.TrimSpace(ck)
+		}
+	}
+	if cookie == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "尚未绑定 115 账号"})
+		return
+	}
+
+	// 调用 115 用户信息接口校验 Cookie
+	const settingStatusAPI = "https://proapi.115.com/android/2.0/user/setting_status"
+	body, err := httpGet115(settingStatusAPI, nil, cookie, 15*time.Second)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid":   false,
+			"message": "调用 115 接口失败：" + err.Error(),
+		})
+		return
+	}
+
+	var resp struct {
+		State int `json:"state"`
+		Data  struct {
+			Username string `json:"username"`
+			Space    int64  `json:"space"`
+			Used     int64  `json:"used"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid":   false,
+			"message": "解析 115 响应失败",
+		})
+		return
+	}
+	if resp.State != 0 || resp.Data.Username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid":   false,
+			"message": "Cookie 无效或已过期",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"username": "",
-		"capacity": "",
-		"valid":    false,
-		"message":  "Cookie 检测功能待接入 115 API",
+		"username": resp.Data.Username,
+		"capacity": fmt.Sprintf("%s / %s", formatBytes(resp.Data.Used), formatBytes(resp.Data.Space)),
+		"valid":    true,
+		"message":  "Cookie 有效",
 	})
+}
+
+// formatBytes 将字节数格式化为人类可读容量（如 1.50 GiB）
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // ==================== 核心配置 TMDB ====================

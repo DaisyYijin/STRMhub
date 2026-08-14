@@ -57,6 +57,10 @@ func mapDeviceToApp(device string) string {
 		return "alipaymini"
 	case "wechatmini":
 		return "wechatmini"
+	case "tv":
+		return "tv"
+	case "qandroid":
+		return "qandroid"
 	default:
 		return "alipaymini"
 	}

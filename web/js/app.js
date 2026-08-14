@@ -514,6 +514,10 @@ function checkCookie() {
   toast('正在检测 Cookie 可用性...');
   api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115', cookie_path: path }) })
     .then(data => {
+      if (!data.valid) {
+        toast('Cookie 无效或已过期：' + (data.message || ''));
+        return;
+      }
       const box = document.getElementById('acc-status-box');
       box.style.display = 'block';
       document.getElementById('acc-username').textContent = data.username || '-';
