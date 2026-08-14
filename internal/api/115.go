@@ -55,6 +55,8 @@ var (
 // 前端设备类型 -> 115 app 短名
 func mapDeviceToApp(device string) string {
 	switch device {
+	case "web":
+		return "web"
 	case "115ios":
 		return "ios"
 	case "115android":
@@ -68,7 +70,7 @@ func mapDeviceToApp(device string) string {
 	case "qandroid":
 		return "qandroid"
 	default:
-		return "alipaymini"
+		return "web"
 	}
 }
 
@@ -365,7 +367,7 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	}
 	cookie := strings.Join(cookieParts, "; ")
 
-	log.Printf("[115] 扫码登录成功，Cookie长度=%d 字段数=%d, 账号=%s, 统一UA=%s", len(cookie), len(cookieParts), username, ua115Unified())
+	log.Printf("[115] 扫码登录成功，app=%s, Cookie长度=%d 字段数=%d, 账号=%s, 统一UA=%s", sess.app, len(cookie), len(cookieParts), username, ua115Unified())
 
 	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)

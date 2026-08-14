@@ -595,7 +595,7 @@ async function loadAccount() {
     const acc = (data.data || []).find(s => s.type === '115');
     if (!acc) return;
     document.getElementById('acc-cookie-path').value = acc.cookie_path || '/config/115-cookies.txt';
-    document.getElementById('acc-device').value = acc.device || '115android';
+    document.getElementById('acc-device').value = acc.device || 'web';
     document.getElementById('acc-interval').value = acc.interval || 3.0;
     document.getElementById('acc-appid').value = acc.app_id || '';
     setOpenapi(!!acc.openapi_enabled);
@@ -613,7 +613,7 @@ function resetAccount() {
     if (el) el.value = '';
   });
   document.getElementById('acc-cookie-path').value = '/config/115-cookies.txt';
-  document.getElementById('acc-device').value = '115android';
+  document.getElementById('acc-device').value = 'web';
   document.getElementById('acc-interval').value = '3.0';
   setOpenapi(false);
   document.getElementById('acc-status-box').style.display = 'none';
