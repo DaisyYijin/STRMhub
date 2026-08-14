@@ -66,22 +66,75 @@ func mapDeviceToApp(device string) string {
 	}
 }
 
-// deviceToUA 根据设备类型返回对应的 User-Agent
-// 关键：UA 必须和扫码登录时的设备类型一致，否则 115 返回"服务器开小差了"
+// deviceToUA 根据 AList/115driver 标准生成 User-Agent
+// 关键发现：115 服务端只认极简自家客户端 UA（如 "Mozilla/5.0 115Browser/27.0.5.7"），
+// 完整浏览器 UA（带 Windows/Chrome 前缀）会被风控拒绝返回"服务器开小差了"
 func deviceToUA(device string) string {
-	switch device {
-	case "115android", "qandroid":
-		return "Mozilla/5.0 (Linux; Android 13; 2107113SR) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
-	case "115ios":
-		return "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 115App/30.0.0"
-	case "tv":
-		return "Mozilla/5.0 (Linux; Android 9; ASUS_Z01QD Build/PQ1A.181105.004.A00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
-	case "alipaymini", "wechatmini":
-		return "Mozilla/5.0 (Linux; Android 13; 2107113SR; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
-	default:
-		// web / 未知设备：用 115Browser
-		return ua115
+	// 所有 webapi.115.com 请求统一用 115Browser UA（与 Cookie 设备类型无关）
+	// 参考 SheltonZhu/115driver: UA115Browser = "Mozilla/5.0 115Browser/27.0.5.7"
+	ver := getAppVerCached()
+	return "Mozilla/5.0 115Browser/" + ver
+}
+
+// appVer 缓存的 115 客户端版本号
+var (
+	appVerMu   sync.RWMutex
+	appVerVal  = "27.0.5.7" // 默认值（115driver 库的同款默认）
+	appVerTime time.Time    // 上次刷新时间
+)
+
+// getAppVerCached 获取 115 客户端版本号（1 小时缓存）
+// 版本过旧会被 115 拒绝，需从官方接口动态获取
+// 参考 115driver: ApiGetVersion = "https://appversion.115.com/1/web/1.0/api/chrome"
+func getAppVerCached() string {
+	appVerMu.RLock()
+	if time.Since(appVerTime) < time.Hour && appVerVal != "" {
+		v := appVerVal
+		appVerMu.RUnlock()
+		return v
 	}
+	appVerMu.RUnlock()
+
+	ver := fetchAppVer()
+	appVerMu.Lock()
+	appVerVal = ver
+	appVerTime = time.Now()
+	appVerMu.Unlock()
+	return ver
+}
+
+// fetchAppVer 从 115 官方接口获取当前版本号
+func fetchAppVer() string {
+	const api = "https://appversion.115.com/1/web/1.0/api/chrome"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(api)
+	if err != nil {
+		log.Printf("[115] 获取版本号失败: %v，使用默认 %s", err, appVerVal)
+		return appVerVal
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return appVerVal
+	}
+	// 响应格式: {"state":true,"data":{"linux":{"version_code":"..."}...}}
+	var result struct {
+		State bool                          `json:"state"`
+		Data  map[string]map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil || !result.State {
+		return appVerVal
+	}
+	// 优先取 web/win 版本
+	for _, key := range []string{"web", "win", "chrome"} {
+		if v, ok := result.Data[key]["version_code"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				log.Printf("[115] 获取到最新版本号: %s", s)
+				return s
+			}
+		}
+	}
+	return appVerVal
 }
 
 type qrTokenResp struct {
@@ -290,46 +343,25 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 			parts = append(parts, k+"="+sv)
 		}
 	}
-	cookieFromJSON := strings.Join(parts, "; ")
-
-	// 合并 HTTP 响应头中的 Set-Cookie（包含 Session 等额外字段）
-	respCookies := map[string]string{}
-	for _, sc := range resp.Cookies() {
-		if sc.Name != "" {
-			respCookies[sc.Name] = sc.Value
-		}
-	}
-	// 将 JSON body 中的 cookie 和 Set-Cookie 头合并（JSON 优先，因为它是完整的登录凭证）
-	merged := make(map[string]string)
-	for k, v := range respCookies {
-		merged[k] = v
-	}
-	// 用 JSON body 的值覆盖（UID/CID/SEID/KID 来自 body）
+	// 按 AList/115driver 标准只保留 UID;CID;SEID;KID 四个字段
+	// 参考 SheltonZhu/115driver: fmt.Sprintf("UID=%s;CID=%s;SEID=%s;KID=%s", ...)
+	cookieMap := map[string]string{}
 	for _, p := range parts {
 		kv := strings.SplitN(p, "=", 2)
-		if len(kv) == 2 {
-			merged[kv[0]] = kv[1]
+		if len(kv) == 2 && kv[1] != "" {
+			cookieMap[kv[0]] = kv[1]
 		}
 	}
-	// 重新按固定顺序拼接
 	cookieKeys := []string{"UID", "CID", "SEID", "KID"}
-	cookieParts := make([]string, 0, len(merged))
-	added := make(map[string]bool)
+	cookieParts := make([]string, 0, 4)
 	for _, k := range cookieKeys {
-		if v, ok := merged[k]; ok && v != "" {
-			cookieParts = append(cookieParts, k+"="+v)
-			added[k] = true
-		}
-	}
-	for k, v := range merged {
-		if !added[k] && v != "" {
+		if v, ok := cookieMap[k]; ok && v != "" {
 			cookieParts = append(cookieParts, k+"="+v)
 		}
 	}
 	cookie := strings.Join(cookieParts, "; ")
 
-	log.Printf("[115] 扫码登录成功，Cookie长度=%d (JSON=%d, SetCookie=%d), 账号=%s",
-		len(cookie), len(cookieFromJSON), len(respCookies), username)
+	log.Printf("[115] 扫码登录成功，Cookie长度=%d 字段数=%d, 账号=%s", len(cookie), len(cookieParts), username)
 
 	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)

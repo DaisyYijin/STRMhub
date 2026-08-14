@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"strmhub/internal/config"
@@ -691,21 +690,16 @@ func (h *Handler) Diagnose115(c *gin.Context) {
 		return
 	}
 
-	// 多种 UA 组合测试
+	// 多种 UA 组合测试（按 115driver 标准格式优先）
 	uas := map[string]string{
-		"115Browser(网页)": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 115Browser/27.0.3.7",
-		"Chrome浏览器":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-		"115App_Android": "Mozilla/5.0 (Linux; Android 13; 2107113SR) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0",
-		"115App_iOS":     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 115App/30.0.0",
-		"当前设备UA":          h.get115UA(),
+		"115Browser动态版本": "Mozilla/5.0 115Browser/" + getAppVerCached(),
+		"115Browser默认":   "Mozilla/5.0 115Browser/27.0.5.7",
+		"115disk":        "Mozilla/5.0 115disk/30.1.0",
+		"旧版完整浏览器UA":      ua115,
 	}
 
 	results := gin.H{}
-	query := url.Values{
-		"aid": {"1"}, "cid": {"0"}, "o": {"user_ptime"}, "asc": {"0"},
-		"offset": {"0"}, "show_dir": {"1"}, "limit": {"50"},
-		"natsort": {"1"}, "format": {"json"}, "fc_mix": {"0"},
-	}
+	query := build115FileQuery("0", 0)
 
 	for name, ua := range uas {
 		body, err := httpGet115Full(fileListAPI, query, cookie, ua, 15*time.Second, nil)

@@ -92,18 +92,21 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
 }
 
 // build115FileQuery 构造 115 文件列表查询参数
+// 参数与 AList/115driver 完全一致，参数差异可能触发 115 风控
 func build115FileQuery(cid string, offset int) url.Values {
 	return url.Values{
-		"aid":      {"1"},
-		"cid":      {cid},
-		"o":        {"user_ptime"},
-		"asc":      {"0"},
-		"offset":   {fmt.Sprint(offset)},
-		"show_dir": {"1"},
-		"limit":    {"1150"},
-		"natsort":  {"1"},
-		"format":   {"json"},
-		"fc_mix":   {"0"},
+		"aid":              {"1"},
+		"cid":              {cid},
+		"o":                {"user_ptime"},
+		"asc":              {"1"},
+		"offset":           {fmt.Sprint(offset)},
+		"show_dir":         {"1"},
+		"limit":            {"1150"},
+		"snap":             {"0"},
+		"natsort":          {"0"},
+		"record_open_time": {"1"},
+		"format":           {"json"},
+		"fc_mix":           {"0"},
 	}
 }
 

@@ -67,13 +67,9 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 	if err != nil {
 		return nil, err
 	}
+	// 与 AList/115driver 保持一致：只发送 UA 和 Cookie，不加多余请求头
 	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Referer", "https://115.com/")
 	req.Header.Set("Cookie", cookie)
-	// 模拟真实浏览器/AJAX 请求的关键头
-	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	for k, v := range extraHeaders {
 		req.Header.Set(k, v)
 	}
@@ -96,18 +92,7 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 
 // list115Entries 拉取指定目录的一页条目（文件 + 文件夹），返回条目列表和总数
 func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, int, error) {
-	query := url.Values{
-		"aid":      {"1"},
-		"cid":      {cid},
-		"o":        {"user_ptime"},
-		"asc":      {"0"},
-		"offset":   {fmt.Sprint(offset)},
-		"show_dir": {"1"},
-		"limit":    {fmt.Sprint(pageSize)},
-		"natsort":  {"1"},
-		"format":   {"json"},
-		"fc_mix":   {"0"},
-	}
+	query := build115FileQuery(cid, offset)
 	body, err := httpGet115(fileListAPI, query, cookie, 20*time.Second)
 	if err != nil {
 		return nil, 0, err
