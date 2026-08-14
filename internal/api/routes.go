@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"strmhub/internal/config"
@@ -760,7 +761,7 @@ func (h *Handler) GetSystemLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": strings.Join(lines[start:], "\n")})
 }
 
-// Diagnose115 诊断 115 连接问题：尝试多种 UA 组合，定位风控/UA/Cookie 问题
+// Diagnose115 诊断 115 连接问题：会话有效性 / 域名风控 / UA 配对全矩阵探测
 // GET /storage/115/diagnose
 func (h *Handler) Diagnose115(c *gin.Context) {
 	cookie, err := h.get115Cookie()
@@ -769,41 +770,72 @@ func (h *Handler) Diagnose115(c *gin.Context) {
 		return
 	}
 
-	// 多种 UA 组合测试（按 115driver 标准格式优先）
-	uas := map[string]string{
-		"统一UA(当前使用)":    ua115Unified(),
-		"115Browser默认": "Mozilla/5.0 115Browser/27.0.5.7",
-		"115disk":       "Mozilla/5.0 115disk/30.1.0",
-		"Chrome浏览器UA":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-	}
-
 	results := gin.H{}
-	query := build115FileQuery("0", 0)
-
-	for name, ua := range uas {
-		body, err := httpGet115Full(fileListAPI, query, cookie, ua, 15*time.Second, nil)
+	probe := func(name, api string, query url.Values, ua string) (ok bool, info string) {
+		body, err := httpGet115Full(api, query, cookie, ua, 15*time.Second, nil)
 		if err != nil {
-			results[name] = gin.H{"ok": false, "error": err.Error()}
-			continue
+			return false, err.Error()
 		}
 		var r struct {
 			State bool   `json:"state"`
 			Error string `json:"error"`
 			Count int    `json:"count"`
+			Data  []struct {
+				N string `json:"n"`
+			} `json:"data"`
 		}
-		json.Unmarshal(body, &r)
-		results[name] = gin.H{
-			"ok":    r.State,
-			"error": r.Error,
-			"count": r.Count,
+		if err := json.Unmarshal(body, &r); err != nil {
+			return false, "非 JSON 响应: " + truncateStr(string(body), 100)
 		}
+		if !r.State {
+			return false, r.Error
+		}
+		return true, fmt.Sprintf("成功，count=%d，示例: %s", r.Count, firstDiagName(r.Data))
+	}
+
+	// 1. 会话有效性（my.115.com 不做设备校验）
+	results["会话检测(my.115.com)"] = diagResult(probe("nav", "https://my.115.com/?ct=ajax&ac=nav", nil, ua115Unified()))
+
+	// 2. 无参数探测（p115client：被风控的 /files 不带参数仍可用，可判定域名是否被标记）
+	results["无参数探测(webapi.115.com)"] = diagResult(probe("noparam", "https://webapi.115.com/files", nil, ua115Unified()))
+
+	// 3. 各镜像域名（统一 UA + 标准参数）
+	for _, origin := range webapiFileOrigins {
+		name := "列目录(" + strings.TrimPrefix(origin, "https://") + ")"
+		results[name] = diagResult(probe("files", origin+"/files", build115FileQuery("0", 0), ua115Unified()))
+	}
+
+	// 4. 各 UA（主域名 + 标准参数）
+	uaList := []struct{ name, ua string }{
+		{"统一UA(115Browser)", ua115Unified()},
+		{"朴素UA(Mozilla/5.0)", "Mozilla/5.0"},
+		{"Chrome浏览器UA", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"},
+		{"115disk UA", "Mozilla/5.0 115disk/30.1.0"},
+	}
+	for _, u := range uaList {
+		results["UA测试-"+u.name] = diagResult(probe("files", "https://webapi.115.com/files", build115FileQuery("0", 0), u.ua))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"cookie_len": len(cookie),
 		"results":    results,
-		"hint":       "如果所有 UA 都失败且 error=服务器开小差了，通常是服务器 IP 被 115 风控（机房 IP 常见）。请在本地电脑用相同 Cookie 测试：如果本地成功、服务器失败，即可确认是 IP 问题。",
+		"hint":       "判读：会话检测失败=Cookie 无效需重新扫码；无参数探测成功但列目录失败=域名被风控（镜像行若有成功项则已自动回退可用）；所有列目录都失败但会话成功=UA 配对或账号风控问题，把本报告发回。",
 	})
+}
+
+// diagResult 包装探测结果
+func diagResult(ok bool, info string) gin.H {
+	return gin.H{"ok": ok, "info": info}
+}
+
+// firstDiagName 取第一个文件名（无数据返回空）
+func firstDiagName(data []struct {
+	N string `json:"n"`
+}) string {
+	if len(data) == 0 {
+		return "-"
+	}
+	return data[0].N
 }
 
 // GetSetting 获取通用配置

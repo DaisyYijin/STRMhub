@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,50 +38,21 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName()})
 }
 
-// fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表（UA 需匹配登录设备）
+// fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表（多镜像自动回退）
 func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
 	if cookie == "" {
 		return nil, fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
-	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, UA=%.60s...", cid, len(cookie), ua)
+	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, UA=%s", cid, len(cookie), ua)
 
-	query := build115FileQuery(cid, 0)
-	body, err := httpGet115UA(fileListAPI, query, cookie, ua, 20*time.Second)
+	entries, _, err := fetch115FilesPage(cookie, ua, cid, 0)
 	if err != nil {
-		return nil, fmt.Errorf("访问 115 目录失败: %v", err)
-	}
-
-	// 记录原始响应用于调试（截断过长内容）
-	bodyStr := string(body)
-	if len(bodyStr) > 500 {
-		bodyStr = bodyStr[:500] + "..."
-	}
-	log.Printf("[115目录] 响应: %s", bodyStr)
-
-	// 解析响应，校验 state 字段
-	var result struct {
-		State  bool                      `json:"state"`
-		Error  string                    `json:"error"`
-		ErrNo  interface{}               `json:"errno"`
-		Data   []map[string]interface{} `json:"data"`
-		Count  int                       `json:"count"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析 115 目录失败: %v", err)
-	}
-
-	// 校验 115 返回状态
-	if !result.State {
-		errMsg := result.Error
-		if errMsg == "" {
-			errMsg = "Cookie 可能已过期"
-		}
-		return nil, fmt.Errorf("115 返回错误: %s", errMsg)
+		return nil, err
 	}
 
 	// 只返回文件夹
-	dirs := make([]gin.H, 0, len(result.Data))
-	for _, d := range result.Data {
+	dirs := make([]gin.H, 0, len(entries))
+	for _, d := range entries {
 		if fmt.Sprint(d["f"]) == "0" {
 			dirs = append(dirs, gin.H{"cid": fmt.Sprint(d["cid"]), "name": fmt.Sprint(d["n"])})
 		}
@@ -92,21 +61,18 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
 }
 
 // build115FileQuery 构造 115 文件列表查询参数
-// 参数与 AList/115driver 完全一致，参数差异可能触发 115 风控
+// 与 p115client web 通道默认参数一致（asc/cid/cur/fc_mix/o/offset/limit/show_dir），
+// 多余参数曾被怀疑参与触发风控，保持最简
 func build115FileQuery(cid string, offset int) url.Values {
 	return url.Values{
-		"aid":              {"1"},
-		"cid":              {cid},
-		"o":                {"user_ptime"},
-		"asc":              {"1"},
-		"offset":           {fmt.Sprint(offset)},
-		"show_dir":         {"1"},
-		"limit":            {"1150"},
-		"snap":             {"0"},
-		"natsort":          {"0"},
-		"record_open_time": {"1"},
-		"format":           {"json"},
-		"fc_mix":           {"0"},
+		"asc":      {"1"},
+		"cid":      {cid},
+		"cur":      {"1"},
+		"fc_mix":   {"1"},
+		"o":        {"user_ptime"},
+		"offset":   {fmt.Sprint(offset)},
+		"limit":    {"1150"},
+		"show_dir": {"1"},
 	}
 }
 

@@ -34,6 +34,15 @@ const (
 	pageSize    = 1150
 )
 
+// webapiFileOrigins 文件列表接口的镜像域名轮换池（p115client get_webapi_origin 同款）
+// 单域名被风控（开小差）时切换下一个镜像即可继续使用
+var webapiFileOrigins = []string{
+	"https://webapi.115.com",
+	"http://web.api.115.com",
+	"https://115cdn.com/webapi",
+	"https://115vod.com/webapi",
+}
+
 // remoteFile 115 网盘上的一个文件
 type remoteFile struct {
 	Fid   string `json:"fid"`
@@ -91,54 +100,43 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 	return body, nil
 }
 
-// loginCheck115 web 会话激活校验（115driver ApiLoginCheck 同款）
-// app 扫码签发的 Cookie 需先过一次 check/sso 才能访问 webapi.115.com 的文件接口，
-// my.115.com 则无此要求。OpenList 的 login() 对扫码/导入 Cookie 都会执行这一步。
-func loginCheck115(cookie string) error {
-	api := "https://passportapi.115.com/app/1.0/web/1.0/check/sso?_=" + fmt.Sprint(time.Now().UnixMilli())
-	body, err := httpGet115UA(api, nil, cookie, ua115Unified(), 15*time.Second)
-	if err != nil {
-		return err
-	}
-	var r struct {
-		State   json.RawMessage `json:"state"`
-		Code    int64           `json:"code"`
-		Message string          `json:"message"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
-		return fmt.Errorf("解析 sso 响应失败: %s", truncateStr(string(body), 120))
-	}
-	// passport 系接口失败时也可能返回 state:1，需同时校验 code==0（40101032=请重新登录）
-	if !openStateOK(r.State) || r.Code != 0 {
-		msg := r.Message
-		if msg == "" {
-			if r.Code != 0 {
-				msg = fmt.Sprintf("code=%d", r.Code)
-			} else {
-				// state=false 且无错误码：多为 App 槽位 Cookie，无法激活 web 会话
-				msg = fmt.Sprintf("state=%s（该 Cookie 不是网页端会话，请用\"115浏览器_网页端\"设备扫码）", strings.TrimSpace(string(r.State)))
-			}
+// fetch115FilesPage 从 webapi 拉取一页文件列表（文件+文件夹）
+// 主域名被风控返回"开小差"时自动切换镜像域名（p115client get_webapi_origin 轮换同款）
+func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interface{}, int, error) {
+	query := build115FileQuery(cid, offset)
+	var lastErr error
+	for _, origin := range webapiFileOrigins {
+		body, err := httpGet115UA(origin+"/files", query, cookie, ua, 20*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		return fmt.Errorf("sso 校验未通过: %s", msg)
+		var result struct {
+			State bool                      `json:"state"`
+			Error string                    `json:"error"`
+			Data  []map[string]interface{} `json:"data"`
+			Count int                       `json:"count"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			lastErr = fmt.Errorf("解析 115 目录失败: %v", err)
+			continue
+		}
+		if !result.State {
+			lastErr = fmt.Errorf("115 返回错误: %s", result.Error)
+			// Cookie 失效类错误换镜像也没用，直接返回
+			if strings.Contains(result.Error, "登录") || strings.Contains(result.Error, "acc") {
+				return nil, 0, lastErr
+			}
+			continue // 风控类错误，尝试下一个镜像
+		}
+		return result.Data, result.Count, nil
 	}
-	return nil
+	return nil, 0, lastErr
 }
 
 // list115Entries 拉取指定目录的一页条目（文件 + 文件夹），返回条目列表和总数
 func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, int, error) {
-	query := build115FileQuery(cid, offset)
-	body, err := httpGet115(fileListAPI, query, cookie, 20*time.Second)
-	if err != nil {
-		return nil, 0, err
-	}
-	var result struct {
-		Count int                      `json:"count"`
-		Data  []map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, 0, fmt.Errorf("解析 115 目录失败")
-	}
-	return result.Data, result.Count, nil
+	return fetch115FilesPage(cookie, ua115Unified(), cid, offset)
 }
 
 // walk115Dir 递归遍历目录，收集所有文件（路径为相对根目录的相对路径）

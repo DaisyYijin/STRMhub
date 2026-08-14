@@ -35,9 +35,12 @@ func loadThrottleInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// isThrottledHost 判断是否为需要节流的 115 域名（文件操作类接口）
+// isThrottledHost 判断是否为需要节流的 115 域名（文件操作类接口，含镜像域名）
 func isThrottledHost(api string) bool {
 	return strings.Contains(api, "webapi.115.com") ||
+		strings.Contains(api, "web.api.115.com") ||
+		strings.Contains(api, "115cdn.com") ||
+		strings.Contains(api, "115vod.com") ||
 		strings.Contains(api, "proapi.115.com")
 }
 

@@ -837,34 +837,7 @@ func (h *Handler) newPan115Ops() (*pan115Ops, error) {
 	if err != nil {
 		return nil, err
 	}
-	activateCookieSSO(cookie) // app 扫码 Cookie 需激活 web 会话后才能访问 webapi
 	return &pan115Ops{cookie: cookie}, nil
-}
-
-// activateCookieSSO 每个 Cookie 值激活一次 web 会话（失败后 10 分钟内不重试）
-// OpenList 在 login() 末尾对扫码/导入 Cookie 都执行 LoginCheck，进程启动后首次使用时补上
-var (
-	cookieSSOMu   sync.Mutex
-	cookieSSOLast string
-	cookieSSOAt   time.Time
-)
-
-func activateCookieSSO(cookie string) {
-	cookieSSOMu.Lock()
-	skip := cookieSSOLast == cookie || time.Since(cookieSSOAt) < 10*time.Minute
-	cookieSSOAt = time.Now()
-	cookieSSOMu.Unlock()
-	if skip {
-		return
-	}
-	if err := loginCheck115(cookie); err != nil {
-		log.Printf("[115] 会话激活(sso)未通过: %v", err)
-		return
-	}
-	cookieSSOMu.Lock()
-	cookieSSOLast = cookie
-	cookieSSOMu.Unlock()
-	log.Printf("[115] 会话激活(sso)成功，webapi 已可用")
 }
 
 // channelName 当前通道名（日志用）

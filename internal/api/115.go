@@ -31,7 +31,9 @@ const (
 	tokenAPI     = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
 	qrcodeImgAPI = "https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode"
 	statusAPI    = "https://qrcodeapi.115.com/get/status/"
-	resultAPI    = "https://passportapi.115.com/app/1.0/%s/1.0/login/qrcode/"
+	// 登录结果接口走 qrcodeapi 域名（p115client login_qrcode_scan_result 同款；
+	// passportapi 域名更易触发 IP登录异常）
+	resultAPI = "https://qrcodeapi.115.com/app/1.0/%s/1.0/login/qrcode/"
 )
 
 // ua115Unified Cookie 通道统一 User-Agent（OpenList/115driver 生产验证组合）
@@ -311,7 +313,8 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	}
 
 	api := fmt.Sprintf(resultAPI, sess.app)
-	form := url.Values{"app": {sess.app}, "account": {uid}}
+	// p115client 配方：POST 数据只带 account，不带 app 字段
+	form := url.Values{"account": {uid}}
 	req, err := http.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", "", "", err
@@ -401,13 +404,10 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	h.Config.Save115Device(sess.device)
 	h.upsert115Storage(cookie, sess.device, username)
 
-	// 激活 web 会话：app 扫码签发的 Cookie 需 check/sso 后才能访问 webapi 文件接口
+	// 提示设备槽位信息（App 槽位 Cookie 与桌面 UA 配对可能被风控拒绝，网页端最稳）
 	warning := ""
-	if err := loginCheck115(cookie); err != nil {
-		log.Printf("[115] 会话激活(sso)未通过: %v", err)
-		warning = "登录成功，但该设备类型的 Cookie 可能无法访问 115 文件接口：" + err.Error()
-	} else {
-		log.Printf("[115] 会话激活(sso)成功，webapi 已可用")
+	if sess.app != "web" {
+		warning = "当前是 " + sess.device + " 槽位的 Cookie，若目录列表报\"服务器开小差\"，请改用\"115浏览器_网页端\"设备重新扫码，或手动导入浏览器 Cookie"
 	}
 
 	h.dropQrSession(uid)

@@ -600,18 +600,18 @@ function importCookie() {
     .catch(e => toast('导入失败：' + (e.message || '无效')));
 }
 
-// 诊断 115 连接：测试多种 UA 组合
+// 诊断 115 连接：会话/域名风控/UA 配对全矩阵
 async function diagnose115() {
-  toast('正在诊断 115 连接（约 10-20 秒）...');
+  toast('正在诊断 115 连接（约 15-30 秒）...');
   try {
     const data = await api('/storage/115/diagnose');
     let report = '诊断结果 (Cookie长度=' + data.cookie_len + '):\n\n';
     let anyOk = false;
-    Object.entries(data.results || {}).forEach(([ua, r]) => {
-      report += (r.ok ? '✓' : '✗') + ' ' + ua + ': ' + (r.ok ? '成功，共' + r.count + '项' : (r.error || '失败')) + '\n';
+    Object.entries(data.results || {}).forEach(([name, r]) => {
+      report += (r.ok ? '✓' : '✗') + ' ' + name + ': ' + (r.info || '失败') + '\n';
       if (r.ok) anyOk = true;
     });
-    report += '\n' + (anyOk ? '有可用组合！' : '全部失败。' + (data.hint || ''));
+    report += '\n' + (data.hint || '');
     alert(report);
     console.log('[115诊断]', data);
   } catch (e) {
