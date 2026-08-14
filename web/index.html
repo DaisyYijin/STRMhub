@@ -77,7 +77,6 @@
       <div class="tab-panel active" data-panel="acc115-sync">
       <!-- 全量 + 增量同步 -->
         <div class="card">
-          <div class="card-title">全量同步配置</div>
           <div class="form-row"><div class="label">115 媒体库 cid</div><div class="control">
             <div class="form-inline-group"><input type="text" id="full-cid" placeholder="选择或填写 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker()">选择目录</button></div>
           </div></div>
@@ -123,7 +122,6 @@
         </div>
 
         <div class="card">
-          <div class="card-title">增量同步</div>
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
           <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
@@ -131,7 +129,6 @@
 
         <!-- 分享同步 -->
         <div class="card">
-          <div class="card-title">分享同步</div>
           <div class="form-row"><div class="label">我的接收文件夹</div><div class="control"><input type="text" id="share-folder" placeholder="115 接收分享的文件夹"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('share', this)" style="position:relative">重置配置</button></div></div>
         </div>
@@ -184,7 +181,6 @@
       <div class="tab-panel active" data-panel="basic">
       <div class="alert alert-warning">自动整理前必须创建好二级分类策略，并完成一次全量同步。</div>
       <div class="card">
-        <div class="card-title">基础配置</div>
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">我的影视库<i class="help-tip">?<span class="tip-bubble">整理后的最终归宿，也是全量/增量同步的目标目录。如 /影视库/我的影视库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-library" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-library')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
@@ -207,7 +203,6 @@
       <div class="tab-panel" data-panel="gpt">
       <div class="alert alert-info">GPT 识别：当 TMDB 无法识别媒体信息时，调用大模型辅助识别。API 地址需支持 OpenAI 协议标准。</div>
       <div class="card">
-        <div class="card-title">GPT 识别配置</div>
         <div class="form-row"><div class="label">API 地址<i class="help-tip">?<span class="tip-bubble">支持 OpenAI 协议标准的模型接口地址，当 TMDB 无法识别时调用大模型辅助识别。</span></i></div><div class="control"><input type="text" id="org-gpt-url" placeholder="如 https://api.siliconflow.cn/v1"></div></div>
         <div class="form-row"><div class="label">API 密钥<i class="help-tip">?<span class="tip-bubble">大模型 API 密钥，推荐使用硅基流动等国内平台。</span></i></div><div class="control"><input type="text" id="org-gpt-key" placeholder="sk-xxx"></div></div>
         <div class="form-row"><div class="label">模型名称<i class="help-tip">?<span class="tip-bubble">用于识别的模型名称，如 Qwen2.5-7B、gpt-4o-mini 等。</span></i></div><div class="control"><input type="text" id="org-gpt-model" placeholder="如 Qwen2.5-7B"></div></div>
@@ -219,7 +214,6 @@
       <div class="tab-panel" data-panel="category">
       <div class="alert alert-info">二级分类策略：分类名即 115 目录名，整理时若目录不存在会自动创建。代码要求非常严格，多余的空格或格式错误会导致报错。</div>
       <div class="card">
-        <div class="card-title">二级分类策略（YAML）</div>
         <textarea id="category-yaml" rows="28" style="width:100%"># 配置电影的分类策略
 # 分类名即 115 目录名（支持多级，用 / 分隔）
 # 整理后路径：{已存在目录}/{分类名}/{重命名文件}
@@ -268,7 +262,6 @@ av:
       <!-- 分类说明 -->
       <div class="tab-panel" data-panel="category-help">
       <div class="card">
-        <div class="card-title">分类字段说明</div>
         <div class="var-card">
           <div class="var-item"><code>分类名</code><span class="var-desc">即 115 目录名，最后一条作兜底</span></div>
           <div class="var-item"><code>genre_ids</code><span class="var-desc">TMDB 类型 ID（16=动漫, 99=纪录片）</span></div>
@@ -279,7 +272,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">匹配规则</div>
         <div class="var-card">
           <div class="var-item"><span class="badge badge-blue">顺序匹配</span><span class="var-desc">从上到下，先匹配到的先停止</span></div>
           <div class="var-item"><span class="badge badge-blue">多条件</span><span class="var-desc">同分类下多个条件为<b>且</b>关系</span></div>
@@ -289,7 +281,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">TMDB 类型 ID（genre_ids）</div>
         <div class="var-section">
           <div class="var-section-title">电影</div>
           <div class="var-card">
@@ -335,7 +326,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">国家/地区代码（origin_country）</div>
         <div class="var-section">
           <div class="var-section-title">亚洲</div>
           <div class="var-card">
@@ -428,7 +418,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">语言代码（original_language）</div>
         <div class="var-card">
           <div class="var-item"><code>zh</code><span class="var-desc">中文（普通话）</span></div>
           <div class="var-item"><code>cn</code><span class="var-desc">粤语</span></div>
@@ -476,7 +465,6 @@ av:
       <!-- 洗版策略 -->
       <div class="tab-panel" data-panel="wash">
       <div class="card">
-        <div class="card-title">洗版策略（YAML）</div>
         <textarea id="wash-yaml" rows="20" style="width:100%"># 洗版模式：coexist共存 / skip跳过 / replace替换 / max_size最大 / min_size最小
 # 优先级字段说明：
 #   resource_pix: 分辨率（2160p, 1080p, 720p）
@@ -511,7 +499,6 @@ av:
       <!-- 洗版规则 -->
       <div class="tab-panel" data-panel="wash-help">
       <div class="card">
-        <div class="card-title">洗版模式</div>
         <div class="var-card">
           <div class="var-item"><span class="badge badge-green">coexist</span><span class="var-desc">共存，保留所有版本</span></div>
           <div class="var-item"><span class="badge badge-blue">skip</span><span class="var-desc">跳过，已有则不整理</span></div>
@@ -521,7 +508,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">优先级字段</div>
         <div class="var-card">
           <div class="var-item"><code>resource_pix</code><span class="var-desc">分辨率（2160p, 1080p, 720p）</span></div>
           <div class="var-item"><code>resource_type</code><span class="var-desc">资源质量（BluRay, WEB-DL, HDTV）</span></div>
@@ -532,7 +518,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">规则说明</div>
         <div class="var-card">
           <div class="var-item"><span class="badge badge-blue">优先级</span><span class="var-desc">priority_level 从上到下，先匹配到的优先保留</span></div>
           <div class="var-item"><span class="badge badge-blue">多条件</span><span class="var-desc">同一条优先级下多个条件为<b>且</b>关系</span></div>
@@ -545,7 +530,6 @@ av:
       <!-- 重命名规则 -->
       <div class="tab-panel" data-panel="rename">
       <div class="card">
-        <div class="card-title">重命名规则</div>
 
         <div class="rename-group">
           <div class="rename-group-title"><span class="badge badge-blue">电影</span></div>
@@ -572,7 +556,6 @@ av:
       <!-- 变量说明 -->
       <div class="tab-panel" data-panel="variables">
       <div class="card">
-        <div class="card-title">语法说明</div>
         <div class="var-card">
           <div class="var-item"><code>{变量名}</code><span class="var-desc">取变量的值</span></div>
           <div class="var-item"><code>&lt;...&gt;</code><span class="var-desc">尖括号包围称"块"，块内变量非空时输出块内容</span></div>
@@ -583,7 +566,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">Python 字符串函数（{ } 内可用）</div>
         <div class="var-card">
           <div class="var-item"><code>{resource_effect.replace('.', ' ')}</code><span class="var-desc">替换 . 为空格</span></div>
           <div class="var-item"><code>{resource_effect.lower()}</code><span class="var-desc">转小写</span></div>
@@ -592,7 +574,6 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="card-title">命名变量参考</div>
 
         <div class="var-section">
           <div class="var-section-title">基本信息</div>
@@ -655,7 +636,6 @@ av:
       <div class="tab-panel active" data-panel="ud-upload">
         <div class="card">
           <div class="alert alert-info">监控上传：只上传 emby 生成的标准格式的媒体图片。</div>
-          <div class="card-title">监控上传配置</div>
           <div class="form-row"><div class="label">监控目录</div><div class="control"><input type="text" id="monitor-dir" placeholder="emby 媒体图片所在目录"></div></div>
           <div class="form-row"><div class="label">上传目标目录</div><div class="control"><input type="text" id="monitor-target" placeholder="115 目标目录 cid"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
@@ -663,7 +643,6 @@ av:
       </div>
       <div class="tab-panel" data-panel="ud-download">
         <div class="card">
-          <div class="card-title">转存下载</div>
           <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="transfer-link" placeholder="支持115分享、磁力、ed2k、阿里云盘分享（自动秒传到115）"></div></div>
           <div class="form-row"><div class="label">转存目录</div><div class="control"><input type="text" id="transfer-target" placeholder="115 目标目录 cid"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
@@ -750,7 +729,6 @@ av:
       <!-- STRM 配置 -->
       <div class="tab-panel active" data-panel="strm">
         <div class="card">
-          <div class="card-title">STRM 配置</div>
           <div class="form-row"><div class="label"><span class="required-mark">*</span> STRM 直连域名</div><div class="control"><input type="text" id="strm-domain" value="http://172.17.0.1:6060" oninput="updateStrmExample()"></div></div>
           <div class="form-row"><div class="label">STRM 直连格式</div><div class="control"><div class="segmented-control" id="strm-format-switch"><div class="seg-item active" data-value="pick_code_name" onclick="setStrmFormat('pick_code_name')">pick_code_name</div><div class="seg-item" data-value="pick_code" onclick="setStrmFormat('pick_code')">pick_code</div></div></div></div>
           <div class="form-row"><div class="label">保留文件后缀</div><div class="control"><div class="segmented-control" id="strm-ext-switch"><div class="seg-item active" data-value="true" onclick="setStrmExt(true)">是</div><div class="seg-item" data-value="false" onclick="setStrmExt(false)">否</div></div></div></div>
@@ -763,7 +741,6 @@ av:
       <!-- TMDB 配置 -->
       <div class="tab-panel" data-panel="tmdb">
         <div class="card">
-          <div class="card-title">TMDB 配置</div>
           <div class="form-row"><div class="label">API 域名</div><div class="control"><input type="text" id="tmdb-api-url" value="https://api.tmdb.org"></div></div>
           <div class="form-row"><div class="label">图片域名</div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
           <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥</div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
@@ -775,7 +752,6 @@ av:
       <!-- 代理配置 -->
       <div class="tab-panel" data-panel="proxy">
         <div class="card">
-          <div class="card-title">代理配置</div>
           <div class="form-row"><div class="label">代理地址</div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button> <button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div></div>
         </div>
@@ -797,7 +773,6 @@ av:
       <div class="tab-panel" data-panel="emby-notify">
         <div class="alert alert-info">在 emby 入库成功时进行消息通知，token 需要改为你自己的。</div>
         <div class="card">
-          <div class="card-title">EMBY 入库通知</div>
           <div class="form-row"><div class="label">Webhook 地址</div><div class="control"><input type="text" id="emby-notify-webhook" placeholder="Emby Webhook 地址"></div></div>
           <div class="form-row"><div class="label">通知事件</div><div class="control">
             <span class="inline"><input type="checkbox" checked> 入库</span>
@@ -839,7 +814,6 @@ av:
     <!-- 扩展功能 -->
     <div class="page" id="page-config-extension">
       <div class="card">
-        <div class="card-title">扩展功能</div>
         <table>
           <thead><tr><th>插件</th><th>说明</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
