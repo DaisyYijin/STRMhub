@@ -67,9 +67,10 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 	if err != nil {
 		return nil, err
 	}
-	// 与 AList/115driver 保持一致：只发送 UA 和 Cookie，不加多余请求头
+	// UA + Cookie + Referer（浏览器同源请求特征；openStrm 同款）
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Cookie", cookie)
+	req.Header.Set("Referer", "https://115.com/")
 	for k, v := range extraHeaders {
 		req.Header.Set(k, v)
 	}
@@ -88,6 +89,34 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 		return nil, fmt.Errorf("115 接口返回 HTTP %d", resp.StatusCode)
 	}
 	return body, nil
+}
+
+// loginCheck115 web 会话激活校验（115driver ApiLoginCheck 同款）
+// app 扫码签发的 Cookie 需先过一次 check/sso 才能访问 webapi.115.com 的文件接口，
+// my.115.com 则无此要求。OpenList 的 login() 对扫码/导入 Cookie 都会执行这一步。
+func loginCheck115(cookie string) error {
+	api := "https://passportapi.115.com/app/1.0/web/1.0/check/sso?_=" + fmt.Sprint(time.Now().UnixMilli())
+	body, err := httpGet115UA(api, nil, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		State   json.RawMessage `json:"state"`
+		Code    int64           `json:"code"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return fmt.Errorf("解析 sso 响应失败: %s", truncateStr(string(body), 120))
+	}
+	// passport 系接口失败时也可能返回 state:1，需同时校验 code==0（40101032=请重新登录）
+	if !openStateOK(r.State) || r.Code != 0 {
+		msg := r.Message
+		if msg == "" {
+			msg = fmt.Sprintf("code=%d", r.Code)
+		}
+		return fmt.Errorf("sso 校验未通过: %s", msg)
+	}
+	return nil
 }
 
 // list115Entries 拉取指定目录的一页条目（文件 + 文件夹），返回条目列表和总数

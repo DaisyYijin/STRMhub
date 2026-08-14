@@ -853,6 +853,10 @@ av:
   <div class="modal" style="max-width:560px">
     <h3 id="dir-picker-title">选择目录</h3>
     <div class="dir-picker-path" id="dir-picker-path">根目录</div>
+    <div class="form-inline-group" style="margin-bottom:8px">
+      <input type="text" id="dir-picker-input" class="inline-input" placeholder="输入路径或 cid 直接跳转" onkeydown="if(event.key==='Enter')dirPickerJump()">
+      <button class="btn btn-outline" onclick="dirPickerJump()">跳转</button>
+    </div>
     <div class="dir-picker-list" id="dir-picker-list"></div>
     <div class="actions">
       <button class="btn btn-outline" onclick="dirPickerUp()">上一级</button>
@@ -863,6 +867,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=14"></script>
+<script src="/js/app.js?v=15"></script>
 </body>
 </html>

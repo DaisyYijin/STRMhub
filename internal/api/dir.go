@@ -110,6 +110,9 @@ func build115FileQuery(cid string, offset int) url.Values {
 	}
 }
 
+// localDirLimit 本地目录单次返回上限（有界读取，大目录/网络挂载不全量扫描）
+const localDirLimit = 1000
+
 // ListLocalDirs 浏览本地文件系统目录
 // GET /storage/local/dirs?path=C:\media
 // 注意：浏览的是 StrmHub 进程所在机器（Docker 部署时是容器内文件系统，卷挂载点也在其中）
@@ -125,10 +128,22 @@ func (h *Handler) ListLocalDirs(c *gin.Context) {
 		return
 	}
 
-	entries, err := os.ReadDir(path)
+	// 有界读取：NAS 挂载（CIFS/NFS）下大目录全量 readdir + 排序可能要求数秒，
+	// 只读前 localDirLimit+1 条即可判断截断；ReadDir(n) 不会预读整个目录
+	f, err := os.Open(path)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	defer f.Close()
+	entries, readErr := f.ReadDir(localDirLimit + 1)
+	if readErr != nil && len(entries) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": readErr.Error()})
+		return
+	}
+	truncated := len(entries) > localDirLimit
+	if truncated {
+		entries = entries[:localDirLimit]
 	}
 
 	dirs := make([]gin.H, 0)
@@ -144,7 +159,7 @@ func (h *Handler) ListLocalDirs(c *gin.Context) {
 	}
 	sort.Slice(dirs, func(i, j int) bool { return fmt.Sprint(dirs[i]["name"]) < fmt.Sprint(dirs[j]["name"]) })
 
-	c.JSON(http.StatusOK, gin.H{"data": dirs, "path": path})
+	c.JSON(http.StatusOK, gin.H{"data": dirs, "path": path, "truncated": truncated})
 }
 
 // listWindowsDrives 枚举 Windows 盘符

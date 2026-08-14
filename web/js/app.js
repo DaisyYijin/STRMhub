@@ -343,19 +343,34 @@ async function loadLocalDirs(path) {
     const data = await api('/storage/local/dirs?path=' + encodeURIComponent(path));
     dirPicker.path = path;
     document.getElementById('dir-picker-path').textContent = path || '计算机';
-    renderDirList(data.data || [], path);
+    const note = data.truncated ? '目录较大，仅显示前 1000 个文件夹，可直接在上方输入路径' : '';
+    renderDirList(data.data || [], path, note);
   } catch (e) {
     list.innerHTML = '<div class="dir-empty">' + (e.message || '加载失败') + '</div>';
   }
 }
 
-function renderDirList(items, current) {
+// 手动输入路径/cid 直接跳转
+function dirPickerJump() {
+  const input = document.getElementById('dir-picker-input');
+  const v = (input.value || '').trim();
+  if (!v) return;
+  if (dirPicker.mode === '115') {
+    const cid = v.replace(/\D/g, '');
+    load115Dirs(cid || '0', true);
+  } else {
+    loadLocalDirs(v);
+  }
+}
+
+function renderDirList(items, current, note) {
   const list = document.getElementById('dir-picker-list');
   if (!items.length) {
-    list.innerHTML = '<div class="dir-empty">该目录下没有子文件夹</div>';
+    list.innerHTML = '<div class="dir-empty">' + (note || '该目录下没有子文件夹') + '</div>';
     return;
   }
-  list.innerHTML = items.map((it, i) => {
+  const noteHtml = note ? '<div class="dir-empty" style="opacity:.7">' + note + '</div>' : '';
+  list.innerHTML = noteHtml + items.map((it, i) => {
     const name = it.name || it.path;
     return `<div class="dir-item" data-index="${i}"><span class="dir-icon">▸</span><span>${name}</span></div>`;
   }).join('');

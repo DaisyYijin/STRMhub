@@ -372,6 +372,13 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	h.Config.Save115Device(sess.device)
 	h.upsert115Storage(cookie, sess.device, username)
 
+	// 激活 web 会话：app 扫码签发的 Cookie 需 check/sso 后才能访问 webapi 文件接口
+	if err := loginCheck115(cookie); err != nil {
+		log.Printf("[115] 会话激活(sso)未通过: %v", err)
+	} else {
+		log.Printf("[115] 会话激活(sso)成功，webapi 已可用")
+	}
+
 	h.dropQrSession(uid)
 	return cookie, username, nil
 }
