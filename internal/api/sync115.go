@@ -112,7 +112,12 @@ func loginCheck115(cookie string) error {
 	if !openStateOK(r.State) || r.Code != 0 {
 		msg := r.Message
 		if msg == "" {
-			msg = fmt.Sprintf("code=%d", r.Code)
+			if r.Code != 0 {
+				msg = fmt.Sprintf("code=%d", r.Code)
+			} else {
+				// state=false 且无错误码：多为 App 槽位 Cookie，无法激活 web 会话
+				msg = fmt.Sprintf("state=%s（该 Cookie 不是网页端会话，请用\"115浏览器_网页端\"设备扫码）", strings.TrimSpace(string(r.State)))
+			}
 		}
 		return fmt.Errorf("sso 校验未通过: %s", msg)
 	}

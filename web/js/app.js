@@ -522,7 +522,13 @@ function startQrCodePolling(uid, time, sign) {
         box.style.display = 'block';
         document.getElementById('acc-username').textContent = data.username || '-';
         document.getElementById('acc-capacity').textContent = '已绑定';
-        setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); }, 1000);
+        if (data.warning) {
+          // 设备槽位不匹配等可用性警告，提示用户改用网页端重新扫码
+          document.getElementById('qrcode-status').textContent = '警告：' + data.warning;
+          setTimeout(() => { closeQrCode(); toast('扫码设备类型不配套，请改用「115浏览器_网页端」重新扫码'); }, 3500);
+        } else {
+          setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); }, 1000);
+        }
       } else if (status === 'expired' || status === 'cancelled') {
         document.getElementById('qrcode-status').textContent = status === 'expired' ? '二维码已过期，请重新获取' : '已取消登录';
       } else {

@@ -284,32 +284,37 @@ func (h *Handler) QrCodeStatus(c *gin.Context) {
 	case 2:
 		// 已确认，获取 Cookie 并保存
 		log.Printf("[115] 二维码已确认登录, uid=%s", req.Uid)
-		cookie, username, err := h.fetchAndSaveCookie(req.Uid)
+		cookie, username, warning, err := h.fetchAndSaveCookie(req.Uid)
 		if err != nil {
 			log.Printf("[115] 获取 Cookie 失败: %v", err)
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "success", "username": username, "cookie": cookie})
+		resp := gin.H{"status": "success", "username": username, "cookie": cookie}
+		if warning != "" {
+			resp["warning"] = warning
+		}
+		c.JSON(http.StatusOK, resp)
 	default:
 		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
 	}
 }
 
 // fetchAndSaveCookie 调用 login/qrcode 获取 Cookie 并写入 Storage 表
-func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
+// 返回的 warning 非空表示 Cookie 可用性存疑（如非网页端会话无法激活 webapi）
+func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error) {
 	qrMu.RLock()
 	sess, ok := qrSessions[uid]
 	qrMu.RUnlock()
 	if !ok {
-		return "", "", fmt.Errorf("二维码会话已失效，请重新获取")
+		return "", "", "", fmt.Errorf("二维码会话已失效，请重新获取")
 	}
 
 	api := fmt.Sprintf(resultAPI, sess.app)
 	form := url.Values{"app": {sess.app}, "account": {uid}}
 	req, err := http.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	// 登录换 Cookie 的 UA 必须与后续所有 webapi 请求一致（会话与 UA 绑定）
 	req.Header.Set("User-Agent", ua115Unified())
@@ -319,22 +324,22 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	var result qrResultResp
 	if err := json.Unmarshal(body, &result); err != nil {
 		log.Printf("[115] 解析登录结果失败: %v, 响应: %s", err, string(body))
-		return "", "", fmt.Errorf("解析登录结果失败")
+		return "", "", "", fmt.Errorf("解析登录结果失败")
 	}
 	if len(result.Data.Cookie) == 0 {
 		log.Printf("[115] 登录结果未包含 Cookie, 响应: %s", string(body))
-		return "", "", fmt.Errorf("登录成功但未获取到 Cookie")
+		return "", "", "", fmt.Errorf("登录成功但未获取到 Cookie")
 	}
 
 	// 拼 Cookie 字符串：UID=...; CID=...; SEID=...; KID=...
@@ -375,14 +380,16 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	h.upsert115Storage(cookie, sess.device, username)
 
 	// 激活 web 会话：app 扫码签发的 Cookie 需 check/sso 后才能访问 webapi 文件接口
+	warning := ""
 	if err := loginCheck115(cookie); err != nil {
 		log.Printf("[115] 会话激活(sso)未通过: %v", err)
+		warning = "登录成功，但该设备类型的 Cookie 可能无法访问 115 文件接口：" + err.Error()
 	} else {
 		log.Printf("[115] 会话激活(sso)成功，webapi 已可用")
 	}
 
 	h.dropQrSession(uid)
-	return cookie, username, nil
+	return cookie, username, warning, nil
 }
 
 // upsert115Storage 保存/更新 115 账号配置
