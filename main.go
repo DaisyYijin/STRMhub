@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,6 +22,19 @@ func main() {
 	dataDir := filepath.Join(cfg.DataDir)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("创建数据目录失败: %v", err)
+	}
+
+	// 确保日志目录存在
+	logDir := "/logs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("创建日志目录失败: %v，日志仅输出到控制台", err)
+	} else {
+		// 日志同时输出到控制台和文件
+		logFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			defer logFile.Close()
+			log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+		}
 	}
 
 	// 初始化数据库

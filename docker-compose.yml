@@ -1,16 +1,14 @@
-# StrmHub - 115 媒体库管理工具
-# 支持 STRM 生成、TMDB 自动整理、Emby 入库刷新
-
 services:
   strmhub:
     image: ghcr.io/daisyyijin/strmhub:latest
     container_name: strmhub
     restart: unless-stopped
     ports:
-      - "6060:6060"   # 管理后台
-      - "6086:6086"   # 302 代理服务
+      - "6060:6060"
+      - "6086:6086"
     volumes:
-      - ./data:/app/data          # 配置数据
-      - /media:/media             # STRM 输出目录
+      - ./data:/data
+      - ./media:/media
+      - ./logs:/logs
     environment:
       - TZ=Asia/Shanghai
