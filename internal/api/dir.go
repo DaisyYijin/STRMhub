@@ -30,24 +30,25 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 		return
 	}
 
-	dirs, err := ops.listDirs(cid)
+	dirs, count, origin, err := ops.listDirs(cid)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName()})
+	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName(), "count": count, "origin": origin})
 }
 
 // fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表（多镜像自动回退）
-func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
+// 返回文件夹列表、目录总条目数、命中的域名
+func fetch115Dirs(cookie, ua, cid string) ([]gin.H, int, string, error) {
 	if cookie == "" {
-		return nil, fmt.Errorf("Cookie 为空，请先扫码登录")
+		return nil, 0, "", fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
 	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, UA=%s", cid, len(cookie), ua)
 
-	entries, _, err := fetch115FilesPage(cookie, ua, cid, 0)
+	entries, count, origin, err := fetch115FilesPage(cookie, ua, cid, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, "", err
 	}
 
 	// 只返回文件夹
@@ -57,7 +58,7 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
 			dirs = append(dirs, gin.H{"cid": fmt.Sprint(d["cid"]), "name": fmt.Sprint(d["n"])})
 		}
 	}
-	return dirs, nil
+	return dirs, count, origin, nil
 }
 
 // build115FileQuery 构造 115 文件列表查询参数

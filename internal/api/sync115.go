@@ -102,13 +102,15 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 
 // fetch115FilesPage 从 webapi 拉取一页文件列表（文件+文件夹）
 // 主域名被风控返回"开小差"时自动切换镜像域名（p115client get_webapi_origin 轮换同款）
-func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interface{}, int, error) {
+// 返回条目列表、总数、命中的域名
+func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interface{}, int, string, error) {
 	query := build115FileQuery(cid, offset)
 	var lastErr error
 	for _, origin := range webapiFileOrigins {
 		body, err := httpGet115UA(origin+"/files", query, cookie, ua, 20*time.Second)
 		if err != nil {
 			lastErr = err
+			log.Printf("[115目录] %s 请求失败: %v", origin, err)
 			continue
 		}
 		var result struct {
@@ -119,24 +121,62 @@ func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interfa
 		}
 		if err := json.Unmarshal(body, &result); err != nil {
 			lastErr = fmt.Errorf("解析 115 目录失败: %v", err)
+			log.Printf("[115目录] %s 响应无法解析: %s", origin, truncateStr(string(body), 200))
 			continue
 		}
 		if !result.State {
 			lastErr = fmt.Errorf("115 返回错误: %s", result.Error)
+			log.Printf("[115目录] %s 拒绝: %s", origin, result.Error)
 			// Cookie 失效类错误换镜像也没用，直接返回
 			if strings.Contains(result.Error, "登录") || strings.Contains(result.Error, "acc") {
-				return nil, 0, lastErr
+				return nil, 0, "", lastErr
 			}
 			continue // 风控类错误，尝试下一个镜像
 		}
-		return result.Data, result.Count, nil
+		log.Printf("[115目录] %s 成功: count=%d, 条目数=%d", origin, result.Count, len(result.Data))
+		// state=true 但 count>0 而 data 为空：响应异常，换镜像
+		if result.Count > 0 && len(result.Data) == 0 {
+			lastErr = fmt.Errorf("响应异常：count=%d 但未返回数据", result.Count)
+			continue
+		}
+		for _, e := range result.Data {
+			normalize115Entry(e)
+		}
+		return result.Data, result.Count, origin, nil
 	}
-	return nil, 0, lastErr
+	return nil, 0, "", lastErr
+}
+
+// normalize115Entry 归一化 webapi / open 两种条目方言，统一为 webapi 形态：
+//   - webapi: f=="0" 目录（cid=目录自身 id）、n=名称、fid=文件 id
+//   - open:   fc/file_category==0 目录（fid=自身 id）、fn/file_name=名称
+func normalize115Entry(m map[string]interface{}) {
+	if _, ok := m["f"]; !ok {
+		dir := false
+		if v, ok := m["fc"]; ok && fmt.Sprint(v) == "0" {
+			dir = true
+		}
+		if v, ok := m["file_category"]; ok && fmt.Sprint(v) == "0" {
+			dir = true
+		}
+		if dir {
+			m["f"] = "0"
+		} else {
+			m["f"] = "1"
+		}
+	}
+	if fmt.Sprint(m["f"]) == "0" && (fmt.Sprint(m["cid"]) == "" || fmt.Sprint(m["cid"]) == "<nil>") {
+		m["cid"] = m["fid"]
+	}
+	if fmt.Sprint(m["n"]) == "" || fmt.Sprint(m["n"]) == "<nil>" {
+		m["n"] = m["fn"]
+	}
 }
 
 // list115Entries 拉取指定目录的一页条目（文件 + 文件夹），返回条目列表和总数
 func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, int, error) {
-	return fetch115FilesPage(cookie, ua115Unified(), cid, offset)
+	entries, count, _, err := fetch115FilesPage(cookie, ua115Unified(), cid, offset)
+	return entries, count, err
 }
 
 // walk115Dir 递归遍历目录，收集所有文件（路径为相对根目录的相对路径）

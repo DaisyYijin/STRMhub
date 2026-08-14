@@ -331,7 +331,12 @@ async function load115Dirs(cid, pushHistory) {
     const data = await api('/storage/115/dirs?cid=' + encodeURIComponent(cid));
     dirPicker.cid = cid;
     document.getElementById('dir-picker-path').textContent = (cid === '0' || cid === '') ? '根目录' : 'cid: ' + cid;
-    renderDirList(data.data || [], cid);
+    const items = data.data || [];
+    let note = '';
+    if (!items.length && data.count > 0) {
+      note = '目录共有 ' + data.count + ' 个条目，但没有识别到文件夹（通道: ' + (data.channel || '?') + '，来源: ' + (data.origin || '?') + '）';
+    }
+    renderDirList(items, cid, note);
   } catch (e) {
     list.innerHTML = '<div class="dir-empty">' + (e.message || '加载失败') + '</div>';
   }
@@ -625,7 +630,7 @@ async function loadAccount() {
     const acc = (data.data || []).find(s => s.type === '115');
     if (!acc) return;
     document.getElementById('acc-cookie-path').value = acc.cookie_path || '/config/115-cookies.txt';
-    document.getElementById('acc-device').value = acc.device || 'web';
+    // 设备下拉保持默认"网页端"（App 槽位 Cookie 与 webapi 不配套），不恢复历史保存值
     document.getElementById('acc-interval').value = acc.interval || 3.0;
     document.getElementById('acc-appid').value = acc.app_id || '';
     setOpenapi(!!acc.openapi_enabled);

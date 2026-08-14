@@ -856,10 +856,11 @@ func (o *pan115Ops) listEntries(cid string, offset int) ([]map[string]interface{
 	return list115Entries(o.cookie, cid, offset)
 }
 
-// listDirs 目录浏览（只返回文件夹）
-func (o *pan115Ops) listDirs(cid string) ([]gin.H, error) {
+// listDirs 目录浏览（只返回文件夹），返回列表、总条目数、命中域名
+func (o *pan115Ops) listDirs(cid string) ([]gin.H, int, string, error) {
 	if o.open != nil {
-		return o.open.listDirs(cid)
+		dirs, err := o.open.listDirs(cid)
+		return dirs, len(dirs), "open", err
 	}
 	return fetch115Dirs(o.cookie, ua115Unified(), cid)
 }
