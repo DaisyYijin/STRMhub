@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StrmHub</title>
+  <link rel="stylesheet" href="/css/style.css?v=16">
+</head>
+<body>
+
+<!-- 登录页 -->
+<div id="auth-page" class="auth-page" style="display:none">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="avatar">S</div>
+      <div class="name">Strm<span>Hub</span></div>
+    </div>
+    <div class="auth-heading" id="auth-heading">请输入账号密码登录</div>
+    <div class="auth-subtitle">Cloud Media Sync</div>
+    <form id="auth-form" class="auth-form">
+      <input type="hidden" id="auth-mode" value="login">
+      <div class="form-row"><label class="label">账号</label><input id="auth-username" placeholder="请输入账号"></div>
+      <div class="form-row"><label class="label">密码</label><input id="auth-password" type="password" placeholder="请输入密码"></div>
+      <div class="form-row" id="auth-confirm-row" style="display:none"><label class="label">确认密码</label><input id="auth-confirm" type="password" placeholder="请再次输入密码"></div>
+      <div class="auth-remember"><label><input type="checkbox" checked> 记住我</label><span id="auth-switch" style="color:var(--primary);cursor:pointer">注册账号</span></div>
+      <button type="submit" class="btn btn-primary btn-block" id="auth-submit">登录</button>
+    </form>
+  </div>
+</div>
+
+<!-- 主应用 -->
+<div id="main-app" class="layout" style="display:none">
+  <!-- 移动端顶栏 -->
+  <div class="mobile-topbar" id="mobile-topbar">
+    <button class="btn btn-outline btn-icon" onclick="toggleSidebar()" aria-label="菜单"><span style="font-size:18px">☰</span></button>
+    <div class="mobile-title" id="mobile-page-title">数据同步</div>
+    <button class="btn btn-outline btn-icon" id="btn-log-mobile" aria-label="日志"><span style="font-size:14px">📋</span></button>
+  </div>
+  <!-- 遮罩 -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="logo"><div class="avatar">S</div><div class="name">Strm<span>Hub</span></div></div>
+    <div class="menu" id="sidebar-menu">
+      <div class="menu-item active" data-page="config-accounts"><span class="icon">◈</span><span>账号管理</span></div>
+      <div class="menu-item" data-page="sync"><span class="icon">⇄</span><span>账号同步</span></div>
+      <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
+      <div class="menu-item" data-page="upload-download"><span class="icon">⇅</span><span>上传下载</span></div>
+      <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
+      <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
+      <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
+    </div>
+    <div class="footer">StrmHub v1.0</div>
+  </aside>
+
+  <!-- 内容区 -->
+  <div class="content">
+    <div class="topbar">
+      <div><div class="page-title" id="page-title">全量同步</div><div class="page-desc" id="page-desc">115 媒体库目录 → 本地 STRM 文件</div></div>
+      <div class="right">
+        <button class="btn btn-outline" id="btn-log">实时日志</button>
+        <button class="btn btn-outline" id="btn-logout">退出</button>
+      </div>
+    </div>
+
+    <!-- 数据同步 -->
+    <div class="page active" id="page-sync">
+      <div class="tabs">
+        <div class="tab active" data-tab="acc115-sync">115 账号同步</div>
+        <div class="tab" data-tab="acc123-sync">123 账号同步</div>
+        <div class="tab" data-tab="acc-openlist-sync">OpenList 同步</div>
+        <div class="tab" data-tab="acc-quark-sync">夸克账号同步</div>
+        <div class="tab" data-tab="acc-ali-sync">阿里账号同步</div>
+      </div>
+
+      <!-- 115 账号同步 -->
+      <div class="tab-panel active" data-panel="acc115-sync">
+      <!-- 全量 + 增量同步 -->
+        <div class="card">
+          <div class="card-title">全量同步配置</div>
+          <div class="form-row"><div class="label">115 媒体库 cid</div><div class="control">
+            <div class="form-inline-group"><input type="text" id="full-cid" placeholder="选择或填写 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker()">选择目录</button></div>
+          </div></div>
+          <div class="form-row"><div class="label">本地媒体库目录</div><div class="control">
+            <div class="form-inline-group"><input type="text" id="full-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker()">选择目录</button></div>
+          </div></div>
+          <div class="form-row"><div class="label">视频文件后缀</div><div class="control">
+            <div class="tag-input" id="video-ext">
+              <span class="tag" data-val="mp4">mp4<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="mkv">mkv<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="ts">ts<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="avi">avi<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="mov">mov<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="rmvb">rmvb<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="webm">webm<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="flv">flv<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="m2ts">m2ts<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="wmv">wmv<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="mpg">mpg<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="iso">iso<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="video-ext" onkeydown="addTag(event)">
+            </div>
+          </div></div>
+          <div class="form-row"><div class="label">媒体图片后缀</div><div class="control">
+            <div class="tag-input" id="image-ext">
+              <span class="tag" data-val="jpg">jpg<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="png">png<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="jpeg">jpeg<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="webp">webp<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="image-ext" onkeydown="addTag(event)">
+            </div>
+          </div></div>
+          <div class="form-row"><div class="label">媒体数据文件后缀</div><div class="control">
+            <div class="tag-input" id="data-ext">
+              <span class="tag" data-val="ass">ass<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="srt">srt<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="ssa">ssa<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <span class="tag" data-val="sub">sub<span class="tag-close" onclick="removeTag(this)">×</span></span>
+              <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="data-ext" onkeydown="addTag(event)">
+            </div>
+          </div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" onclick="startFullSync()">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">增量同步</div>
+          <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
+          <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+
+        <!-- 分享同步 -->
+        <div class="card">
+          <div class="card-title">分享同步</div>
+          <div class="form-row"><div class="label">我的接收文件夹</div><div class="control"><input type="text" id="share-folder" placeholder="115 接收分享的文件夹"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('share', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+
+      <!-- 123 账号同步 -->
+      <div class="tab-panel" data-panel="acc123-sync">
+      <div class="card">
+        <div class="alert alert-info">123 云盘账号同步功能开发中。</div>
+      </div>
+      </div>
+
+      <!-- OpenList 同步 -->
+      <div class="tab-panel" data-panel="acc-openlist-sync">
+      <div class="card">
+        <div class="alert alert-info">OpenList 同步功能开发中。</div>
+      </div>
+      </div>
+
+      <!-- 夸克账号同步 -->
+      <div class="tab-panel" data-panel="acc-quark-sync">
+      <div class="card">
+        <div class="alert alert-info">夸克网盘账号同步功能开发中。</div>
+      </div>
+      </div>
+
+      <!-- 阿里账号同步 -->
+      <div class="tab-panel" data-panel="acc-ali-sync">
+      <div class="card">
+        <div class="alert alert-info">阿里云盘账号同步功能开发中。</div>
+      </div>
+      </div>
+    </div>
+
+    <!-- 自动整理 -->
+    <div class="page" id="page-organize">
+      <div class="tabs">
+        <div class="tab active" data-tab="basic">基础配置</div>
+        <div class="tab" data-tab="recognize">识别规则</div>
+        <div class="tab" data-tab="gpt">GPT识别</div>
+        <div class="tab" data-tab="rename">重命名策略</div>
+        <div class="tab" data-tab="category">二级分类策略</div>
+        <div class="tab" data-tab="wash">洗版策略</div>
+        <div class="tab" data-tab="variables">重命名规则</div>
+        <div class="tab" data-tab="category-help">分类规则</div>
+        <div class="tab" data-tab="wash-help">洗版规则</div>
+      </div>
+
+      <!-- 基础配置 -->
+      <div class="tab-panel active" data-panel="basic">
+      <div class="alert alert-warning">自动整理前必须创建好二级分类策略，并完成一次全量同步。</div>
+      <div class="card">
+        <div class="card-title">基础配置</div>
+        <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
+        <div class="form-row"><div class="label">我的影视库<i class="help-tip">?<span class="tip-bubble">整理后的最终归宿，也是全量/增量同步的目标目录。如 /影视库/我的影视库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-library" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-library')">选择目录</button></div></div></div>
+        <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
+        <div class="form-row"><div class="label">冗余文件夹<i class="help-tip">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+      <!-- 识别规则 -->
+      <div class="tab-panel" data-panel="recognize">
+      <div class="card">
+        <div class="form-row"><div class="label">替换规则<i class="help-tip">?<span class="tip-bubble">识别前对视频文件名称进行字符串/正则替换，一行一个，格式：原文本=>替换后文本。</span></i></div><div class="control"><textarea id="org-replace-rules" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，格式：原文本=>替换后文本"></textarea></div></div>
+        <div class="form-row"><div class="label">发布组<i class="help-tip">?<span class="tip-bubble">用于扩展未收录的发布组名称，一行一个（已集成常见的 PT 发布组）。</span></i></div><div class="control"><textarea id="org-release-groups" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，如：WiKi"></textarea></div></div>
+        <div class="form-row"><div class="label">最小视频大小<i class="help-tip">?<span class="tip-bubble">单位 MB，小于该大小的视频文件跳过识别与整理，0 表示不限制。可过滤封面视频、广告等小文件。</span></i></div><div class="control"><input type="text" id="org-min-size" value="0"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-recognize')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-recognize', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+      <!-- GPT识别 -->
+      <div class="tab-panel" data-panel="gpt">
+      <div class="alert alert-info">GPT 识别：当 TMDB 无法识别媒体信息时，调用大模型辅助识别。API 地址需支持 OpenAI 协议标准。</div>
+      <div class="card">
+        <div class="card-title">GPT 识别配置</div>
+        <div class="form-row"><div class="label">API 地址<i class="help-tip">?<span class="tip-bubble">支持 OpenAI 协议标准的模型接口地址，当 TMDB 无法识别时调用大模型辅助识别。</span></i></div><div class="control"><input type="text" id="org-gpt-url" placeholder="如 https://api.siliconflow.cn/v1"></div></div>
+        <div class="form-row"><div class="label">API 密钥<i class="help-tip">?<span class="tip-bubble">大模型 API 密钥，推荐使用硅基流动等国内平台。</span></i></div><div class="control"><input type="text" id="org-gpt-key" placeholder="sk-xxx"></div></div>
+        <div class="form-row"><div class="label">模型名称<i class="help-tip">?<span class="tip-bubble">用于识别的模型名称，如 Qwen2.5-7B、gpt-4o-mini 等。</span></i></div><div class="control"><input type="text" id="org-gpt-model" placeholder="如 Qwen2.5-7B"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-gpt')">保存配置</button> <button class="btn btn-outline" id="gpt-test-btn" onclick="testGPT()">测试连接</button> <span id="gpt-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('org-gpt', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+      <!-- 二级分类策略 -->
+      <div class="tab-panel" data-panel="category">
+      <div class="alert alert-info">二级分类策略：分类名即 115 目录名，整理时若目录不存在会自动创建。代码要求非常严格，多余的空格或格式错误会导致报错。</div>
+      <div class="card">
+        <div class="card-title">二级分类策略（YAML）</div>
+        <textarea id="category-yaml" rows="28" style="width:100%"># 配置电影的分类策略
+# 分类名即 115 目录名（支持多级，用 / 分隔）
+# 整理后路径：{已存在目录}/{分类名}/{重命名文件}
+movie:
+  # 如已存在目录为「影视库」，整理结果为：影视库/电影/动画电影/xxx
+  电影/动画电影:
+    # 匹配 genre_ids 内容类型，16是动漫
+    genre_ids: '16'
+  电影/华语电影:
+    # 匹配语种
+    original_language: 'zh,cn,bo,za'
+  # 未匹配以上条件时，返回最后一个
+  电影/外语电影:
+
+# 配置电视剧的分类策略
+tv:
+  电视剧/国漫:
+    genre_ids: '16'
+    origin_country: 'CN,TW,HK'
+  电视剧/日番:
+    genre_ids: '16'
+    origin_country: 'JP'
+  电视剧/国产剧:
+    origin_country: 'CN,TW,HK'
+  电视剧/欧美剧:
+    origin_country: 'US,FR,GB,DE,ES,IT,NL,PT,RU'
+  电视剧/日韩剧:
+    origin_country: 'JP,KP,KR,TH,IN,SG'
+  # 未匹配以上分类，则命名为未分类
+  电视剧/未分类:
+
+# 配置AV的分类策略（按番号前缀或制作商分类）
+av:
+  无码:
+    # 匹配番号前缀（无码番号通常含这些前缀）
+    num_prefix: 'ABC,DEF'
+  有码:
+    # 兜底分类
+    num_prefix: ''
+  # 未匹配以上分类
+  未分类:</textarea>
+        <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveCategory()">保存配置</button> <button class="btn btn-outline" onclick="genDirTree()">目录树生成工具</button> <button class="btn btn-warning" onclick="resetCategory(this)" style="position:relative">重置配置</button></div>
+      </div>
+    </div>
+
+      <!-- 分类说明 -->
+      <div class="tab-panel" data-panel="category-help">
+      <div class="card">
+        <div class="card-title">分类字段说明</div>
+        <div class="var-card">
+          <div class="var-item"><code>分类名</code><span class="var-desc">即 115 目录名，最后一条作兜底</span></div>
+          <div class="var-item"><code>genre_ids</code><span class="var-desc">TMDB 类型 ID（16=动漫, 99=纪录片）</span></div>
+          <div class="var-item"><code>original_language</code><span class="var-desc">语言代码（zh=中文, ja=日语, ko=韩语）</span></div>
+          <div class="var-item"><code>origin_country</code><span class="var-desc">国家代码（CN, HK, JP, KR, US）</span></div>
+          <div class="var-item"><code>ext</code><span class="var-desc">文件后缀（如 iso 原盘分类）</span></div>
+          <div class="var-item"><code>num_prefix</code><span class="var-desc">AV 番号前缀（仅 av 分类）</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">匹配规则</div>
+        <div class="var-card">
+          <div class="var-item"><span class="badge badge-blue">顺序匹配</span><span class="var-desc">从上到下，先匹配到的先停止</span></div>
+          <div class="var-item"><span class="badge badge-blue">多条件</span><span class="var-desc">同分类下多个条件为<b>且</b>关系</span></div>
+          <div class="var-item"><span class="badge badge-amber">兜底分类</span><span class="var-desc">最后一条无需条件，自动归入</span></div>
+          <div class="var-item"><span class="badge badge-green">movie / tv / av</span><span class="var-desc">三类独立配置，互不干扰</span></div>
+          <div class="var-item"><span class="badge badge-green">自动建目录</span><span class="var-desc">115 中不存在时自动创建</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">TMDB 类型 ID（genre_ids）</div>
+        <div class="var-section">
+          <div class="var-section-title">电影</div>
+          <div class="var-card">
+            <div class="var-item"><code>28</code><span class="var-desc">动作</span></div>
+            <div class="var-item"><code>12</code><span class="var-desc">冒险</span></div>
+            <div class="var-item"><code>16</code><span class="var-desc">动画</span></div>
+            <div class="var-item"><code>35</code><span class="var-desc">喜剧</span></div>
+            <div class="var-item"><code>80</code><span class="var-desc">犯罪</span></div>
+            <div class="var-item"><code>99</code><span class="var-desc">纪录片</span></div>
+            <div class="var-item"><code>18</code><span class="var-desc">剧情</span></div>
+            <div class="var-item"><code>10751</code><span class="var-desc">家庭</span></div>
+            <div class="var-item"><code>14</code><span class="var-desc">奇幻</span></div>
+            <div class="var-item"><code>36</code><span class="var-desc">历史</span></div>
+            <div class="var-item"><code>27</code><span class="var-desc">恐怖</span></div>
+            <div class="var-item"><code>10402</code><span class="var-desc">音乐</span></div>
+            <div class="var-item"><code>9648</code><span class="var-desc">悬疑</span></div>
+            <div class="var-item"><code>10749</code><span class="var-desc">爱情</span></div>
+            <div class="var-item"><code>878</code><span class="var-desc">科幻</span></div>
+            <div class="var-item"><code>53</code><span class="var-desc">惊悚</span></div>
+            <div class="var-item"><code>10752</code><span class="var-desc">战争</span></div>
+            <div class="var-item"><code>37</code><span class="var-desc">西部</span></div>
+          </div>
+        </div>
+        <div class="var-section">
+          <div class="var-section-title">电视剧</div>
+          <div class="var-card">
+            <div class="var-item"><code>10759</code><span class="var-desc">动作冒险</span></div>
+            <div class="var-item"><code>16</code><span class="var-desc">动漫/番剧</span></div>
+            <div class="var-item"><code>35</code><span class="var-desc">喜剧</span></div>
+            <div class="var-item"><code>80</code><span class="var-desc">犯罪</span></div>
+            <div class="var-item"><code>99</code><span class="var-desc">纪录片</span></div>
+            <div class="var-item"><code>18</code><span class="var-desc">剧情</span></div>
+            <div class="var-item"><code>10751</code><span class="var-desc">家庭</span></div>
+            <div class="var-item"><code>9648</code><span class="var-desc">悬疑</span></div>
+            <div class="var-item"><code>10763</code><span class="var-desc">新闻</span></div>
+            <div class="var-item"><code>10764</code><span class="var-desc">综艺（旧）</span></div>
+            <div class="var-item"><code>10765</code><span class="var-desc">科幻奇幻</span></div>
+            <div class="var-item"><code>10766</code><span class="var-desc">肥皂剧</span></div>
+            <div class="var-item"><code>10767</code><span class="var-desc">综艺（新）</span></div>
+            <div class="var-item"><code>10768</code><span class="var-desc">战争政治</span></div>
+            <div class="var-item"><code>37</code><span class="var-desc">西部</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">国家/地区代码（origin_country）</div>
+        <div class="var-section">
+          <div class="var-section-title">亚洲</div>
+          <div class="var-card">
+            <div class="var-item"><code>CN</code><span class="var-desc">中国大陆</span></div>
+            <div class="var-item"><code>HK</code><span class="var-desc">中国香港</span></div>
+            <div class="var-item"><code>TW</code><span class="var-desc">中国台湾</span></div>
+            <div class="var-item"><code>JP</code><span class="var-desc">日本</span></div>
+            <div class="var-item"><code>KR</code><span class="var-desc">韩国</span></div>
+            <div class="var-item"><code>KP</code><span class="var-desc">朝鲜</span></div>
+            <div class="var-item"><code>TH</code><span class="var-desc">泰国</span></div>
+            <div class="var-item"><code>IN</code><span class="var-desc">印度</span></div>
+            <div class="var-item"><code>SG</code><span class="var-desc">新加坡</span></div>
+            <div class="var-item"><code>MY</code><span class="var-desc">马来西亚</span></div>
+            <div class="var-item"><code>ID</code><span class="var-desc">印度尼西亚</span></div>
+            <div class="var-item"><code>PH</code><span class="var-desc">菲律宾</span></div>
+            <div class="var-item"><code>VN</code><span class="var-desc">越南</span></div>
+            <div class="var-item"><code>TR</code><span class="var-desc">土耳其</span></div>
+            <div class="var-item"><code>IL</code><span class="var-desc">以色列</span></div>
+            <div class="var-item"><code>AE</code><span class="var-desc">阿联酋</span></div>
+            <div class="var-item"><code>IR</code><span class="var-desc">伊朗</span></div>
+            <div class="var-item"><code>KZ</code><span class="var-desc">哈萨克斯坦</span></div>
+          </div>
+        </div>
+        <div class="var-section">
+          <div class="var-section-title">欧美</div>
+          <div class="var-card">
+            <div class="var-item"><code>US</code><span class="var-desc">美国</span></div>
+            <div class="var-item"><code>GB</code><span class="var-desc">英国</span></div>
+            <div class="var-item"><code>CA</code><span class="var-desc">加拿大</span></div>
+            <div class="var-item"><code>AU</code><span class="var-desc">澳大利亚</span></div>
+            <div class="var-item"><code>NZ</code><span class="var-desc">新西兰</span></div>
+            <div class="var-item"><code>IE</code><span class="var-desc">爱尔兰</span></div>
+            <div class="var-item"><code>FR</code><span class="var-desc">法国</span></div>
+            <div class="var-item"><code>DE</code><span class="var-desc">德国</span></div>
+            <div class="var-item"><code>ES</code><span class="var-desc">西班牙</span></div>
+            <div class="var-item"><code>IT</code><span class="var-desc">意大利</span></div>
+            <div class="var-item"><code>PT</code><span class="var-desc">葡萄牙</span></div>
+            <div class="var-item"><code>NL</code><span class="var-desc">荷兰</span></div>
+            <div class="var-item"><code>BE</code><span class="var-desc">比利时</span></div>
+            <div class="var-item"><code>CH</code><span class="var-desc">瑞士</span></div>
+            <div class="var-item"><code>SE</code><span class="var-desc">瑞典</span></div>
+            <div class="var-item"><code>NO</code><span class="var-desc">挪威</span></div>
+            <div class="var-item"><code>DK</code><span class="var-desc">丹麦</span></div>
+            <div class="var-item"><code>FI</code><span class="var-desc">芬兰</span></div>
+            <div class="var-item"><code>PL</code><span class="var-desc">波兰</span></div>
+            <div class="var-item"><code>CZ</code><span class="var-desc">捷克</span></div>
+            <div class="var-item"><code>RU</code><span class="var-desc">俄罗斯</span></div>
+            <div class="var-item"><code>UA</code><span class="var-desc">乌克兰</span></div>
+            <div class="var-item"><code>HU</code><span class="var-desc">匈牙利</span></div>
+            <div class="var-item"><code>GR</code><span class="var-desc">希腊</span></div>
+            <div class="var-item"><code>RO</code><span class="var-desc">罗马尼亚</span></div>
+            <div class="var-item"><code>AT</code><span class="var-desc">奥地利</span></div>
+            <div class="var-item"><code>IS</code><span class="var-desc">冰岛</span></div>
+          </div>
+        </div>
+        <div class="var-section">
+          <div class="var-section-title">其他</div>
+          <div class="var-card">
+            <div class="var-item"><code>BR</code><span class="var-desc">巴西</span></div>
+            <div class="var-item"><code>MX</code><span class="var-desc">墨西哥</span></div>
+            <div class="var-item"><code>AR</code><span class="var-desc">阿根廷</span></div>
+            <div class="var-item"><code>CO</code><span class="var-desc">哥伦比亚</span></div>
+            <div class="var-item"><code>CL</code><span class="var-desc">智利</span></div>
+            <div class="var-item"><code>ZA</code><span class="var-desc">南非</span></div>
+            <div class="var-item"><code>EG</code><span class="var-desc">埃及</span></div>
+            <div class="var-item"><code>NG</code><span class="var-desc">尼日利亚</span></div>
+            <div class="var-item"><code>JO</code><span class="var-desc">约旦</span></div>
+            <div class="var-item"><code>SA</code><span class="var-desc">沙特</span></div>
+            <div class="var-item"><code>QA</code><span class="var-desc">卡塔尔</span></div>
+            <div class="var-item"><code>LB</code><span class="var-desc">黎巴嫩</span></div>
+            <div class="var-item"><code>MA</code><span class="var-desc">摩洛哥</span></div>
+            <div class="var-item"><code>PE</code><span class="var-desc">秘鲁</span></div>
+            <div class="var-item"><code>VE</code><span class="var-desc">委内瑞拉</span></div>
+            <div class="var-item"><code>UY</code><span class="var-desc">乌拉圭</span></div>
+            <div class="var-item"><code>KE</code><span class="var-desc">肯尼亚</span></div>
+            <div class="var-item"><code>GH</code><span class="var-desc">加纳</span></div>
+            <div class="var-item"><code>DZ</code><span class="var-desc">阿尔及利亚</span></div>
+            <div class="var-item"><code>TN</code><span class="var-desc">突尼斯</span></div>
+            <div class="var-item"><code>IQ</code><span class="var-desc">伊拉克</span></div>
+            <div class="var-item"><code>KW</code><span class="var-desc">科威特</span></div>
+            <div class="var-item"><code>BD</code><span class="var-desc">孟加拉国</span></div>
+            <div class="var-item"><code>PK</code><span class="var-desc">巴基斯坦</span></div>
+            <div class="var-item"><code>LK</code><span class="var-desc">斯里兰卡</span></div>
+            <div class="var-item"><code>MM</code><span class="var-desc">缅甸</span></div>
+            <div class="var-item"><code>KH</code><span class="var-desc">柬埔寨</span></div>
+            <div class="var-item"><code>LA</code><span class="var-desc">老挝</span></div>
+            <div class="var-item"><code>MN</code><span class="var-desc">蒙古</span></div>
+            <div class="var-item"><code>NP</code><span class="var-desc">尼泊尔</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">语言代码（original_language）</div>
+        <div class="var-card">
+          <div class="var-item"><code>zh</code><span class="var-desc">中文（普通话）</span></div>
+          <div class="var-item"><code>cn</code><span class="var-desc">粤语</span></div>
+          <div class="var-item"><code>bo</code><span class="var-desc">藏语</span></div>
+          <div class="var-item"><code>za</code><span class="var-desc">壮语</span></div>
+          <div class="var-item"><code>ja</code><span class="var-desc">日语</span></div>
+          <div class="var-item"><code>ko</code><span class="var-desc">韩语</span></div>
+          <div class="var-item"><code>en</code><span class="var-desc">英语</span></div>
+          <div class="var-item"><code>fr</code><span class="var-desc">法语</span></div>
+          <div class="var-item"><code>de</code><span class="var-desc">德语</span></div>
+          <div class="var-item"><code>es</code><span class="var-desc">西班牙语</span></div>
+          <div class="var-item"><code>it</code><span class="var-desc">意大利语</span></div>
+          <div class="var-item"><code>pt</code><span class="var-desc">葡萄牙语</span></div>
+          <div class="var-item"><code>ru</code><span class="var-desc">俄语</span></div>
+          <div class="var-item"><code>th</code><span class="var-desc">泰语</span></div>
+          <div class="var-item"><code>hi</code><span class="var-desc">印地语</span></div>
+          <div class="var-item"><code>ta</code><span class="var-desc">泰米尔语</span></div>
+          <div class="var-item"><code>te</code><span class="var-desc">泰卢固语</span></div>
+          <div class="var-item"><code>ml</code><span class="var-desc">马拉雅拉姆语</span></div>
+          <div class="var-item"><code>kn</code><span class="var-desc">卡纳达语</span></div>
+          <div class="var-item"><code>ar</code><span class="var-desc">阿拉伯语</span></div>
+          <div class="var-item"><code>he</code><span class="var-desc">希伯来语</span></div>
+          <div class="var-item"><code>fa</code><span class="var-desc">波斯语</span></div>
+          <div class="var-item"><code>tr</code><span class="var-desc">土耳其语</span></div>
+          <div class="var-item"><code>pl</code><span class="var-desc">波兰语</span></div>
+          <div class="var-item"><code>nl</code><span class="var-desc">荷兰语</span></div>
+          <div class="var-item"><code>sv</code><span class="var-desc">瑞典语</span></div>
+          <div class="var-item"><code>no</code><span class="var-desc">挪威语</span></div>
+          <div class="var-item"><code>da</code><span class="var-desc">丹麦语</span></div>
+          <div class="var-item"><code>fi</code><span class="var-desc">芬兰语</span></div>
+          <div class="var-item"><code>cs</code><span class="var-desc">捷克语</span></div>
+          <div class="var-item"><code>el</code><span class="var-desc">希腊语</span></div>
+          <div class="var-item"><code>hu</code><span class="var-desc">匈牙利语</span></div>
+          <div class="var-item"><code>ro</code><span class="var-desc">罗马尼亚语</span></div>
+          <div class="var-item"><code>uk</code><span class="var-desc">乌克兰语</span></div>
+          <div class="var-item"><code>vi</code><span class="var-desc">越南语</span></div>
+          <div class="var-item"><code>id</code><span class="var-desc">印尼语</span></div>
+          <div class="var-item"><code>ms</code><span class="var-desc">马来语</span></div>
+          <div class="var-item"><code>tl</code><span class="var-desc">菲律宾语</span></div>
+          <div class="var-item"><code>km</code><span class="var-desc">高棉语</span></div>
+        </div>
+      </div>
+    </div>
+
+      <!-- 洗版策略 -->
+      <div class="tab-panel" data-panel="wash">
+      <div class="card">
+        <div class="card-title">洗版策略（YAML）</div>
+        <textarea id="wash-yaml" rows="20" style="width:100%"># 洗版模式：coexist共存 / skip跳过 / replace替换 / max_size最大 / min_size最小
+# 优先级字段说明：
+#   resource_pix: 分辨率（2160p, 1080p, 720p）
+#   resource_type: 资源质量（BluRay, WEB-DL, HDTV）
+#   video_encode: 视频编码（H265.10bit, REMUX）
+#   audio_encode: 音频编码（TrueHD.7.1, DTS）
+#   resource_effect: 特效（DV.HDR, HDR10+, 排除用!前缀如!DV）
+#   resource_team: 发布组（WiKi, TnT, FRDS）
+电影洗版策略:
+  mode: replace
+  media_type: movie
+  priority_level:
+  - resource_team: "WiKi"
+    resource_effect: "!DV.HDR,!DV"
+  - resource_pix: "2160p"
+    resource_type: "BluRay"
+    resource_effect: "!DV.HDR,!DV"
+  - resource_pix: "1080p"
+    resource_type: "BluRay"
+
+剧集洗版策略:
+  mode: replace
+  media_type: tv
+  priority_level:
+  - resource_pix: "2160p"
+    resource_effect: "!DV.HDR,!DV"
+  - resource_pix: "1080p"</textarea>
+        <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveWash()">保存配置</button></div>
+      </div>
+    </div>
+
+      <!-- 洗版规则 -->
+      <div class="tab-panel" data-panel="wash-help">
+      <div class="card">
+        <div class="card-title">洗版模式</div>
+        <div class="var-card">
+          <div class="var-item"><span class="badge badge-green">coexist</span><span class="var-desc">共存，保留所有版本</span></div>
+          <div class="var-item"><span class="badge badge-blue">skip</span><span class="var-desc">跳过，已有则不整理</span></div>
+          <div class="var-item"><span class="badge badge-amber">replace</span><span class="var-desc">替换，用新版替换旧版</span></div>
+          <div class="var-item"><span class="badge badge-blue">max_size</span><span class="var-desc">最大体积优先</span></div>
+          <div class="var-item"><span class="badge badge-blue">min_size</span><span class="var-desc">最小体积优先</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">优先级字段</div>
+        <div class="var-card">
+          <div class="var-item"><code>resource_pix</code><span class="var-desc">分辨率（2160p, 1080p, 720p）</span></div>
+          <div class="var-item"><code>resource_type</code><span class="var-desc">资源质量（BluRay, WEB-DL, HDTV）</span></div>
+          <div class="var-item"><code>resource_effect</code><span class="var-desc">特效（DV.HDR, HDR10+, !DV 排除）</span></div>
+          <div class="var-item"><code>video_encode</code><span class="var-desc">视频编码（H265.10bit, REMUX）</span></div>
+          <div class="var-item"><code>audio_encode</code><span class="var-desc">音频编码（TrueHD.7.1, DTS）</span></div>
+          <div class="var-item"><code>resource_team</code><span class="var-desc">发布组（WiKi, TnT, FRDS）</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">规则说明</div>
+        <div class="var-card">
+          <div class="var-item"><span class="badge badge-blue">优先级</span><span class="var-desc">priority_level 从上到下，先匹配到的优先保留</span></div>
+          <div class="var-item"><span class="badge badge-blue">多条件</span><span class="var-desc">同一条优先级下多个条件为<b>且</b>关系</span></div>
+          <div class="var-item"><span class="badge badge-blue">排除</span><span class="var-desc">resource_effect 用 ! 前缀排除特效</span></div>
+          <div class="var-item"><span class="badge badge-blue">media_type</span><span class="var-desc">movie 电影 / tv 剧集，独立配置</span></div>
+        </div>
+      </div>
+    </div>
+
+      <!-- 重命名规则 -->
+      <div class="tab-panel" data-panel="rename">
+      <div class="card">
+        <div class="card-title">重命名规则</div>
+
+        <div class="rename-group">
+          <div class="rename-group-title"><span class="badge badge-blue">电影</span></div>
+          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-movie-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-movie-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-movie-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-movie-file" class="rename-example"></code></div></div></div>
+        </div>
+
+        <div class="rename-group">
+          <div class="rename-group-title"><span class="badge badge-green">剧集</span></div>
+          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-tv-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-tv-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-tv-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{season_episode}<.{resource_pix}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-tv-file" class="rename-example"></code></div></div></div>
+        </div>
+
+        <div class="rename-group">
+          <div class="rename-group-title"><span class="badge badge-amber">AV</span></div>
+          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-av-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}</textarea><div class="rename-example-box">示例：<code id="ex-av-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-av-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{num}-{title}<.{resource_pix}><.{resource_type}></textarea><div class="rename-example-box">示例：<code id="ex-av-file" class="rename-example"></code></div></div></div>
+        </div>
+
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-rename')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-rename', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+      </div>
+
+      <!-- 变量说明 -->
+      <div class="tab-panel" data-panel="variables">
+      <div class="card">
+        <div class="card-title">语法说明</div>
+        <div class="var-card">
+          <div class="var-item"><code>{变量名}</code><span class="var-desc">取变量的值</span></div>
+          <div class="var-item"><code>&lt;...&gt;</code><span class="var-desc">尖括号包围称"块"，块内变量非空时输出块内容</span></div>
+          <div class="var-item"><code>&lt;{name}...&gt;</code><span class="var-desc">给块取名，可用 {name} 反复引用</span></div>
+          <div class="var-item"><code>&lt;?{name}...&gt;</code><span class="var-desc">只取名不输出，便于后续引用</span></div>
+          <div class="var-item"><code>&lt;{title}&gt;</code><span class="var-desc">先判断 title 是否为空再取值（推荐）</span></div>
+          <div class="var-item"><code>[[ ]]</code><span class="var-desc">代替 { } 输出花括号（解决语法冲突）</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Python 字符串函数（{ } 内可用）</div>
+        <div class="var-card">
+          <div class="var-item"><code>{resource_effect.replace('.', ' ')}</code><span class="var-desc">替换 . 为空格</span></div>
+          <div class="var-item"><code>{resource_effect.lower()}</code><span class="var-desc">转小写</span></div>
+          <div class="var-item"><code>{resource_effect.upper()}</code><span class="var-desc">转大写</span></div>
+          <div class="var-item"><code>{'2160p' if resource_pix=='4k' else resource_pix}</code><span class="var-desc">条件判断</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">命名变量参考</div>
+
+        <div class="var-section">
+          <div class="var-section-title">基本信息</div>
+          <div class="var-card">
+            <div class="var-item"><code>{title}</code><span class="var-desc">TMDB 标题</span><span class="var-ex">钢铁侠</span></div>
+            <div class="var-item"><code>{en_title}</code><span class="var-desc">英文标题(空时转拼音)</span><span class="var-ex">Iron Man</span></div>
+            <div class="var-item"><code>{original_name}</code><span class="var-desc">原文件名</span><span class="var-ex">钢铁侠.2008.2160p.mkv</span></div>
+            <div class="var-item"><code>{year}</code><span class="var-desc">上映年份</span><span class="var-ex">2008</span></div>
+            <div class="var-item"><code>{tmdb_id}</code><span class="var-desc">TMDB ID</span><span class="var-ex">1726</span></div>
+            <div class="var-item"><code>{first_letter}</code><span class="var-desc">拼音首字母(大写)</span><span class="var-ex">G</span></div>
+            <div class="var-item"><code>{ext}</code><span class="var-desc">文件扩展名</span><span class="var-ex">mkv</span></div>
+            <div class="var-item"><code>{custom_regex_match}</code><span class="var-desc">自定义正则匹配</span><span class="var-ex">自定义</span></div>
+          </div>
+        </div>
+
+        <div class="var-section">
+          <div class="var-section-title">剧集专用</div>
+          <div class="var-card">
+            <div class="var-item"><code>{season_episode}</code><span class="var-desc">季集 SxxExx</span><span class="var-ex">S01E01</span></div>
+            <div class="var-item"><code>{season_num}</code><span class="var-desc">季号</span><span class="var-ex">1</span></div>
+            <div class="var-item"><code>{episode_num}</code><span class="var-desc">集号</span><span class="var-ex">1</span></div>
+            <div class="var-item"><code>{season_name}</code><span class="var-desc">季名</span><span class="var-ex">东海篇</span></div>
+            <div class="var-item"><code>{episode_name}</code><span class="var-desc">集名</span><span class="var-ex">我是路飞</span></div>
+            <div class="var-item"><code>{season_year}</code><span class="var-desc">季年份</span><span class="var-ex">1999</span></div>
+            <div class="var-item"><code>{disc_num}</code><span class="var-desc">盘号</span><span class="var-ex">1</span></div>
+          </div>
+        </div>
+
+        <div class="var-section">
+          <div class="var-section-title">资源信息</div>
+          <div class="var-card">
+            <div class="var-item"><code>{resource_pix}</code><span class="var-desc">分辨率</span><span class="var-ex">2160p</span></div>
+            <div class="var-item"><code>{fps}</code><span class="var-desc">帧率</span><span class="var-ex">60FPS</span></div>
+            <div class="var-item"><code>{resource_version}</code><span class="var-desc">资源版本</span><span class="var-ex">IMAX</span></div>
+            <div class="var-item"><code>{resource_source}</code><span class="var-desc">资源来源</span><span class="var-ex">NF</span></div>
+            <div class="var-item"><code>{resource_type}</code><span class="var-desc">资源质量</span><span class="var-ex">BluRay</span></div>
+            <div class="var-item"><code>{resource_effect}</code><span class="var-desc">特效</span><span class="var-ex">DV.HDR</span></div>
+            <div class="var-item"><code>{video_encode}</code><span class="var-desc">视频编码</span><span class="var-ex">H265.10bit</span></div>
+            <div class="var-item"><code>{audio_encode}</code><span class="var-desc">音频编码</span><span class="var-ex">TrueHD.7.1</span></div>
+            <div class="var-item"><code>{resource_team}</code><span class="var-desc">发布组</span><span class="var-ex">TnT</span></div>
+          </div>
+        </div>
+
+        <div class="var-section">
+          <div class="var-section-title">其他</div>
+          <div class="var-card">
+            <div class="var-item"><code>{num}</code><span class="var-desc">AV 番号</span><span class="var-ex">ABC-123</span></div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <!-- 上传下载 -->
+    <div class="page" id="page-upload-download">
+      <div class="tabs">
+        <div class="tab active" data-tab="ud-upload" onclick="switchUDTab('ud-upload')">监控上传</div>
+        <div class="tab" data-tab="ud-download" onclick="switchUDTab('ud-download')">转存下载</div>
+      </div>
+      <div class="tab-panel active" data-panel="ud-upload">
+        <div class="card">
+          <div class="alert alert-info">监控上传：只上传 emby 生成的标准格式的媒体图片。</div>
+          <div class="card-title">监控上传配置</div>
+          <div class="form-row"><div class="label">监控目录</div><div class="control"><input type="text" id="monitor-dir" placeholder="emby 媒体图片所在目录"></div></div>
+          <div class="form-row"><div class="label">上传目标目录</div><div class="control"><input type="text" id="monitor-target" placeholder="115 目标目录 cid"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+      <div class="tab-panel" data-panel="ud-download">
+        <div class="card">
+          <div class="card-title">转存下载</div>
+          <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="transfer-link" placeholder="支持115分享、磁力、ed2k、阿里云盘分享（自动秒传到115）"></div></div>
+          <div class="form-row"><div class="label">转存目录</div><div class="control"><input type="text" id="transfer-target" placeholder="115 目标目录 cid"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
+        </div>
+        <div class="card" style="padding:0">
+          <table>
+            <thead><tr><th>任务</th><th>状态</th><th>进度</th><th>时间</th><th>操作</th></tr></thead>
+            <tbody id="transfer-tbody"><tr><td colspan="5" style="text-align:center;color:var(--text-3)">暂无转存任务</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 核心配置-115账号 -->
+    <div class="page" id="page-config-accounts">
+      <div class="tabs">
+        <div class="tab active" data-tab="acc-115">115 账号</div>
+        <div class="tab" data-tab="acc-123">123 账号</div>
+        <div class="tab" data-tab="acc-openlist">OpenList 账号</div>
+        <div class="tab" data-tab="acc-quark">夸克账号</div>
+        <div class="tab" data-tab="acc-ali">阿里账号</div>
+      </div>
+
+      <!-- 115 账号 -->
+      <div class="tab-panel active" data-panel="acc-115">
+      <div class="card">
+        <div class="form-row"><div class="label">Cookie文件路径<i class="help-tip">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button></div><div class="alert alert-success" id="acc-status-box" style="display:none;margin-top:8px"><span class="icon">✓</span> 账号：<span id="acc-username">-</span>，容量：<span id="acc-capacity">-</span></div></div></div>
+        <div class="form-row"><div class="label">Cookie设备类型<i class="help-tip">?<span class="tip-bubble">iOS 选「115生活」，Android 选「115」，选不常用的设备绑定。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="115ios">115生活_iOS端</option><option value="115android" selected>115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
+        <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip">?<span class="tip-bubble">使用 115 开放平台接口，不担心风控、性能更好。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用</div></div></div></div>
+        <div class="form-row"><div class="label">开放平台 AppID<i class="help-tip">?<span class="tip-bubble">在 115 开放平台（open.115.com）申请应用后获取。</span></i></div><div class="control"><input type="text" id="acc-appid" placeholder="请输入 115 开放平台 AppID"></div></div>
+        <div class="form-row"><div class="label">API请求间隔<i class="help-tip">?<span class="tip-bubble">设置 API 请求间隔可以减少风控概率。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="acc-interval" value="3.0" step="0.5" min="0.5" style="max-width:120px"><div class="input-suffix">秒</div></div></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveAccount()">保存配置</button> <button class="btn btn-warning" onclick="resetAccount()">重置配置</button></div></div>
+      </div>
+      </div>
+
+      <!-- 123 账号 -->
+      <div class="tab-panel" data-panel="acc-123">
+      <div class="card">
+        <div class="alert alert-info">123 云盘账号配置，用于转存和下载。</div>
+        <div class="form-row"><div class="label">Cookie<i class="help-tip">?<span class="tip-bubble">123 云盘的 Cookie，登录后从浏览器获取。</span></i></div><div class="control"><input type="text" id="acc-123-cookie" placeholder="请输入 123 云盘 Cookie"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="toast('123账号保存功能开发中')">保存配置</button></div></div>
+      </div>
+      </div>
+
+      <!-- OpenList 账号 -->
+      <div class="tab-panel" data-panel="acc-openlist">
+      <div class="card">
+        <div class="alert alert-info">OpenList 账号配置，用于文件列表和直链获取。</div>
+        <div class="form-row"><div class="label">API 地址<i class="help-tip">?<span class="tip-bubble">OpenList 服务地址，如 http://localhost:5244。</span></i></div><div class="control"><input type="text" id="acc-openlist-url" placeholder="如 http://localhost:5244"></div></div>
+        <div class="form-row"><div class="label">Token<i class="help-tip">?<span class="tip-bubble">OpenList API Token，在管理后台获取。</span></i></div><div class="control"><input type="password" id="acc-openlist-token" placeholder="OpenList API Token"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="toast('OpenList账号保存功能开发中')">保存配置</button></div></div>
+      </div>
+      </div>
+
+      <!-- 夸克账号 -->
+      <div class="tab-panel" data-panel="acc-quark">
+      <div class="card">
+        <div class="alert alert-info">夸克网盘账号配置。</div>
+        <div class="form-row"><div class="label">Cookie<i class="help-tip">?<span class="tip-bubble">夸克网盘的 Cookie，登录后从浏览器获取。</span></i></div><div class="control"><input type="text" id="acc-quark-cookie" placeholder="请输入夸克网盘 Cookie"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="toast('夸克账号保存功能开发中')">保存配置</button></div></div>
+      </div>
+      </div>
+
+      <!-- 阿里账号 -->
+      <div class="tab-panel" data-panel="acc-ali">
+      <div class="card">
+        <div class="alert alert-info">阿里云盘账号配置。</div>
+        <div class="form-row"><div class="label">Refresh Token<i class="help-tip">?<span class="tip-bubble">阿里云盘的 refresh_token，从阿里云盘网页端获取。</span></i></div><div class="control"><input type="password" id="acc-ali-token" placeholder="请输入阿里云盘 refresh_token"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="toast('阿里账号保存功能开发中')">保存配置</button></div></div>
+      </div>
+      </div>
+    </div>
+
+    <!-- 系统配置（Tab 栏） -->
+    <div class="page" id="page-config-system">
+      <div class="tabs">
+        <div class="tab active" data-tab="strm">STRM配置</div>
+        <div class="tab" data-tab="tmdb">TMDB配置</div>
+        <div class="tab" data-tab="proxy">代理配置</div>
+        <div class="tab" data-tab="emby-refresh">EMBY入库刷新</div>
+        <div class="tab" data-tab="emby-notify">EMBY入库通知</div>
+      </div>
+
+      <!-- STRM 配置 -->
+      <div class="tab-panel active" data-panel="strm">
+        <div class="card">
+          <div class="card-title">STRM 配置</div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> STRM 直连域名</div><div class="control"><input type="text" id="strm-domain" value="http://172.17.0.1:6060" oninput="updateStrmExample()"></div></div>
+          <div class="form-row"><div class="label">STRM 直连格式</div><div class="control"><div class="segmented-control" id="strm-format-switch"><div class="seg-item active" data-value="pick_code_name" onclick="setStrmFormat('pick_code_name')">pick_code_name</div><div class="seg-item" data-value="pick_code" onclick="setStrmFormat('pick_code')">pick_code</div></div></div></div>
+          <div class="form-row"><div class="label">保留文件后缀</div><div class="control"><div class="segmented-control" id="strm-ext-switch"><div class="seg-item active" data-value="true" onclick="setStrmExt(true)">是</div><div class="seg-item" data-value="false" onclick="setStrmExt(false)">否</div></div></div></div>
+          <div class="form-row"><div class="label">STRM 文件本地存在时</div><div class="control"><div class="segmented-control" id="strm-exist-switch"><div class="seg-item active" data-value="overwrite" onclick="setStrmExist('overwrite')">覆盖</div><div class="seg-item" data-value="skip" onclick="setStrmExist('skip')">跳过</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('strm')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('strm', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label">STRM 直链示例</div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);word-break:break-all;display:block;line-height:38px"></code></div></div>
+        </div>
+      </div>
+
+      <!-- TMDB 配置 -->
+      <div class="tab-panel" data-panel="tmdb">
+        <div class="card">
+          <div class="card-title">TMDB 配置</div>
+          <div class="form-row"><div class="label">API 域名</div><div class="control"><input type="text" id="tmdb-api-url" value="https://api.tmdb.org"></div></div>
+          <div class="form-row"><div class="label">图片域名</div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥</div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
+          <div class="form-row"><div class="label">语言</div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button> <button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button> <span id="tmdb-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+
+      <!-- 代理配置 -->
+      <div class="tab-panel" data-panel="proxy">
+        <div class="card">
+          <div class="card-title">代理配置</div>
+          <div class="form-row"><div class="label">代理地址</div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button> <button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+
+      <!-- EMBY 入库刷新 -->
+      <div class="tab-panel" data-panel="emby-refresh">
+        <div class="alert alert-info">用于 STRM 生成时通知 Emby 刷新入库；非必须，开启 Emby 实时监控也一样，此通知只是能更快入库。</div>
+        <div class="card">
+          <div class="form-row"><div class="label">路径替换规则<i class="help-tip">?<span class="tip-bubble">用于将 CMS 的路径转为 Emby 的路径，为空代表不需要转换。</span></i></div><div class="control"><input type="text" id="emby-refresh-path" value="/media#/media" oninput="testEmbyPath()"></div></div>
+          <div class="form-row"><div class="label">路径风格</div><div class="control"><div class="segmented-control" id="emby-refresh-style-switch"><div class="seg-item active" data-value="unix" onclick="setEmbyStyle('unix')">Unix 风格</div><div class="seg-item" data-value="windows" onclick="setEmbyStyle('windows')">Windows 风格</div></div></div></div>
+          <div class="form-row"><div class="label">路径转换测试<i class="help-tip">?<span class="tip-bubble">输入一个 CMS 中的路径，下方显示转换后的 Emby 路径，一致则说明规则正确。</span></i></div><div class="control"><input type="text" id="emby-path-test-input" placeholder="如 /media/电影/钢铁侠.mkv" oninput="testEmbyPath()"><code id="emby-path-test-output" style="display:block;font-size:13px;color:var(--success);margin-top:6px;word-break:break-all"></code></div></div>
+          <div class="form-row"><div class="label">状态</div><div class="control"><div class="segmented-control" id="emby-refresh-enabled-switch"><div class="seg-item active" data-value="true" onclick="setEmbyEnabled(true)">启用</div><div class="seg-item" data-value="false" onclick="setEmbyEnabled(false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby-refresh')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby-refresh', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+
+      <!-- EMBY 入库通知 -->
+      <div class="tab-panel" data-panel="emby-notify">
+        <div class="alert alert-info">在 emby 入库成功时进行消息通知，token 需要改为你自己的。</div>
+        <div class="card">
+          <div class="card-title">EMBY 入库通知</div>
+          <div class="form-row"><div class="label">Webhook 地址</div><div class="control"><input type="text" id="emby-notify-webhook" placeholder="Emby Webhook 地址"></div></div>
+          <div class="form-row"><div class="label">通知事件</div><div class="control">
+            <span class="inline"><input type="checkbox" checked> 入库</span>
+            <span class="inline"><input type="checkbox" checked> 删除</span>
+            <span class="inline"><input type="checkbox" checked> 播放</span>
+            <span class="inline"><input type="checkbox" checked> 暂停</span>
+          </div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby-notify')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby-notify', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 消息配置 -->
+    <div class="page" id="page-config-message">
+      <div class="tabs">
+        <div class="tab active" data-tab="msg-wecom" onclick="switchMsgTab('msg-wecom')">企业微信</div>
+        <div class="tab" data-tab="msg-tg" onclick="switchMsgTab('msg-tg')">TG 机器人</div>
+      </div>
+      <div class="tab-panel active" data-panel="msg-wecom">
+        <div class="card">
+          <div class="form-row"><div class="label">企业 ID</div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
+          <div class="form-row"><div class="label">应用 Secret</div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
+          <div class="form-row"><div class="label">Agent ID</div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
+        </div>
+      </div>
+      <div class="tab-panel" data-panel="msg-tg">
+        <div class="card">
+          <div class="form-row"><div class="label">Bot Token</div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
+          <div class="form-row"><div class="label">Chat ID</div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div></div></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button> <button class="btn btn-outline" id="msg-test-btn" onclick="testMessage()">测试通知</button> <span id="msg-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+    <!-- 扩展功能 -->
+    <div class="page" id="page-config-extension">
+      <div class="card">
+        <div class="card-title">扩展功能</div>
+        <table>
+          <thead><tr><th>插件</th><th>说明</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr><td>ALIST 同步</td><td>将 alist 网盘文件同步到本地生成 strm</td><td><span class="badge badge-gray">未安装</span></td><td><button class="btn btn-outline btn-sm">安装</button></td></tr>
+            <tr><td>115 文件夹清空</td><td>一键清空115指定文件夹（配合分享同步使用）</td><td><span class="badge badge-gray">未安装</span></td><td><button class="btn btn-outline btn-sm">安装</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 115 扫码登录弹窗 -->
+<div class="modal-mask" id="qrcode-modal" style="display:none">
+  <div class="modal" style="text-align:center">
+    <h3>115 扫码登录</h3>
+    <div class="qrcode-box" id="qrcode-img" style="margin:0 auto">二维码加载中...</div>
+    <p style="margin-top:14px;font-size:13px;color:var(--text-2)" id="qrcode-status">请使用 115 手机 App 扫描二维码</p>
+    <p style="font-size:12px;color:var(--text-3)">选择不常用的设备绑定，扫码登录成功后请勿再登录网页版 115</p>
+    <div class="actions" style="justify-content:center">
+      <button class="btn btn-outline" onclick="closeQrCode()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 实时日志弹窗 -->
+<div class="modal-mask" id="log-modal" style="display:none">
+  <div class="modal" style="max-width:720px">
+    <h3>实时日志</h3>
+    <div class="log-viewer" id="log-viewer">暂无日志...</div>
+    <div class="actions"><button class="btn btn-outline" onclick="closeLog()">关闭</button></div>
+  </div>
+</div>
+
+<!-- 目录选择弹窗 -->
+<div class="modal-mask" id="dir-picker-modal" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <h3 id="dir-picker-title">选择目录</h3>
+    <div class="dir-picker-path" id="dir-picker-path">根目录</div>
+    <div class="dir-picker-list" id="dir-picker-list"></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="dirPickerUp()">上一级</button>
+      <span class="spacer"></span>
+      <button class="btn btn-outline" onclick="closeDirPicker()">取消</button>
+      <button class="btn btn-primary" onclick="confirmDirPicker()">选择当前目录</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/app.js?v=10"></script>
+</body>
+</html>

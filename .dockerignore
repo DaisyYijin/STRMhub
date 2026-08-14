@@ -1,0 +1,7 @@
+reference-projects/
+.trae-html-share-packages/
+data/
+*.exe
+*.db
+*.log
+.git/

@@ -1,0 +1,235 @@
+package model
+
+import (
+	"time"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+)
+
+type Admin struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Username  string    `json:"username" gorm:"uniqueIndex;size:50;not null"`
+	Password  string    `json:"-" gorm:"size:255;not null"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Storage struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Name      string    `json:"name" gorm:"size:100;not null"`
+	Type      string    `json:"type" gorm:"size:50;not null"` // 115, quark, openlist, webdav
+	Cookie    string    `json:"-" gorm:"type:text"`
+	CookiePath string   `json:"cookie_path" gorm:"size:255"`   // Cookie 文件路径
+	Device    string    `json:"device" gorm:"size:50"`         // 设备类型：ios/android
+	Interval  float64   `json:"interval" gorm:"default:3"`     // API 请求间隔（秒）
+	Status    string    `json:"status" gorm:"size:20;default:'offline'"`
+	FileCount int64     `json:"file_count" gorm:"default:0"`
+	// 115 开放平台（OpenAPI）
+	OpenapiEnabled bool   `json:"openapi_enabled" gorm:"default:false"`
+	AppID          string `json:"app_id" gorm:"size:100"`
+	AppKey         string `json:"app_key" gorm:"size:100"`
+	AppSecret      string `json:"-" gorm:"size:100"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type StrmFile struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	StorageID  uint      `json:"storage_id" gorm:"index"`
+	RemotePath string    `json:"remote_path" gorm:"size:500;not null"`
+	LocalPath  string    `json:"local_path" gorm:"size:500;not null"`
+	StreamURL  string    `json:"stream_url" gorm:"size:500"`
+	Status     string    `json:"status" gorm:"size:20;default:'active'"` // active, invalid
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type SyncTask struct {
+	ID            uint   `json:"id" gorm:"primaryKey"`
+	StorageID     uint   `json:"storage_id" gorm:"index"`
+	Name          string `json:"name" gorm:"size:100;not null"`
+	RemotePath    string `json:"remote_path" gorm:"size:500"`
+	LocalPath     string `json:"local_path" gorm:"size:500"`
+	ArchivePath   string `json:"archive_path" gorm:"size:500"` // 归档回写目录
+	SyncMode      string `json:"sync_mode" gorm:"size:20;default:'incremental'"` // full, incremental
+	Cron          string `json:"cron" gorm:"size:50"`
+	IsFullSync    bool   `json:"is_full_sync"`
+	SyncDelete    bool   `json:"sync_delete" gorm:"default:true"`
+	RenameDetect  bool   `json:"rename_detect" gorm:"default:true"`
+	MetaStrategy  string `json:"meta_strategy" gorm:"size:20;default:'keep'"` // keep, delete, upload
+	VideoExt      string `json:"video_ext" gorm:"size:200;default:'.mp4,.mkv,.ts'"`
+	MinVideoSize  int64  `json:"min_video_size" gorm:"default:0"`
+	ExcludeNames  string `json:"exclude_names" gorm:"size:200"`
+	Concurrency   int    `json:"concurrency" gorm:"default:10"`
+	Status        string `json:"status" gorm:"size:20;default:'stopped'"` // running, stopped, completed
+	LastSyncAt    *time.Time `json:"last_sync_at"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type TmdbConfig struct {
+	ID             uint   `json:"id" gorm:"primaryKey"`
+	ApiKey         string `json:"api_key" gorm:"size:255"`
+	ApiUrl         string `json:"api_url" gorm:"size:255;default:'https://api.tmdb.org'"`
+	ImageApiUrl    string `json:"image_api_url" gorm:"size:255;default:'https://image.tmdb.org'"`
+	Language       string `json:"language" gorm:"size:10;default:'zh-CN'"`
+	ImageLanguage  string `json:"image_language" gorm:"size:10;default:'zh-CN'"`
+	EnableProxy    bool   `json:"enable_proxy"`
+	ProxyUrl       string `json:"proxy_url" gorm:"size:255"`
+}
+
+// Setting 通用键值配置（STRM / 代理 / EMBY 等）
+type Setting struct {
+	ID    uint   `json:"id" gorm:"primaryKey"`
+	Key   string `json:"key" gorm:"uniqueIndex;size:50;not null"`
+	Value string `json:"value" gorm:"type:text"` // JSON 配置
+}
+
+type ScrapeRule struct {
+	ID       uint   `json:"id" gorm:"primaryKey"`
+	Type     string `json:"type" gorm:"size:50;not null"` // recognizer, rename_rule, metadata, cleanup, category
+	Enabled  bool   `json:"enabled" gorm:"default:true"`
+	Config   string `json:"config" gorm:"type:text"` // JSON 配置
+}
+
+type CategoryRule struct {
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	MediaType string `json:"media_type" gorm:"size:20;not null;index"` // movie, tv
+	Name      string `json:"name" gorm:"size:50;not null"`             // 华语电影, 动画电影
+	Cid       string `json:"cid" gorm:"size:100"`                      // 115 文件夹 CID
+	ArchiveDir string `json:"archive_dir" gorm:"size:200"`             // 归档子目录路径
+
+	// 匹配维度（对齐 CMS 的 YAML 策略，逗号分隔多值）
+	GenreIds         string `json:"genre_ids" gorm:"size:200"`          // TMDB 类型ID，如 "16,99"
+	OriginalLanguage string `json:"original_language" gorm:"size:100"`  // 原语言，如 "zh,cn,bo,za"
+	OriginCountry    string `json:"origin_country" gorm:"size:100"`     // 原产地，如 "CN,TW,HK"
+	Ext              string `json:"ext" gorm:"size:100"`                // 文件后缀，如 "iso"
+
+	IsDefault bool `json:"is_default" gorm:"default:false"`             // 是否兜底（未匹配任何分类时归入）
+	Priority  int  `json:"priority" gorm:"default:0"`                   // 优先级，从小到大，先匹配到先停止
+}
+
+// WashRule 洗版策略（对齐 CMS，处理重复资源）
+type WashRule struct {
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	Name      string `json:"name" gorm:"size:50"`                       // 策略名，如 "电影洗版策略"
+	Mode      string `json:"mode" gorm:"size:20;not null"`              // coexist, skip, replace, max_size, min_size
+	MediaType string `json:"media_type" gorm:"size:20"`                 // movie, tv（空=匹配所有）
+	Category  string `json:"category" gorm:"size:100"`                  // 匹配二级分类名，逗号分隔（空=所有）
+	PriorityLevel string `json:"priority_level" gorm:"type:text"`       // JSON 数组，优先级规则
+}
+
+// MediaLibrary 已整理的媒体记录（用于去重）
+type MediaLibrary struct {
+	ID            uint   `json:"id" gorm:"primaryKey"`
+	TmdbID        int    `json:"tmdb_id" gorm:"index"`
+	Title         string `json:"title" gorm:"size:255"`
+	OriginalTitle string `json:"original_title" gorm:"size:255"`
+	Year          string `json:"year" gorm:"size:10"`
+	MediaType     string `json:"media_type" gorm:"size:20;index"` // movie, tv
+	Category      string `json:"category" gorm:"size:50"`
+	TargetPath    string `json:"target_path" gorm:"size:500"`
+	OrigLanguage  string `json:"original_language" gorm:"size:20"`
+	OrigCountry   string `json:"origin_country" gorm:"size:100"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+var DB *gorm.DB
+
+func InitDB(dbPath string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	// 自动迁移
+	if err := db.AutoMigrate(
+		&Admin{},
+		&Storage{},
+		&StrmFile{},
+		&SyncTask{},
+		&TmdbConfig{},
+		&Setting{},
+		&ScrapeRule{},
+		&CategoryRule{},
+		&WashRule{},
+		&MediaLibrary{},
+	); err != nil {
+		return nil, err
+	}
+
+	DB = db
+	return db, nil
+}
+
+func IsInitialized(db *gorm.DB) (bool, error) {
+	var count int64
+	err := db.Model(&Admin{}).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// InitDefaultCategories 初始化 CMS 风格的默认二级分类（首次使用时调用）
+func InitDefaultCategories(db *gorm.DB) error {
+	var count int64
+	if err := db.Model(&CategoryRule{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil // 已存在，跳过
+	}
+
+	defaults := []CategoryRule{
+		// 电影分类
+		{MediaType: "movie", Name: "动画电影", GenreIds: "16", Priority: 1},
+		{MediaType: "movie", Name: "华语电影", OriginalLanguage: "zh,cn,bo,za", Priority: 2},
+		{MediaType: "movie", Name: "纪录片", GenreIds: "99", Priority: 3},
+		{MediaType: "movie", Name: "外语电影", IsDefault: true, Priority: 99},
+		// 电视剧分类
+		{MediaType: "tv", Name: "国漫", GenreIds: "16", OriginCountry: "CN,TW,HK", Priority: 1},
+		{MediaType: "tv", Name: "日番", GenreIds: "16", OriginCountry: "JP", Priority: 2},
+		{MediaType: "tv", Name: "纪录片", GenreIds: "99", Priority: 3},
+		{MediaType: "tv", Name: "综艺", GenreIds: "10764,10767", Priority: 4},
+		{MediaType: "tv", Name: "国产剧", OriginCountry: "CN,TW,HK", Priority: 5},
+		{MediaType: "tv", Name: "欧美剧", OriginCountry: "US,FR,GB,DE,ES,IT,NL,PT,RU,UK", Priority: 6},
+		{MediaType: "tv", Name: "日韩剧", OriginCountry: "JP,KP,KR,TH,IN,SG", Priority: 7},
+		{MediaType: "tv", Name: "未分类", IsDefault: true, Priority: 99},
+	}
+	return db.Create(&defaults).Error
+}
+
+// InitDefaultWashRules 初始化默认洗版策略
+func InitDefaultWashRules(db *gorm.DB) error {
+	var count int64
+	if err := db.Model(&WashRule{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	defaults := []WashRule{
+		{
+			Name:      "电影洗版策略",
+			Mode:      "replace",
+			MediaType: "movie",
+			PriorityLevel: `[
+				{"resource_team":"WiKi","resource_effect":"!DV.HDR,!DV"},
+				{"resource_pix":"2160p","resource_type":"BluRay","resource_effect":"!DV.HDR,!DV"},
+				{"resource_pix":"1080p","resource_type":"BluRay"},
+				{"resource_pix":"2160p","resource_type":"WEB-DL","resource_effect":"!DV.HDR,!DV"}
+			]`,
+		},
+		{
+			Name:      "剧集洗版策略",
+			Mode:      "replace",
+			MediaType: "tv",
+			PriorityLevel: `[
+				{"resource_pix":"2160p","resource_effect":"!DV.HDR,!DV"},
+				{"resource_pix":"1080p"}
+			]`,
+		},
+	}
+	return db.Create(&defaults).Error
+}

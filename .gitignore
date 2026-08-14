@@ -1,0 +1,28 @@
+# 二进制文件
+*.exe
+strmhub
+strmhub.exe
+
+# 数据文件
+data/
+*.db
+*.db-journal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 参考项目（不需要上传）
+reference-projects/
+
+# Trae 临时文件
+.trae-html-share-packages/
+
+# 日志
+*.log
