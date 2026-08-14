@@ -28,6 +28,6 @@ COPY --from=builder /build/web ./web
 
 EXPOSE 6060 6086
 
-VOLUME ["/data", "/media", "/logs"]
+VOLUME ["/config", "/data", "/media", "/logs"]
 
 ENTRYPOINT ["./strmhub"]

@@ -15,37 +15,38 @@ import (
 )
 
 func main() {
-	// 命令行参数：--reset-admin 重置管理员密码（不丢失其他配置）
+	// 初始化配置
+	cfg := config.Load()
+
+	// 命令行参数：--reset-admin 重置管理员密码（只删 auth.yaml，不丢其他配置）
 	if len(os.Args) > 1 && os.Args[1] == "--reset-admin" {
-		cfg := config.Load()
-		dbPath := filepath.Join(cfg.DataDir, "strmhub.db")
-		db, err := model.InitDB(dbPath)
-		if err != nil {
-			log.Fatalf("数据库打开失败: %v", err)
+		if err := cfg.ResetAuth(); err != nil {
+			fmt.Printf("重置失败（可能尚未注册）: %v\n", err)
+		} else {
+			fmt.Println("管理员账号已重置，所有配置已保留。请重新启动程序并注册新账号。")
 		}
-		if err := model.ResetAdmin(db); err != nil {
-			log.Fatalf("重置失败: %v", err)
-		}
-		fmt.Println("管理员账号已重置，所有配置已保留。请重新启动程序并注册新账号。")
 		return
 	}
 
-	// 初始化配置
-	cfg := config.Load()
 	log.Printf("StrmHub 启动中... 管理端口:%d 代理端口:%d", cfg.Port, cfg.ProxyPort)
 
+	// 确保配置目录存在
+	if err := cfg.EnsureConfigDir(); err != nil {
+		log.Fatalf("创建配置目录失败: %v", err)
+	}
+
 	// 确保数据目录存在
-	dataDir := filepath.Join(cfg.DataDir)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
 		log.Fatalf("创建数据目录失败: %v", err)
 	}
+
+	log.Println(cfg.ConfigSummary())
 
 	// 确保日志目录存在
 	logDir := "/logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		log.Printf("创建日志目录失败: %v，日志仅输出到控制台", err)
 	} else {
-		// 日志同时输出到控制台和文件
 		logFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
 			defer logFile.Close()
@@ -53,24 +54,20 @@ func main() {
 		}
 	}
 
-	// 初始化数据库
-	db, err := model.InitDB(filepath.Join(dataDir, "strmhub.db"))
+	// 初始化数据库（分类策略、洗版策略、同步记录）
+	db, err := model.InitDB(filepath.Join(cfg.DataDir, "strmhub.db"))
 	if err != nil {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 
-	// 检查是否首次部署（无管理员）
-	initialized, err := model.IsInitialized(db)
-	if err != nil {
-		log.Fatalf("检查初始化状态失败: %v", err)
-	}
-	if initialized {
+	// 检查是否首次部署（检查 auth.yaml 是否存在）
+	if cfg.IsAuthExists() {
 		log.Println("系统已初始化，显示登录页")
 	} else {
 		log.Println("首次部署，显示注册页")
 	}
 
-	// 初始化默认二级分类和洗版策略（CMS 风格）
+	// 初始化默认二级分类和洗版策略
 	if err := model.InitDefaultCategories(db); err != nil {
 		log.Printf("初始化默认二级分类失败: %v", err)
 	}

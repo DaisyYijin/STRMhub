@@ -103,9 +103,8 @@ type Handler struct {
 // ==================== 认证 ====================
 
 func (h *Handler) AuthStatus(c *gin.Context) {
-	initialized, _ := model.IsInitialized(h.DB)
 	c.JSON(http.StatusOK, gin.H{
-		"initialized": initialized,
+		"initialized": h.Config.IsAuthExists(),
 	})
 }
 
@@ -119,26 +118,20 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	// 检查是否已初始化
-	initialized, _ := model.IsInitialized(h.DB)
-	if initialized {
+	if h.Config.IsAuthExists() {
 		c.JSON(http.StatusForbidden, gin.H{"error": "系统已初始化，不允许注册"})
 		return
 	}
 
-	admin := model.Admin{
-		Username: req.Username,
-		Password: req.Password, // TODO: bcrypt 加密
-	}
-	if err := h.DB.Create(&admin).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "注册失败"})
+	if err := h.Config.SaveAuth(req.Username, req.Password); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "注册失败: " + err.Error()})
 		return
 	}
 
-	token := h.generateToken(admin.ID, admin.Username)
+	token := h.generateToken(1, req.Username)
 	c.JSON(http.StatusOK, gin.H{
 		"token":    token,
-		"username": admin.Username,
+		"username": req.Username,
 		"message":  "注册成功",
 	})
 }
@@ -153,16 +146,15 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	var admin model.Admin
-	if err := h.DB.Where("username = ? AND password = ?", req.Username, req.Password).First(&admin).Error; err != nil {
+	if !h.Config.VerifyAuth(req.Username, req.Password) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
 
-	token := h.generateToken(admin.ID, admin.Username)
+	token := h.generateToken(1, req.Username)
 	c.JSON(http.StatusOK, gin.H{
 		"token":    token,
-		"username": admin.Username,
+		"username": req.Username,
 		"message":  "登录成功",
 	})
 }
@@ -610,12 +602,15 @@ func (h *Handler) SaveSettings(c *gin.Context) {
 // GET /config/setting?key=strm
 func (h *Handler) GetSetting(c *gin.Context) {
 	key := c.Query("key")
-	var s model.Setting
-	if err := h.DB.Where("key = ?", key).First(&s).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{"key": key, "value": ""})
-		return
+	value := h.Config.GetSetting(key)
+	// 回退到数据库（兼容旧数据）
+	if value == "" {
+		var s model.Setting
+		if err := h.DB.Where("key = ?", key).First(&s).Error; err == nil {
+			value = s.Value
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"key": s.Key, "value": s.Value})
+	c.JSON(http.StatusOK, gin.H{"key": key, "value": value})
 }
 
 // SaveSetting 保存通用配置（key-value，value 为 JSON 字符串）
@@ -629,12 +624,9 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	var s model.Setting
-	if err := h.DB.Where("key = ?", req.Key).First(&s).Error; err != nil {
-		h.DB.Create(&model.Setting{Key: req.Key, Value: req.Value})
-	} else {
-		s.Value = req.Value
-		h.DB.Save(&s)
+	if err := h.Config.SaveSetting(req.Key, req.Value); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }

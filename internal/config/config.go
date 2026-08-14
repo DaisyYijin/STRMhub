@@ -9,6 +9,7 @@ type Config struct {
 	Port       int    // 管理后台端口
 	ProxyPort  int    // 302代理端口
 	DataDir    string // 数据目录
+	ConfigDir  string // 配置目录
 	JWTSecret  string // JWT密钥
 }
 
@@ -19,6 +20,7 @@ func Load() *Config {
 		Port:       port,
 		ProxyPort:  proxyPort,
 		DataDir:    getEnv("DATA_DIR", "/data"),
+		ConfigDir:  getEnv("CONFIG_DIR", "/config"),
 		JWTSecret:  getEnv("JWT_SECRET", "strmhub-secret-key"),
 	}
 }

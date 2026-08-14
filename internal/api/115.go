@@ -271,7 +271,8 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	cookie := strings.Join(parts, "; ")
 	log.Printf("[115] 扫码登录成功，获取 Cookie 长度=%d, 账号=%s", len(cookie), username)
 
-	// 写入或更新 Storage 表（type=115）
+	// 写入 Cookie 到文件 + 更新 Storage 表元数据
+	h.Config.SaveCookie(cookie)
 	h.upsert115Storage(cookie, sess.device, username)
 
 	h.dropQrSession(uid)
