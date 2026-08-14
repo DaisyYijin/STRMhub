@@ -3,9 +3,7 @@
 
 services:
   strmhub:
-    image: strmhub:latest
-    # 如需从源码构建，取消下面注释
-    # build: .
+    image: ghcr.io/daisyyijin/strmhub:latest
     container_name: strmhub
     restart: unless-stopped
     ports:
