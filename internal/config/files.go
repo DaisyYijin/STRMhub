@@ -118,6 +118,51 @@ func (c *Config) Save115Device(device string) error {
 	return os.WriteFile(filepath.Join(c.ConfigDir, "115-device.txt"), []byte(device), 0644)
 }
 
+// ===== 115 开放平台 Token（115-open-token.yaml）=====
+
+// OpenToken 115 开放平台 OAuth 凭证
+type OpenToken struct {
+	AppID        string `yaml:"app_id"`
+	AccessToken  string `yaml:"access_token"`
+	RefreshToken string `yaml:"refresh_token"`
+	ExpiresAt    int64  `yaml:"expires_at"` // unix 秒
+}
+
+// OpenTokenFile token 文件路径
+func (c *Config) OpenTokenFile() string {
+	return filepath.Join(c.ConfigDir, "115-open-token.yaml")
+}
+
+// LoadOpenToken 读取开放平台 token
+func (c *Config) LoadOpenToken() (*OpenToken, error) {
+	data, err := os.ReadFile(c.OpenTokenFile())
+	if err != nil {
+		return nil, err
+	}
+	var t OpenToken
+	if err := yaml.Unmarshal(data, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// SaveOpenToken 写入开放平台 token
+func (c *Config) SaveOpenToken(t *OpenToken) error {
+	data, err := yaml.Marshal(t)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.OpenTokenFile(), data, 0600)
+}
+
+// ClearOpenToken 清除开放平台 token（重新授权时用）
+func (c *Config) ClearOpenToken() error {
+	if err := os.Remove(c.OpenTokenFile()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // ===== 基础配置（setting.yaml）=====
 
 // SettingFile 通用键值配置（value 为 JSON 字符串，与前端兼容）

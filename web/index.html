@@ -692,8 +692,8 @@ av:
       <div class="card">
         <div class="form-row"><div class="label">Cookie文件路径<i class="help-tip">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button><button class="btn btn-warning" onclick="diagnose115()">诊断连接</button></div><div class="alert alert-success" id="acc-status-box" style="display:none;margin-top:8px"><span class="icon">✓</span> 账号：<span id="acc-username">-</span>，容量：<span id="acc-capacity">-</span></div></div></div>
         <div class="form-row"><div class="label">Cookie设备类型<i class="help-tip">?<span class="tip-bubble">推荐选择不常用的设备绑定（如TV端、小程序）。避免选常用设备导致被挤下线。Windows/Mac/Linux端已下架，不可用。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="115ios">115生活_iOS端</option><option value="115android" selected>115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option><option value="tv">115生活_TV端</option><option value="qandroid">115浏览器_Android端</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
-        <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip">?<span class="tip-bubble">使用 115 开放平台接口，不担心风控、性能更好。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用</div></div></div></div>
-        <div class="form-row"><div class="label">开放平台 AppID<i class="help-tip">?<span class="tip-bubble">在 115 开放平台（open.115.com）申请应用后获取。</span></i></div><div class="control"><input type="text" id="acc-appid" placeholder="请输入 115 开放平台 AppID"></div></div>
+        <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip">?<span class="tip-bubble">强烈推荐！使用 115 官方开放平台接口（同 LitePan/QMediaSync 方案），无 UA 风控、无"服务器开小差"，token 自动续期。Cookie 通道作为回退保留。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用(推荐)</div></div></div></div>
+        <div class="form-row"><div class="label">开放平台 AppID<i class="help-tip">?<span class="tip-bubble">在 115 开放平台（open.115.com）申请应用后获取。填入后点击"扫码授权"，用 115 App 扫码完成 OAuth 授权。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-appid" placeholder="请输入 115 开放平台 AppID" style="flex:1"><button class="btn btn-success" onclick="saveAccount().then(openQrCode)">保存并扫码授权</button></div></div></div>
         <div class="form-row"><div class="label">API请求间隔<i class="help-tip">?<span class="tip-bubble">设置 API 请求间隔可以减少风控概率。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="acc-interval" value="3.0" step="0.5" min="0.5" style="max-width:120px"><div class="input-suffix">秒</div></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveAccount()">保存配置</button> <button class="btn btn-warning" onclick="resetAccount()">重置配置</button></div></div>
       </div>
@@ -889,6 +889,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=13"></script>
+<script src="/js/app.js?v=14"></script>
 </body>
 </html>

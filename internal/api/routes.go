@@ -46,6 +46,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/storage/qrcode", h.CreateQrCode)
 		protected.POST("/storage/qrcode/status", h.QrCodeStatus)
 
+		// 115 开放平台扫码授权（OpenAPI）
+		protected.POST("/storage/open/qrcode", h.CreateOpenQrCode)
+		protected.POST("/storage/open/qrcode/status", h.OpenQrCodeStatus)
+
 		// 目录浏览
 		protected.GET("/storage/115/dirs", h.List115Dirs)
 		protected.GET("/storage/local/dirs", h.ListLocalDirs)
@@ -294,7 +298,7 @@ func (h *Handler) DeleteStorage(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// CheckStorage 检测 115 Cookie 可用性：调用 115 API 校验并返回账号名与容量
+// CheckStorage 检测 115 账号可用性：OpenAPI 优先，Cookie 回退
 func (h *Handler) CheckStorage(c *gin.Context) {
 	var req struct {
 		Type       string `json:"type"`
@@ -306,7 +310,32 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		return
 	}
 
-	// 获取 cookie：优先请求体传入 -> 配置文件 -> 数据库
+	// ===== OpenAPI 通道 =====
+	if oc := h.getOpen115(); oc != nil && oc.authorized() {
+		if err := oc.ping(); err != nil {
+			log.Printf("[115检查] OpenAPI 校验失败: %v", err)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"valid":   false,
+				"message": "OpenAPI 校验失败：" + err.Error(),
+			})
+			return
+		}
+		var storage model.Storage
+		name := "OpenAPI"
+		if err := h.DB.Where("type = ?", "115").First(&storage).Error; err == nil && storage.Name != "" {
+			name = storage.Name
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"username": name,
+			"capacity": "OpenAPI 通道（官方授权）",
+			"valid":    true,
+			"message":  "OpenAPI 授权有效",
+			"channel":  "OpenAPI",
+		})
+		return
+	}
+
+	// ===== Cookie 通道 =====
 	cookie := strings.TrimSpace(req.Cookie)
 	if cookie == "" {
 		cookie, _ = h.get115Cookie()
@@ -358,6 +387,7 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		"capacity": fmt.Sprintf("%s / %s", formatBytes(resp.Data.Used), formatBytes(resp.Data.Space)),
 		"valid":    true,
 		"message":  "Cookie 有效",
+		"channel":  "Cookie",
 	})
 }
 

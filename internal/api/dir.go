@@ -24,20 +24,19 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 		cid = "0"
 	}
 
-	// 统一使用 get115Cookie（文件优先 + DB 回退）+ 匹配设备类型的 UA
-	cookie, err := h.get115Cookie()
+	// 统一操作通道：OpenAPI 优先，Cookie 回退
+	ops, err := h.newPan115Ops()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	ua := h.get115UA()
 
-	dirs, err := fetch115Dirs(cookie, ua, cid)
+	dirs, err := ops.listDirs(cid)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid})
+	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName()})
 }
 
 // fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表（UA 需匹配登录设备）

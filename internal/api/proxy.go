@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"strmhub/internal/config"
-	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -82,22 +81,8 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 		return
 	}
 
-	// 获取 115 Cookie：优先文件，回退数据库
-	cookie := ""
-	if ck, err := cfg.LoadCookie(); err == nil && ck != "" {
-		cookie = ck
-	}
-	if cookie == "" {
-		var storage model.Storage
-		if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-			c.String(http.StatusServiceUnavailable, "115 账号未绑定")
-			return
-		}
-		cookie = storage.Cookie
-	}
-
-	// 获取下载链接
-	downloadURL, err := get115DownloadURL(pickcode, cookie)
+	// 获取下载链接：OpenAPI 优先，Cookie 回退
+	downloadURL, err := proxyDownloadURL(db, cfg, pickcode)
 	if err != nil {
 		log.Printf("302代理获取下载链接失败: %v", err)
 		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)

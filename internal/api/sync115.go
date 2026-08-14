@@ -108,10 +108,11 @@ func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, i
 }
 
 // walk115Dir 递归遍历目录，收集所有文件（路径为相对根目录的相对路径）
-func walk115Dir(cookie, cid, basePath string, out *[]remoteFile, exts map[string]bool, onLog func(string)) error {
+// ops 统一操作通道：OpenAPI 优先，Cookie 回退
+func walk115Dir(ops *pan115Ops, cid, basePath string, out *[]remoteFile, exts map[string]bool, onLog func(string)) error {
 	offset := 0
 	for {
-		entries, count, err := list115Entries(cookie, cid, offset)
+		entries, count, err := ops.listEntries(cid, offset)
 		if err != nil {
 			return err
 		}
@@ -121,7 +122,7 @@ func walk115Dir(cookie, cid, basePath string, out *[]remoteFile, exts map[string
 			if isDir {
 				// 递归进入子目录
 				subPath := path.Join(basePath, name)
-				if err := walk115Dir(cookie, fmt.Sprint(d["cid"]), subPath, out, exts, onLog); err != nil {
+				if err := walk115Dir(ops, fmt.Sprint(d["cid"]), subPath, out, exts, onLog); err != nil {
 					return err
 				}
 			} else {
@@ -505,19 +506,20 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		req.LocalPath = "/media"
 	}
 
-	cookie, err := h.get115Cookie()
+	// 读取 STRM 直链配置
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+
+	// 构造统一操作通道（OpenAPI 优先，Cookie 回退）
+	ops, err := h.newPan115Ops()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 读取 STRM 直链配置
-	domain, format, keepExt, skipExist := h.getStrmConfig()
-
 	// 递归遍历，收集视频文件
 	exts := buildExtSet(req.VideoExt)
 	var files []remoteFile
-	if err := walk115Dir(cookie, req.Cid, "", &files, exts, nil); err != nil {
+	if err := walk115Dir(ops, req.Cid, "", &files, exts, nil); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}
@@ -637,8 +639,8 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 		return
 	}
 
-	// Step 2: 获取 115 Cookie
-	cookie, err := h.get115Cookie()
+	// Step 2: 构造统一操作通道（OpenAPI 优先，Cookie 回退）
+	ops, err := h.newPan115Ops()
 	if err != nil {
 		steps = append(steps, gin.H{"step": "整理", "status": "失败", "message": err.Error()})
 		result["steps"] = steps
@@ -649,7 +651,7 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 
 	// Step 3: 运行整理引擎
 	logFn := func(msg string) { log.Println(msg) }
-	orgResults, successCount := runOrganizeEngine(cookie, orgCfg, logFn)
+	orgResults, successCount := runOrganizeEngine(ops, orgCfg, logFn)
 
 	totalFiles := len(orgResults)
 	existsCount := 0
@@ -690,7 +692,7 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 			exts = buildExtSet(syncCfg.VideoExt)
 		}
 		var files []remoteFile
-		if err := walk115Dir(cookie, orgCfg.Library, "", &files, exts, nil); err != nil {
+		if err := walk115Dir(ops, orgCfg.Library, "", &files, exts, nil); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
 			result["steps"] = steps
 			result["message"] = "整理完成，但同步失败"

@@ -341,11 +341,11 @@ type dirEntry struct {
 }
 
 // listPendingTopLevel 列出待整理目录下的顶层条目（不递归）
-func listPendingTopLevel(cookie, cid string) ([]dirEntry, error) {
+func listPendingTopLevel(ops *pan115Ops, cid string) ([]dirEntry, error) {
 	var entries []dirEntry
 	offset := 0
 	for {
-		raw, count, err := list115Entries(cookie, cid, offset)
+		raw, count, err := ops.listEntries(cid, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -371,11 +371,11 @@ func listPendingTopLevel(cookie, cid string) ([]dirEntry, error) {
 }
 
 // collectDirFiles 递归收集某个 cid 目录下的所有文件（包括子目录），返回带 fid 的列表
-func collectDirFiles(cookie, cid, basePath string) ([]remoteFile, error) {
+func collectDirFiles(ops *pan115Ops, cid, basePath string) ([]remoteFile, error) {
 	var files []remoteFile
 	offset := 0
 	for {
-		raw, count, err := list115Entries(cookie, cid, offset)
+		raw, count, err := ops.listEntries(cid, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -383,7 +383,7 @@ func collectDirFiles(cookie, cid, basePath string) ([]remoteFile, error) {
 			isDir := fmt.Sprint(d["f"]) == "0"
 			name := fmt.Sprint(d["n"])
 			if isDir {
-				subFiles, err := collectDirFiles(cookie, fmt.Sprint(d["cid"]), basePath+"/"+name)
+				subFiles, err := collectDirFiles(ops, fmt.Sprint(d["cid"]), basePath+"/"+name)
 				if err != nil {
 					return nil, err
 				}
@@ -411,7 +411,7 @@ func collectDirFiles(cookie, cid, basePath string) ([]remoteFile, error) {
 
 // runOrganizeEngine 整理引擎核心逻辑
 // 按目录级别整理：识别视频→分类→移动整个目录（视频+字幕+NFO+标准图片）到影视库
-func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]OrganizeResult, int) {
+func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]OrganizeResult, int) {
 	results := []OrganizeResult{}
 	successCount := 0
 
@@ -426,7 +426,7 @@ func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]Org
 	replaceRules := loadReplaceRules()
 
 	// 获取待整理目录下的顶层条目
-	topEntries, err := listPendingTopLevel(cookie, cfg.Pending)
+	topEntries, err := listPendingTopLevel(ops, cfg.Pending)
 	if err != nil {
 		onLog("✗ 遍历待整理目录失败: " + err.Error())
 		return results, 0
@@ -442,7 +442,7 @@ func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]Org
 	for _, entry := range topEntries {
 		if entry.IsDir {
 			// 子目录：收集所有文件，找到视频进行识别
-			subFiles, err := collectDirFiles(cookie, entry.Cid, entry.Name)
+			subFiles, err := collectDirFiles(ops, entry.Cid, entry.Name)
 			if err != nil {
 				onLog(fmt.Sprintf("✗ %s/ - 遍历失败: %v", entry.Name, err))
 				continue
@@ -450,7 +450,7 @@ func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]Org
 			if len(subFiles) == 0 {
 				continue
 			}
-			result := processDir(cookie, cfg, tc, replaceRules, entry, subFiles, onLog)
+			result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, onLog)
 			results = append(results, result...)
 			for _, r := range result {
 				if r.Status == "success" {
@@ -467,7 +467,7 @@ func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]Org
 				continue
 			}
 			f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size}
-			result := processSingleFile(cookie, cfg, tc, replaceRules, f, onLog)
+			result := processSingleFile(ops, cfg, tc, replaceRules, f, onLog)
 			results = append(results, result)
 			if result.Status == "success" {
 				successCount++
@@ -480,7 +480,7 @@ func runOrganizeEngine(cookie string, cfg *OrgConfig, onLog func(string)) ([]Org
 }
 
 // processDir 处理一个子目录（包含多个文件的影视目录）
-func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, dir dirEntry, files []remoteFile, onLog func(string)) []OrganizeResult {
+func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, dir dirEntry, files []remoteFile, onLog func(string)) []OrganizeResult {
 	var results []OrganizeResult
 
 	// 找出视频文件
@@ -497,7 +497,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 		for _, f := range files {
 			allFids = append(allFids, f.Fid)
 		}
-		if err := move115Files(cookie, cfg.Redundant, []string{dir.Fid}); err != nil {
+		if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到冗余失败: %v", dir.Name, err))
 		} else {
 			onLog(fmt.Sprintf("○ %s/ - 无视频文件，已移到冗余", dir.Name))
@@ -521,7 +521,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 	parsed := parseFileName(name)
 	if parsed.Title == "" {
 		// 无法识别，整个目录移到冗余
-		move115Files(cookie, cfg.Redundant, []string{dir.Fid})
+		ops.moveFiles(cfg.Redundant, []string{dir.Fid})
 		onLog(fmt.Sprintf("✗ %s/ - 无法提取标题，已移到冗余", dir.Name))
 		return results
 	}
@@ -529,7 +529,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
-		move115Files(cookie, cfg.Redundant, []string{dir.Fid})
+		ops.moveFiles(cfg.Redundant, []string{dir.Fid})
 		msg := "TMDB 未找到匹配"
 		if err != nil {
 			msg = "TMDB 识别失败: " + err.Error()
@@ -541,7 +541,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 	// 检查是否已存在
 	if checkExists(media) {
 		// 已存在 → 移到"已经存在"目录
-		if err := move115Files(cookie, cfg.Existing, []string{dir.Fid}); err != nil {
+		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 		} else {
 			onLog(fmt.Sprintf("○ %s/ → 已存在: %s (%s)，已移到已存在目录", dir.Name, media.Title, media.Year))
@@ -567,7 +567,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 	targetDir := category + "/" + pathDir(newPath)
 
 	// 在我的影视库创建目标目录
-	targetCid, err := ensure115Path(cookie, cfg.Library, targetDir)
+	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
 		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v", dir.Name, err))
 		return results
@@ -586,7 +586,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 
 	// 移动保留文件到影视库
 	if len(keepFids) > 0 {
-		if err := move115Files(cookie, targetCid, keepFids); err != nil {
+		if err := ops.moveFiles(targetCid, keepFids); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动文件失败: %v", dir.Name, err))
 			return results
 		}
@@ -594,9 +594,9 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 
 	// 移动无用文件到冗余
 	if len(junkFids) > 0 {
-		junkCid, err := ensure115Path(cookie, cfg.Redundant, dir.Name)
+		junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name)
 		if err == nil {
-			move115Files(cookie, junkCid, junkFids)
+			ops.moveFiles(junkCid, junkFids)
 		}
 	}
 
@@ -623,7 +623,7 @@ func processDir(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []Re
 }
 
 // processSingleFile 处理待整理目录下的顶层单独视频文件
-func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, onLog func(string)) OrganizeResult {
+func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, onLog func(string)) OrganizeResult {
 	result := OrganizeResult{FileName: f.Name}
 
 	// 应用替换规则
@@ -634,7 +634,7 @@ func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRul
 	parsed := parseFileName(name)
 	if parsed.Title == "" {
 		// 无法识别，移到冗余
-		move115Files(cookie, cfg.Redundant, []string{f.Fid})
+		ops.moveFiles(cfg.Redundant, []string{f.Fid})
 		result.Status = "failed"
 		result.Message = "无法提取标题，已移到冗余"
 		onLog(fmt.Sprintf("✗ %s - 无法提取标题，已移到冗余", f.Name))
@@ -644,7 +644,7 @@ func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRul
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
-		move115Files(cookie, cfg.Redundant, []string{f.Fid})
+		ops.moveFiles(cfg.Redundant, []string{f.Fid})
 		result.Status = "failed"
 		result.Message = "TMDB 识别失败，已移到冗余"
 		onLog(fmt.Sprintf("✗ %s - TMDB 识别失败，已移到冗余", f.Name))
@@ -658,7 +658,7 @@ func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRul
 
 	// 检查是否已存在
 	if checkExists(media) {
-		move115Files(cookie, cfg.Existing, []string{f.Fid})
+		ops.moveFiles(cfg.Existing, []string{f.Fid})
 		result.Status = "exists"
 		result.Message = fmt.Sprintf("已存在: %s (%s)，已移到已存在目录", media.Title, media.Year)
 		onLog(fmt.Sprintf("○ %s → 已存在: %s (%s)", f.Name, media.Title, media.Year))
@@ -671,7 +671,7 @@ func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRul
 	newPath := buildNewName(media, parsed, ext)
 	targetDir := category + "/" + pathDir(newPath)
 
-	targetCid, err := ensure115Path(cookie, cfg.Library, targetDir)
+	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
 		result.Status = "failed"
 		result.Message = "创建目录失败: " + err.Error()
@@ -679,7 +679,7 @@ func processSingleFile(cookie string, cfg *OrgConfig, tc *TmdbClient, replaceRul
 		return result
 	}
 
-	if err := move115Files(cookie, targetCid, []string{f.Fid}); err != nil {
+	if err := ops.moveFiles(targetCid, []string{f.Fid}); err != nil {
 		result.Status = "failed"
 		result.Message = "移动文件失败: " + err.Error()
 		onLog(fmt.Sprintf("✗ %s - 移动失败: %v", f.Name, err))

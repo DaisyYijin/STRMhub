@@ -441,9 +441,32 @@ function genDirTree() { toast('目录树生成工具开发中'); }
 
 // ==================== 115 扫码登录 ====================
 let qrcodeTimer = null;
+let qrPollApi = '/storage/qrcode';  // 当前轮询接口（OpenAPI 启用时切换）
 async function openQrCode() {
   document.getElementById('qrcode-modal').style.display = 'flex';
   document.getElementById('qrcode-img').innerHTML = '二维码加载中...';
+  // OPENAPI 启用且填了 AppID → 走开放平台授权；否则走 Cookie 扫码
+  const appid = (document.getElementById('acc-appid') || {}).value || '';
+  if (openapiEnabled && appid.trim()) {
+    qrPollApi = '/storage/open/qrcode';
+    document.getElementById('qrcode-status').textContent = '正在获取开放平台授权二维码...';
+    try {
+      const data = await api('/storage/open/qrcode', { method: 'POST', body: JSON.stringify({ type: '115', app_id: appid.trim() }) });
+      if (data.qrcode) {
+        document.getElementById('qrcode-img').innerHTML = `<img src="${data.qrcode}" style="width:170px;height:170px">`;
+        document.getElementById('qrcode-status').textContent = '请使用 115 手机 App 扫码（开放平台授权）';
+        startQrCodePolling(data.uid, data.time, data.sign);
+      } else {
+        document.getElementById('qrcode-img').innerHTML = '获取二维码失败';
+        document.getElementById('qrcode-status').textContent = data.error || '请稍后重试';
+      }
+    } catch (e) {
+      document.getElementById('qrcode-img').innerHTML = '<div style="padding:40px 0;color:var(--text-3)">二维码获取失败</div>';
+      document.getElementById('qrcode-status').textContent = e.message || '请稍后重试';
+    }
+    return;
+  }
+  qrPollApi = '/storage/qrcode';
   document.getElementById('qrcode-status').textContent = '正在获取登录二维码...';
   try {
     const device = document.getElementById('acc-device').value;
@@ -470,7 +493,7 @@ function startQrCodePolling(uid, time, sign) {
   (async function poll() {
     if (qrcodeTimer !== session) return;   // 已关闭或新会话
     try {
-      const data = await api('/storage/qrcode/status', { method: 'POST', body: JSON.stringify({ uid, time, sign }) });
+      const data = await api(qrPollApi + '/status', { method: 'POST', body: JSON.stringify({ uid, time, sign }) });
       if (qrcodeTimer !== session) return;
       errCount = 0;  // 成功则重置退避
       const status = data.status;
