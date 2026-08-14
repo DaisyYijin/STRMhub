@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -14,6 +15,21 @@ import (
 )
 
 func main() {
+	// 命令行参数：--reset-admin 重置管理员密码（不丢失其他配置）
+	if len(os.Args) > 1 && os.Args[1] == "--reset-admin" {
+		cfg := config.Load()
+		dbPath := filepath.Join(cfg.DataDir, "strmhub.db")
+		db, err := model.InitDB(dbPath)
+		if err != nil {
+			log.Fatalf("数据库打开失败: %v", err)
+		}
+		if err := model.ResetAdmin(db); err != nil {
+			log.Fatalf("重置失败: %v", err)
+		}
+		fmt.Println("管理员账号已重置，所有配置已保留。请重新启动程序并注册新账号。")
+		return
+	}
+
 	// 初始化配置
 	cfg := config.Load()
 	log.Printf("StrmHub 启动中... 管理端口:%d 代理端口:%d", cfg.Port, cfg.ProxyPort)

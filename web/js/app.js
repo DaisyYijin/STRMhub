@@ -135,7 +135,6 @@ function showAuth(mode) {
   const isReg = mode === 'register';
   document.getElementById('auth-heading').textContent = isReg ? '首次部署，注册管理员' : '请输入账号密码登录';
   document.getElementById('auth-submit').textContent = isReg ? '注册' : '登录';
-  document.getElementById('auth-switch').textContent = isReg ? '返回登录' : '注册账号';
   document.getElementById('auth-confirm-row').style.display = isReg ? 'block' : 'none';
 }
 
@@ -1085,10 +1084,7 @@ function closeLog() {
 // ==================== 初始化 ====================
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('auth-form').addEventListener('submit', handleAuth);
-  document.getElementById('auth-switch').addEventListener('click', () => {
-    const mode = document.getElementById('auth-mode').value;
-    showAuth(mode === 'register' ? 'login' : 'register');
-  });
+  // auth-switch 已移除
   document.querySelectorAll('.menu-item').forEach(item => {
     item.addEventListener('click', () => showPage(item.dataset.page));
   });

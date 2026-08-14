@@ -170,6 +170,11 @@ func IsInitialized(db *gorm.DB) (bool, error) {
 	return count > 0, nil
 }
 
+// ResetAdmin 删除管理员账号（保留所有其他配置），用于忘记密码时重置
+func ResetAdmin(db *gorm.DB) error {
+	return db.Where("1 = 1").Delete(&Admin{}).Error
+}
+
 // InitDefaultCategories 初始化 CMS 风格的默认二级分类（首次使用时调用）
 func InitDefaultCategories(db *gorm.DB) error {
 	var count int64
