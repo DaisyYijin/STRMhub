@@ -50,6 +50,11 @@ func httpGet115(api string, query url.Values, cookie string, timeout time.Durati
 // httpGet115UA 带 Cookie 和自定义 UA 的 GET 请求
 // UA 必须和扫码登录时的设备类型匹配，否则 115 返回"服务器开小差了"
 func httpGet115UA(api string, query url.Values, cookie, ua string, timeout time.Duration) ([]byte, error) {
+	return httpGet115Full(api, query, cookie, ua, timeout, nil)
+}
+
+// httpGet115Full 完整版请求：可自定义 UA 和额外请求头
+func httpGet115Full(api string, query url.Values, cookie, ua string, timeout time.Duration, extraHeaders map[string]string) ([]byte, error) {
 	if ua == "" {
 		ua = ua115
 	}
@@ -64,6 +69,13 @@ func httpGet115UA(api string, query url.Values, cookie, ua string, timeout time.
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Referer", "https://115.com/")
 	req.Header.Set("Cookie", cookie)
+	// 模拟真实浏览器/AJAX 请求的关键头
+	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)

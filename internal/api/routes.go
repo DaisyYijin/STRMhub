@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"strmhub/internal/config"
@@ -95,6 +96,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/settings", h.GetSettings)
 		protected.POST("/settings", h.SaveSettings)
 		protected.GET("/system/logs", h.GetSystemLogs)
+		protected.GET("/storage/115/diagnose", h.Diagnose115)
 	}
 }
 
@@ -678,6 +680,57 @@ func (h *Handler) GetSystemLogs(c *gin.Context) {
 		start = len(lines) - 200
 	}
 	c.JSON(http.StatusOK, gin.H{"logs": strings.Join(lines[start:], "\n")})
+}
+
+// Diagnose115 诊断 115 连接问题：尝试多种 UA 组合，定位风控/UA/Cookie 问题
+// GET /storage/115/diagnose
+func (h *Handler) Diagnose115(c *gin.Context) {
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 多种 UA 组合测试
+	uas := map[string]string{
+		"115Browser(网页)": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 115Browser/27.0.3.7",
+		"Chrome浏览器":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+		"115App_Android": "Mozilla/5.0 (Linux; Android 13; 2107113SR) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0",
+		"115App_iOS":     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 115App/30.0.0",
+		"当前设备UA":          h.get115UA(),
+	}
+
+	results := gin.H{}
+	query := url.Values{
+		"aid": {"1"}, "cid": {"0"}, "o": {"user_ptime"}, "asc": {"0"},
+		"offset": {"0"}, "show_dir": {"1"}, "limit": {"50"},
+		"natsort": {"1"}, "format": {"json"}, "fc_mix": {"0"},
+	}
+
+	for name, ua := range uas {
+		body, err := httpGet115Full(fileListAPI, query, cookie, ua, 15*time.Second, nil)
+		if err != nil {
+			results[name] = gin.H{"ok": false, "error": err.Error()}
+			continue
+		}
+		var r struct {
+			State bool   `json:"state"`
+			Error string `json:"error"`
+			Count int    `json:"count"`
+		}
+		json.Unmarshal(body, &r)
+		results[name] = gin.H{
+			"ok":    r.State,
+			"error": r.Error,
+			"count": r.Count,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"cookie_len": len(cookie),
+		"results":    results,
+		"hint":       "如果所有 UA 都失败且 error=服务器开小差了，通常是服务器 IP 被 115 风控（机房 IP 常见）。请在本地电脑用相同 Cookie 测试：如果本地成功、服务器失败，即可确认是 IP 问题。",
+	})
 }
 
 // GetSetting 获取通用配置
