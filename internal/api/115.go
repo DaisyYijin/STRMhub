@@ -339,7 +339,29 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	}
 	if len(result.Data.Cookie) == 0 {
 		log.Printf("[115] 登录结果未包含 Cookie, 响应: %s", string(body))
-		return "", "", "", fmt.Errorf("登录成功但未获取到 Cookie")
+		// 透传 115 的真实错误（如 40101004 IP登录异常），前端据此停止重试
+		var e struct {
+			Error string `json:"error"`
+			ErrNo int    `json:"errno"`
+			Code  int    `json:"code"`
+		}
+		msg := "登录成功但未获取到 Cookie"
+		if json.Unmarshal(body, &e) == nil {
+			if e.Error != "" {
+				msg = "115 拒绝登录：" + e.Error
+				code := e.ErrNo
+				if code == 0 {
+					code = e.Code
+				}
+				if code != 0 {
+					msg += fmt.Sprintf("（%d）", code)
+				}
+				if code == 40101004 {
+					msg += "。IP 已被 115 临时风控：请停止重试等待数小时，或为服务器更换出口 IP 后再扫码"
+				}
+			}
+		}
+		return "", "", "", fmt.Errorf("%s", msg)
 	}
 
 	// 拼 Cookie 字符串：UID=...; CID=...; SEID=...; KID=...

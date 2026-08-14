@@ -536,11 +536,17 @@ function startQrCodePolling(uid, time, sign) {
       }
     } catch (e) {
       if (qrcodeTimer !== session) return;
-      // 指数退避：1s/2s/4s/8s... 上限 30s，防止高频轰炸 115
-      errCount++;
-      const delay = Math.min(30000, 1000 * Math.pow(2, errCount - 1));
-      document.getElementById('qrcode-status').textContent = '网络波动，' + (delay / 1000) + ' 秒后重试...';
-      setTimeout(poll, delay);
+      // 网络故障（fetch 抛 TypeError）才退避重试；服务端返回的错误（如 115 拒绝登录/IP风控）
+      // 属于确定性失败，重试只会加重风控，直接展示并停止
+      if (e instanceof TypeError) {
+        errCount++;
+        const delay = Math.min(30000, 1000 * Math.pow(2, errCount - 1));
+        document.getElementById('qrcode-status').textContent = '网络波动，' + (delay / 1000) + ' 秒后重试...';
+        setTimeout(poll, delay);
+      } else {
+        qrcodeTimer = null;  // 停止轮询
+        document.getElementById('qrcode-status').textContent = e.message || '登录失败';
+      }
     }
   })();
 }
