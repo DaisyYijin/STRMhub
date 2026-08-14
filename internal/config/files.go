@@ -104,6 +104,20 @@ func (c *Config) SaveCookie(cookie string) error {
 	return os.WriteFile(c.CookieFile(), []byte(cookie), 0600)
 }
 
+// Load115Device 读取 115 登录设备类型（115-device.txt）
+func (c *Config) Load115Device() string {
+	data, err := os.ReadFile(filepath.Join(c.ConfigDir, "115-device.txt"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// Save115Device 写入 115 登录设备类型
+func (c *Config) Save115Device(device string) error {
+	return os.WriteFile(filepath.Join(c.ConfigDir, "115-device.txt"), []byte(device), 0644)
+}
+
 // ===== 基础配置（setting.yaml）=====
 
 // SettingFile 通用键值配置（value 为 JSON 字符串，与前端兼容）

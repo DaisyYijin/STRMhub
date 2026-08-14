@@ -66,6 +66,24 @@ func mapDeviceToApp(device string) string {
 	}
 }
 
+// deviceToUA 根据设备类型返回对应的 User-Agent
+// 关键：UA 必须和扫码登录时的设备类型一致，否则 115 返回"服务器开小差了"
+func deviceToUA(device string) string {
+	switch device {
+	case "115android", "qandroid":
+		return "Mozilla/5.0 (Linux; Android 13; 2107113SR) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
+	case "115ios":
+		return "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 115App/30.0.0"
+	case "tv":
+		return "Mozilla/5.0 (Linux; Android 9; ASUS_Z01QD Build/PQ1A.181105.004.A00; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
+	case "alipaymini", "wechatmini":
+		return "Mozilla/5.0 (Linux; Android 13; 2107113SR; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36 115App/30.0.0"
+	default:
+		// web / 未知设备：用 115Browser
+		return ua115
+	}
+}
+
 type qrTokenResp struct {
 	Data struct {
 		Uid  string `json:"uid"`
@@ -313,8 +331,9 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	log.Printf("[115] 扫码登录成功，Cookie长度=%d (JSON=%d, SetCookie=%d), 账号=%s",
 		len(cookie), len(cookieFromJSON), len(respCookies), username)
 
-	// 写入 Cookie 到文件 + 更新 Storage 表元数据
+	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)
+	h.Config.Save115Device(sess.device)
 	h.upsert115Storage(cookie, sess.device, username)
 
 	h.dropQrSession(uid)

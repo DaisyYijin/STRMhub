@@ -315,11 +315,11 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[115检查] Cookie长度=%d, 包含KID=%v", len(cookie), strings.Contains(cookie, "KID="))
+	log.Printf("[115检查] Cookie长度=%d, UA=%.60s...", len(cookie), h.get115UA())
 
-	// 调用 115 用户信息接口校验 Cookie
+	// 调用 115 用户信息接口校验 Cookie（UA 与登录设备匹配）
 	const settingStatusAPI = "https://proapi.115.com/android/2.0/user/setting_status"
-	body, err := httpGet115(settingStatusAPI, nil, cookie, 15*time.Second)
+	body, err := httpGet115UA(settingStatusAPI, nil, cookie, h.get115UA(), 15*time.Second)
 	if err != nil {
 		log.Printf("[115检查] 调用失败: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{

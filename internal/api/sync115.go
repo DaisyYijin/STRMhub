@@ -42,8 +42,17 @@ type remoteFile struct {
 	Size  int64  `json:"size"`
 }
 
-// httpGet115 带 Cookie 的 GET 请求
+// httpGet115 带 Cookie 的 GET 请求（使用默认 UA）
 func httpGet115(api string, query url.Values, cookie string, timeout time.Duration) ([]byte, error) {
+	return httpGet115UA(api, query, cookie, "", timeout)
+}
+
+// httpGet115UA 带 Cookie 和自定义 UA 的 GET 请求
+// UA 必须和扫码登录时的设备类型匹配，否则 115 返回"服务器开小差了"
+func httpGet115UA(api string, query url.Values, cookie, ua string, timeout time.Duration) ([]byte, error) {
+	if ua == "" {
+		ua = ua115
+	}
 	full := api
 	if len(query) > 0 {
 		full = api + "?" + query.Encode()
@@ -52,7 +61,7 @@ func httpGet115(api string, query url.Values, cookie string, timeout time.Durati
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", ua115)
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Referer", "https://115.com/")
 	req.Header.Set("Cookie", cookie)
 
@@ -296,6 +305,19 @@ func (h *Handler) get115Cookie() (string, error) {
 		return "", fmt.Errorf("尚未绑定 115 账号，请先在「115账号」页扫码登录")
 	}
 	return storage.Cookie, nil
+}
+
+// get115UA 返回与登录设备匹配的 User-Agent
+func (h *Handler) get115UA() string {
+	device := h.Config.Load115Device()
+	if device == "" {
+		// 回退到数据库
+		var storage model.Storage
+		if err := h.DB.Where("type = ?", "115").First(&storage).Error; err == nil && storage.Device != "" {
+			device = storage.Device
+		}
+	}
+	return deviceToUA(device)
 }
 
 // buildExtSet 把后缀列表（如 ["mp4","mkv"]）转成 map[".mp4"]=true

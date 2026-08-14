@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,14 +24,15 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 		cid = "0"
 	}
 
-	// 统一使用 get115Cookie（文件优先 + DB 回退）
+	// 统一使用 get115Cookie（文件优先 + DB 回退）+ 匹配设备类型的 UA
 	cookie, err := h.get115Cookie()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	ua := h.get115UA()
 
-	dirs, err := fetch115Dirs(cookie, cid)
+	dirs, err := fetch115Dirs(cookie, ua, cid)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -40,16 +40,15 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid})
 }
 
-// fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表
-func fetch115Dirs(cookie, cid string) ([]gin.H, error) {
+// fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表（UA 需匹配登录设备）
+func fetch115Dirs(cookie, ua, cid string) ([]gin.H, error) {
 	if cookie == "" {
 		return nil, fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
-	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, 包含KID=%v", cid, len(cookie), strings.Contains(cookie, "KID="))
+	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, UA=%.60s...", cid, len(cookie), ua)
 
-	// 复用 httpGet115 统一请求头处理
 	query := build115FileQuery(cid, 0)
-	body, err := httpGet115(fileListAPI, query, cookie, 20*time.Second)
+	body, err := httpGet115UA(fileListAPI, query, cookie, ua, 20*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("访问 115 目录失败: %v", err)
 	}
