@@ -1,8 +1,10 @@
 # 多阶段构建：编译 Go 二进制
-FROM golang:1.22-alpine AS builder
+# --platform=$BUILDPLATFORM 让 builder 始终以宿主原生架构运行（CI 上是 amd64），
+# 所有 RUN 不经过 QEMU；配合 GOARCH=$TARGETARCH 交叉编译出目标架构二进制。
+# 若不固定 BUILDPLATFORM，arm64 构建的 RUN 会在 QEMU 模拟的 arm64 容器里执行，极慢
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
 
-# buildx 多架构构建时自动注入目标架构（amd64/arm64）。
-# Go 交叉编译在 x86 上原生执行，避免 QEMU 模拟编译导致构建极慢
+# buildx 多架构构建时自动注入目标架构（amd64/arm64）
 ARG TARGETARCH
 
 WORKDIR /build
