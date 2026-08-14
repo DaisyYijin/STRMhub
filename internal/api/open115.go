@@ -861,7 +861,7 @@ func (o *pan115Ops) listDirs(cid string) ([]gin.H, error) {
 	if o.open != nil {
 		return o.open.listDirs(cid)
 	}
-	return fetch115Dirs(o.cookie, ua115, cid)
+	return fetch115Dirs(o.cookie, ua115Unified(), cid)
 }
 
 // mkdir 创建目录

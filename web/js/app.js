@@ -12,7 +12,7 @@ async function api(path, options = {}) {
     },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || '请求失败');
+  if (!res.ok) throw new Error(data.message || data.error || '请求失败');
   return data;
 }
 
@@ -538,13 +538,12 @@ function setOpenapi(val) {
 }
 
 function checkCookie() {
-  const path = document.getElementById('acc-cookie-path').value;
-  if (!path) { toast('请先填写 cookie 文件路径'); return; }
+  // 后端使用扫码登录后保存的 Cookie 进行检测，无需 cookie 文件路径
   toast('正在检测 Cookie 可用性...');
-  api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115', cookie_path: path }) })
+  api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115' }) })
     .then(data => {
       if (!data.valid) {
-        toast('Cookie 无效或已过期：' + (data.message || ''));
+        toast('Cookie 无效：' + (data.message || '未知原因'));
         return;
       }
       const box = document.getElementById('acc-status-box');

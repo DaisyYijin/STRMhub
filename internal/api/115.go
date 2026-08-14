@@ -28,12 +28,18 @@ import (
 // 状态码：0=等待扫码，1=已扫码待确认，2=已确认登录，-1=已过期，-2=已取消
 
 const (
-	ua115        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 115Browser/27.0.3.7"
 	tokenAPI     = "https://qrcodeapi.115.com/api/1.0/web/1.0/token/"
 	qrcodeImgAPI = "https://qrcodeapi.115.com/api/1.0/mac/1.0/qrcode"
 	statusAPI    = "https://qrcodeapi.115.com/get/status/"
 	resultAPI    = "https://passportapi.115.com/app/1.0/%s/1.0/login/qrcode/"
 )
+
+// ua115Unified Cookie 通道统一 User-Agent（OpenList/115driver 生产验证组合）
+// 115 会把 Cookie 会话与登录时的 UA 绑定：登录、列目录、检查、下载必须全程同一个 UA，
+// 且必须是真实客户端 UA。"浏览器UA+115Browser后缀"的混合 UA 会被风控拒绝（服务器开小差了）。
+func ua115Unified() string {
+	return "Mozilla/5.0 115Browser/" + getAppVerCached()
+}
 
 // qrSession 保存 uid -> app 映射，供轮询时获取登录结果
 type qrSession struct {
@@ -66,21 +72,18 @@ func mapDeviceToApp(device string) string {
 	}
 }
 
-// deviceToUA 根据 AList/115driver 标准生成 User-Agent
-// 关键发现：115 服务端只认极简自家客户端 UA（如 "Mozilla/5.0 115Browser/27.0.5.7"），
-// 完整浏览器 UA（带 Windows/Chrome 前缀）会被风控拒绝返回"服务器开小差了"
+// deviceToUA 返回 Cookie 通道统一 UA
+// 115 会话与 UA 绑定而非与设备绑定（OpenList/115driver 对所有 app 类型的 Cookie
+// 都统一使用 "Mozilla/5.0 115Browser/{版本}" 访问 webapi），此处保持一致。
 func deviceToUA(device string) string {
-	// 所有 webapi.115.com 请求统一用 115Browser UA（与 Cookie 设备类型无关）
-	// 参考 SheltonZhu/115driver: UA115Browser = "Mozilla/5.0 115Browser/27.0.5.7"
-	ver := getAppVerCached()
-	return "Mozilla/5.0 115Browser/" + ver
+	return ua115Unified()
 }
 
 // appVer 缓存的 115 客户端版本号
 var (
 	appVerMu   sync.RWMutex
-	appVerVal  = "27.0.5.7" // 默认值（115driver 库的同款默认）
-	appVerTime time.Time    // 上次刷新时间
+	appVerVal  = "36.0.0" // 默认值（115driver 库的同款默认）
+	appVerTime time.Time  // 上次刷新时间
 )
 
 // getAppVerCached 获取 115 客户端版本号（1 小时缓存）
@@ -170,7 +173,7 @@ func httpGetJSON(api string, query url.Values, timeout time.Duration) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", ua115)
+	req.Header.Set("User-Agent", ua115Unified())
 	req.Header.Set("Referer", "https://115.com/")
 
 	client := &http.Client{Timeout: timeout}
@@ -306,7 +309,8 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("User-Agent", ua115)
+	// 登录换 Cookie 的 UA 必须与后续所有 webapi 请求一致（会话与 UA 绑定）
+	req.Header.Set("User-Agent", ua115Unified())
 	req.Header.Set("Referer", "https://115.com/")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -361,7 +365,7 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 	}
 	cookie := strings.Join(cookieParts, "; ")
 
-	log.Printf("[115] 扫码登录成功，Cookie长度=%d 字段数=%d, 账号=%s", len(cookie), len(cookieParts), username)
+	log.Printf("[115] 扫码登录成功，Cookie长度=%d 字段数=%d, 账号=%s, 统一UA=%s", len(cookie), len(cookieParts), username, ua115Unified())
 
 	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)

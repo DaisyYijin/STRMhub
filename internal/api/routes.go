@@ -345,14 +345,15 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[115检查] Cookie长度=%d, UA=%.60s...", len(cookie), h.get115UA())
+	log.Printf("[115检查] Cookie长度=%d, UA=%s", len(cookie), ua115Unified())
 
-	// 调用 115 用户信息接口校验 Cookie（UA 与登录设备匹配）
-	const settingStatusAPI = "https://proapi.115.com/android/2.0/user/setting_status"
-	body, err := httpGet115UA(settingStatusAPI, nil, cookie, h.get115UA(), 15*time.Second)
+	// 用 web 端用户信息接口校验 Cookie（my.115.com nav，115driver ApiUserInfo 同款）
+	// 注意：不能用 proapi.115.com/android/* 的 App 专用接口，那些接口要求对应 App 的 UA
+	const navAPI = "https://my.115.com/?ct=ajax&ac=nav"
+	body, err := httpGet115UA(navAPI, nil, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
 		log.Printf("[115检查] 调用失败: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"valid":   false,
 			"message": "调用 115 接口失败：" + err.Error(),
 		})
@@ -360,31 +361,65 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 	}
 
 	var resp struct {
-		State int `json:"state"`
-		Data  struct {
-			Username string `json:"username"`
-			Space    int64  `json:"space"`
-			Used     int64  `json:"used"`
-		} `json:"data"`
+		State bool            `json:"state"`
+		Error string          `json:"error"`
+		Data  json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"valid":   false,
 			"message": "解析 115 响应失败",
 		})
 		return
 	}
-	if resp.State != 0 || resp.Data.Username == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
+	// state=false 时 data 可能是 []，仅在 state=true 时解析用户信息
+	var userName string
+	if resp.State && len(resp.Data) > 0 {
+		var d struct {
+			UserName string `json:"user_name"`
+		}
+		_ = json.Unmarshal(resp.Data, &d)
+		userName = d.UserName
+	}
+	if !resp.State || userName == "" {
+		msg := resp.Error
+		if msg == "" {
+			msg = "Cookie 无效或已过期"
+		}
+		c.JSON(http.StatusOK, gin.H{
 			"valid":   false,
-			"message": "Cookie 无效或已过期",
+			"message": msg + "，请重新扫码登录",
 		})
 		return
 	}
 
+	// 容量信息（webapi files/index_info，115driver GetInfo 同款）
+	capacity := "-"
+	const infoAPI = "https://webapi.115.com/files/index_info"
+	if infoBody, err := httpGet115UA(infoAPI, nil, cookie, ua115Unified(), 15*time.Second); err == nil {
+		var info struct {
+			State bool `json:"state"`
+			Data  struct {
+				SpaceInfo struct {
+					AllTotal struct {
+						Size int64  `json:"size"`
+						Fmt  string `json:"size_format"`
+					} `json:"all_total"`
+					AllUse struct {
+						Size int64  `json:"size"`
+						Fmt  string `json:"size_format"`
+					} `json:"all_use"`
+				} `json:"space_info"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(infoBody, &info) == nil && info.State && info.Data.SpaceInfo.AllTotal.Size > 0 {
+			capacity = fmt.Sprintf("%s / %s", formatBytes(info.Data.SpaceInfo.AllUse.Size), formatBytes(info.Data.SpaceInfo.AllTotal.Size))
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"username": resp.Data.Username,
-		"capacity": fmt.Sprintf("%s / %s", formatBytes(resp.Data.Used), formatBytes(resp.Data.Space)),
+		"username": userName,
+		"capacity": capacity,
 		"valid":    true,
 		"message":  "Cookie 有效",
 		"channel":  "Cookie",
@@ -722,10 +757,10 @@ func (h *Handler) Diagnose115(c *gin.Context) {
 
 	// 多种 UA 组合测试（按 115driver 标准格式优先）
 	uas := map[string]string{
-		"115Browser动态版本": "Mozilla/5.0 115Browser/" + getAppVerCached(),
-		"115Browser默认":   "Mozilla/5.0 115Browser/27.0.5.7",
-		"115disk":        "Mozilla/5.0 115disk/30.1.0",
-		"旧版完整浏览器UA":      ua115,
+		"统一UA(当前使用)":    ua115Unified(),
+		"115Browser默认": "Mozilla/5.0 115Browser/27.0.5.7",
+		"115disk":       "Mozilla/5.0 115disk/30.1.0",
+		"Chrome浏览器UA":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 	}
 
 	results := gin.H{}

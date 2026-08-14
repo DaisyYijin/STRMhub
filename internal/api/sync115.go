@@ -57,7 +57,7 @@ func httpGet115UA(api string, query url.Values, cookie, ua string, timeout time.
 func httpGet115Full(api string, query url.Values, cookie, ua string, timeout time.Duration, extraHeaders map[string]string) ([]byte, error) {
 	throttle115(api) // 全局节流，防止触发 115 风控
 	if ua == "" {
-		ua = ua115
+		ua = ua115Unified()
 	}
 	full := api
 	if len(query) > 0 {
@@ -160,7 +160,7 @@ func httpPostForm115(api string, form url.Values, cookie string, timeout time.Du
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", ua115)
+	req.Header.Set("User-Agent", ua115Unified())
 	req.Header.Set("Referer", "https://115.com/")
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"time"
 
@@ -111,11 +112,16 @@ func build115FileQuery(cid string, offset int) url.Values {
 
 // ListLocalDirs 浏览本地文件系统目录
 // GET /storage/local/dirs?path=C:\media
+// 注意：浏览的是 StrmHub 进程所在机器（Docker 部署时是容器内文件系统，卷挂载点也在其中）
 func (h *Handler) ListLocalDirs(c *gin.Context) {
 	path := c.Query("path")
 	if path == "" {
-		// 空路径时返回盘符列表（Windows）
-		c.JSON(http.StatusOK, gin.H{"data": listWindowsDrives(), "path": ""})
+		// 空路径时返回顶层：Windows 枚举盘符，Linux/Docker 列根目录
+		if runtime.GOOS == "windows" {
+			c.JSON(http.StatusOK, gin.H{"data": listWindowsDrives(), "path": ""})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": listUnixRootDirs(), "path": ""})
 		return
 	}
 
@@ -151,4 +157,20 @@ func listWindowsDrives() []gin.H {
 		}
 	}
 	return drives
+}
+
+// listUnixRootDirs 列出 Linux/Docker 根目录下的文件夹（/media、/data 等挂载点在此可见）
+func listUnixRootDirs() []gin.H {
+	entries, err := os.ReadDir("/")
+	if err != nil {
+		return []gin.H{}
+	}
+	dirs := make([]gin.H, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, gin.H{"path": "/" + e.Name(), "name": e.Name()})
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool { return fmt.Sprint(dirs[i]["name"]) < fmt.Sprint(dirs[j]["name"]) })
+	return dirs
 }
