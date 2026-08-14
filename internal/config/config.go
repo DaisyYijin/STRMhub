@@ -18,7 +18,7 @@ func Load() *Config {
 	return &Config{
 		Port:       port,
 		ProxyPort:  proxyPort,
-		DataDir:    getEnv("DATA_DIR", "./data"),
+		DataDir:    getEnv("DATA_DIR", "/data"),
 		JWTSecret:  getEnv("JWT_SECRET", "strmhub-secret-key"),
 	}
 }

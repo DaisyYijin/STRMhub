@@ -26,11 +26,8 @@ COPY --from=builder /build/strmhub .
 # 复制前端静态资源
 COPY --from=builder /build/web ./web
 
-# 创建数据目录
-RUN mkdir -p /app/data
-
 EXPOSE 6060 6086
 
-VOLUME ["/app/data", "/media"]
+VOLUME ["/data", "/media"]
 
 ENTRYPOINT ["./strmhub"]
