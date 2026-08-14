@@ -272,8 +272,46 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, error) {
 			parts = append(parts, k+"="+sv)
 		}
 	}
-	cookie := strings.Join(parts, "; ")
-	log.Printf("[115] 扫码登录成功，获取 Cookie 长度=%d, 账号=%s", len(cookie), username)
+	cookieFromJSON := strings.Join(parts, "; ")
+
+	// 合并 HTTP 响应头中的 Set-Cookie（包含 Session 等额外字段）
+	respCookies := map[string]string{}
+	for _, sc := range resp.Cookies() {
+		if sc.Name != "" {
+			respCookies[sc.Name] = sc.Value
+		}
+	}
+	// 将 JSON body 中的 cookie 和 Set-Cookie 头合并（JSON 优先，因为它是完整的登录凭证）
+	merged := make(map[string]string)
+	for k, v := range respCookies {
+		merged[k] = v
+	}
+	// 用 JSON body 的值覆盖（UID/CID/SEID/KID 来自 body）
+	for _, p := range parts {
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) == 2 {
+			merged[kv[0]] = kv[1]
+		}
+	}
+	// 重新按固定顺序拼接
+	cookieKeys := []string{"UID", "CID", "SEID", "KID"}
+	cookieParts := make([]string, 0, len(merged))
+	added := make(map[string]bool)
+	for _, k := range cookieKeys {
+		if v, ok := merged[k]; ok && v != "" {
+			cookieParts = append(cookieParts, k+"="+v)
+			added[k] = true
+		}
+	}
+	for k, v := range merged {
+		if !added[k] && v != "" {
+			cookieParts = append(cookieParts, k+"="+v)
+		}
+	}
+	cookie := strings.Join(cookieParts, "; ")
+
+	log.Printf("[115] 扫码登录成功，Cookie长度=%d (JSON=%d, SetCookie=%d), 账号=%s",
+		len(cookie), len(cookieFromJSON), len(respCookies), username)
 
 	// 写入 Cookie 到文件 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)

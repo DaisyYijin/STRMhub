@@ -1080,9 +1080,21 @@ function appendLog(line) {
 }
 function openLog() {
   document.getElementById('log-modal').style.display = 'flex';
+  loadSystemLogs();
 }
 function closeLog() {
   document.getElementById('log-modal').style.display = 'none';
+}
+async function loadSystemLogs() {
+  const viewer = document.getElementById('log-viewer');
+  viewer.textContent = '加载中...';
+  try {
+    const data = await api('/system/logs');
+    viewer.textContent = data.logs || '暂无日志';
+    viewer.scrollTop = viewer.scrollHeight;
+  } catch (e) {
+    viewer.textContent = '加载失败: ' + (e.message || '');
+  }
 }
 
 // ==================== 初始化 ====================

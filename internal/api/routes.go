@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
@@ -92,6 +94,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 系统设置
 		protected.GET("/settings", h.GetSettings)
 		protected.POST("/settings", h.SaveSettings)
+		protected.GET("/system/logs", h.GetSystemLogs)
 	}
 }
 
@@ -302,28 +305,23 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		return
 	}
 
-	// 获取 cookie：优先请求体传入 -> 数据库 Storage -> 配置文件
+	// 获取 cookie：优先请求体传入 -> 配置文件 -> 数据库
 	cookie := strings.TrimSpace(req.Cookie)
 	if cookie == "" {
-		var storage model.Storage
-		if err := h.DB.Where("type = ?", "115").First(&storage).Error; err == nil {
-			cookie = strings.TrimSpace(storage.Cookie)
-		}
-	}
-	if cookie == "" {
-		if ck, err := h.Config.LoadCookie(); err == nil {
-			cookie = strings.TrimSpace(ck)
-		}
+		cookie, _ = h.get115Cookie()
 	}
 	if cookie == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "尚未绑定 115 账号"})
 		return
 	}
 
+	log.Printf("[115检查] Cookie长度=%d, 包含KID=%v", len(cookie), strings.Contains(cookie, "KID="))
+
 	// 调用 115 用户信息接口校验 Cookie
 	const settingStatusAPI = "https://proapi.115.com/android/2.0/user/setting_status"
 	body, err := httpGet115(settingStatusAPI, nil, cookie, 15*time.Second)
 	if err != nil {
+		log.Printf("[115检查] 调用失败: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"valid":   false,
 			"message": "调用 115 接口失败：" + err.Error(),
@@ -662,6 +660,24 @@ func (h *Handler) GetSettings(c *gin.Context) {
 
 func (h *Handler) SaveSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
+}
+
+// GetSystemLogs 读取系统日志文件最后 200 行
+// GET /system/logs
+func (h *Handler) GetSystemLogs(c *gin.Context) {
+	logPath := "/logs/app.log"
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"logs": "暂无日志文件（日志文件在 /logs/app.log）"})
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	// 只返回最后 200 行
+	start := 0
+	if len(lines) > 200 {
+		start = len(lines) - 200
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": strings.Join(lines[start:], "\n")})
 }
 
 // GetSetting 获取通用配置
