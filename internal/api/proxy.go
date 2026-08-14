@@ -34,6 +34,15 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// 定期清理过期下载链接缓存（每 10 分钟），防止内存只增不减
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanExpiredCache()
+		}
+	}()
+
 	// 健康检查
 	r.GET("/proxy/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "running", "port": cfg.ProxyPort})

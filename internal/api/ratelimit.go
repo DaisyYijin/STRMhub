@@ -1,0 +1,67 @@
+package api
+
+import (
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ==================== 115 全局请求节流器 ====================
+//
+// 115 对高频请求有风控（返回"服务器开小差了"），且被风控后会持续一段时间。
+// 所有对 webapi.115.com / proapi.115.com 的请求必须经过 throttle115()，
+// 保证任意两次请求之间的最小间隔。
+//
+// 可通过环境变量 STRMHUB_115_INTERVAL（毫秒）调整，默认 1000ms。
+// 登录相关域名（qrcodeapi / passportapi）不节流，不影响扫码体验。
+
+var (
+	throttleMu     sync.Mutex
+	throttleLast   time.Time
+	throttleMinGap = loadThrottleInterval()
+)
+
+// loadThrottleInterval 读取节流间隔配置
+func loadThrottleInterval() time.Duration {
+	ms := 1000
+	if v := os.Getenv("STRMHUB_115_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 100 && n <= 60000 {
+			ms = n
+		}
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// isThrottledHost 判断是否为需要节流的 115 域名（文件操作类接口）
+func isThrottledHost(api string) bool {
+	return strings.Contains(api, "webapi.115.com") ||
+		strings.Contains(api, "proapi.115.com")
+}
+
+// throttle115 在发起 115 文件类 API 请求前调用，确保全局最小间隔
+func throttle115(api string) {
+	if !isThrottledHost(api) {
+		return
+	}
+	throttleMu.Lock()
+	defer throttleMu.Unlock()
+	if elapsed := time.Since(throttleLast); elapsed < throttleMinGap {
+		sleep := throttleMinGap - elapsed
+		log.Printf("[115节流] 等待 %v 后再请求 %s", sleep.Truncate(time.Millisecond), api)
+		time.Sleep(sleep)
+	}
+	throttleLast = time.Now()
+}
+
+// Set115Interval 运行时调整节流间隔（供设置接口调用）
+func Set115Interval(d time.Duration) {
+	if d < 100*time.Millisecond {
+		d = 100 * time.Millisecond
+	}
+	throttleMu.Lock()
+	throttleMinGap = d
+	throttleMu.Unlock()
+}

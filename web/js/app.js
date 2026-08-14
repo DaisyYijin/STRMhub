@@ -466,11 +466,13 @@ async function openQrCode() {
 function startQrCodePolling(uid, time, sign) {
   const session = {};          // 本次轮询的会话令牌
   qrcodeTimer = session;       // 记录当前会话，closeQrCode 会置空
+  let errCount = 0;            // 连续失败计数，用于指数退避
   (async function poll() {
     if (qrcodeTimer !== session) return;   // 已关闭或新会话
     try {
       const data = await api('/storage/qrcode/status', { method: 'POST', body: JSON.stringify({ uid, time, sign }) });
       if (qrcodeTimer !== session) return;
+      errCount = 0;  // 成功则重置退避
       const status = data.status;
       if (status === 'scanned') {
         document.getElementById('qrcode-status').textContent = '已扫码，请在手机上确认登录...';
@@ -490,7 +492,11 @@ function startQrCodePolling(uid, time, sign) {
       }
     } catch (e) {
       if (qrcodeTimer !== session) return;
-      poll();  // 出错也继续
+      // 指数退避：1s/2s/4s/8s... 上限 30s，防止高频轰炸 115
+      errCount++;
+      const delay = Math.min(30000, 1000 * Math.pow(2, errCount - 1));
+      document.getElementById('qrcode-status').textContent = '网络波动，' + (delay / 1000) + ' 秒后重试...';
+      setTimeout(poll, delay);
     }
   })();
 }

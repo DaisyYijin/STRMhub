@@ -55,6 +55,7 @@ func httpGet115UA(api string, query url.Values, cookie, ua string, timeout time.
 
 // httpGet115Full 完整版请求：可自定义 UA 和额外请求头
 func httpGet115Full(api string, query url.Values, cookie, ua string, timeout time.Duration, extraHeaders map[string]string) ([]byte, error) {
+	throttle115(api) // 全局节流，防止触发 115 风控
 	if ua == "" {
 		ua = ua115
 	}
@@ -168,6 +169,7 @@ func walk115Dir(cookie, cid, basePath string, out *[]remoteFile, exts map[string
 
 // httpPostForm115 带 Cookie 的 POST 表单请求
 func httpPostForm115(api string, form url.Values, cookie string, timeout time.Duration) ([]byte, error) {
+	throttle115(api) // 全局节流，防止触发 115 风控
 	req, err := http.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
