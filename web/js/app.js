@@ -1007,6 +1007,24 @@ function collectConfig(key) {
       av_file: val('rename-av-file'),
     };
   }
+  if (key === 'full') {
+    return {
+      cid: val('full-cid'),
+      local_path: val('full-local'),
+      video_ext: getTags('video-ext'),
+      image_ext: getTags('image-ext'),
+      data_ext: getTags('data-ext'),
+    };
+  }
+  if (key === 'incr') {
+    return { cron: val('incr-cron') };
+  }
+  if (key === 'share') {
+    return { folder: val('share-folder') };
+  }
+  if (key === 'monitor') {
+    return { dir: val('monitor-dir'), target: val('monitor-target') };
+  }
   return null;
 }
 
@@ -1060,7 +1078,34 @@ function applyConfig(key, v) {
     setVal('rename-av-folder', v.av_folder);
     setVal('rename-av-file', v.av_file);
     updateRenameExample();
+  } else if (key === 'full') {
+    setVal('full-cid', v.cid);
+    setVal('full-local', v.local_path);
+    if (v.video_ext) setTags('video-ext', v.video_ext);
+    if (v.image_ext) setTags('image-ext', v.image_ext);
+    if (v.data_ext) setTags('data-ext', v.data_ext);
+  } else if (key === 'incr') {
+    setVal('incr-cron', v.cron);
+  } else if (key === 'share') {
+    setVal('share-folder', v.folder);
+  } else if (key === 'monitor') {
+    setVal('monitor-dir', v.dir);
+    setVal('monitor-target', v.target);
   }
+}
+
+// setTags 用数组重建标签输入框的标签集
+function setTags(containerId, values) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll('.tag').forEach(t => t.remove());
+  (values || []).forEach(v => {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.dataset.val = v;
+    tag.innerHTML = v + '<span class="tag-close" onclick="removeTag(this)">×</span>';
+    container.insertBefore(tag, container.querySelector('.tag-add'));
+  });
 }
 
 async function saveConfig(key) {
@@ -1108,9 +1153,9 @@ const DEFAULT_CONFIGS = {
   'org-rename': { movie_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', movie_file: '{title} ({year}) [{tmdb_id}]{ext}', tv_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', tv_file: '{title} - S{season}E{episode}{ext}' },
   'monitor': { dir: '', target: '' },
   'message': { wecom: { corp_id: '', secret: '', agent_id: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false } },
-  'full': { cid: '', local_path: '/media', video_ext: '.mp4,.mkv,.ts', min_size: '0', exclude: '' },
-  'incr': { cid: '', interval: '10' },
-  'share': { link: '', target_cid: '' },
+  'full': { cid: '', local_path: '/media', video_ext: ['mp4','mkv','ts','avi','mov','rmvb','webm','flv','m2ts','wmv','mpg','iso'], image_ext: ['jpg','png','jpeg','webp'], data_ext: ['ass','srt','ssa','sub'] },
+  'incr': { cron: '*/10 8-23 * * *' },
+  'share': { folder: '' },
   'tmdb': { api_key: '', api_url: 'https://api.tmdb.org', image_url: 'https://image.tmdb.org', language: 'zh-CN' },
 };
 
@@ -1158,7 +1203,7 @@ function closeConfirmBubbleOnOutside(e) {
 }
 
 async function loadConfigs() {
-  const keys = ['strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message'];
+  const keys = ['strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'full', 'incr', 'share', 'monitor'];
   for (const key of keys) {
     try {
       const data = await api('/config/setting?key=' + key);

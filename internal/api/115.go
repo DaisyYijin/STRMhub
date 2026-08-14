@@ -404,14 +404,8 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	h.Config.Save115Device(sess.device)
 	h.upsert115Storage(cookie, sess.device, username)
 
-	// 提示设备槽位信息（App 槽位 Cookie 与桌面 UA 配对可能被风控拒绝，网页端最稳）
-	warning := ""
-	if sess.app != "web" {
-		warning = "当前是 " + sess.device + " 槽位的 Cookie，若目录列表报\"服务器开小差\"，请改用\"115浏览器_网页端\"设备重新扫码，或手动导入浏览器 Cookie"
-	}
-
 	h.dropQrSession(uid)
-	return cookie, username, warning, nil
+	return cookie, username, "", nil
 }
 
 // upsert115Storage 保存/更新 115 账号配置
