@@ -3,12 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,57 +42,44 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 
 // fetch115Dirs 调用 115 webapi 获取目录下的文件夹列表
 func fetch115Dirs(cookie, cid string) ([]gin.H, error) {
-	query := url.Values{
-		"aid":      {"1"},
-		"cid":      {cid},
-		"o":        {"user_ptime"},
-		"asc":      {"0"},
-		"offset":   {"0"},
-		"show_dir": {"1"},
-		"limit":    {"1150"},
-		"natsort":  {"1"},
-		"format":   {"json"},
-		"fc_mix":   {"0"},
+	if cookie == "" {
+		return nil, fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
-	api := "https://webapi.115.com/files/?" + query.Encode()
+	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, 包含KID=%v", cid, len(cookie), strings.Contains(cookie, "KID="))
 
-	req, err := http.NewRequest(http.MethodGet, api, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", ua115)
-	req.Header.Set("Referer", "https://115.com/")
-	req.Header.Set("Cookie", cookie)
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
+	// 复用 httpGet115 统一请求头处理
+	query := build115FileQuery(cid, 0)
+	body, err := httpGet115(fileListAPI, query, cookie, 20*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("访问 115 目录失败: %v", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+
+	// 记录原始响应用于调试（截断过长内容）
+	bodyStr := string(body)
+	if len(bodyStr) > 500 {
+		bodyStr = bodyStr[:500] + "..."
 	}
+	log.Printf("[115目录] 响应: %s", bodyStr)
 
 	// 解析响应，校验 state 字段
 	var result struct {
 		State  bool                      `json:"state"`
 		Error  string                    `json:"error"`
-		ErrNo  int                       `json:"errno"`
+		ErrNo  interface{}               `json:"errno"`
 		Data   []map[string]interface{} `json:"data"`
 		Count  int                       `json:"count"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析 115 目录失败")
+		return nil, fmt.Errorf("解析 115 目录失败: %v", err)
 	}
 
 	// 校验 115 返回状态
 	if !result.State {
-		if result.Error != "" {
-			return nil, fmt.Errorf("115 返回错误: %s", result.Error)
+		errMsg := result.Error
+		if errMsg == "" {
+			errMsg = "Cookie 可能已过期"
 		}
-		return nil, fmt.Errorf("115 接口返回失败，Cookie 可能已过期")
+		return nil, fmt.Errorf("115 返回错误: %s", errMsg)
 	}
 
 	// 只返回文件夹
@@ -102,6 +90,22 @@ func fetch115Dirs(cookie, cid string) ([]gin.H, error) {
 		}
 	}
 	return dirs, nil
+}
+
+// build115FileQuery 构造 115 文件列表查询参数
+func build115FileQuery(cid string, offset int) url.Values {
+	return url.Values{
+		"aid":      {"1"},
+		"cid":      {cid},
+		"o":        {"user_ptime"},
+		"asc":      {"0"},
+		"offset":   {fmt.Sprint(offset)},
+		"show_dir": {"1"},
+		"limit":    {"1150"},
+		"natsort":  {"1"},
+		"format":   {"json"},
+		"fc_mix":   {"0"},
+	}
 }
 
 // ListLocalDirs 浏览本地文件系统目录
