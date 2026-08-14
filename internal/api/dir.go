@@ -11,8 +11,6 @@ import (
 	"sort"
 	"time"
 
-	"strmhub/internal/model"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,14 +24,14 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 		cid = "0"
 	}
 
-	// 读取已保存的 115 Cookie
-	var storage model.Storage
-	if err := h.DB.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "尚未绑定 115 账号，请先在「115账号」页扫码登录"})
+	// 统一使用 get115Cookie（文件优先 + DB 回退）
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	dirs, err := fetch115Dirs(storage.Cookie, cid)
+	dirs, err := fetch115Dirs(cookie, cid)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -76,11 +74,24 @@ func fetch115Dirs(cookie, cid string) ([]gin.H, error) {
 		return nil, err
 	}
 
+	// 解析响应，校验 state 字段
 	var result struct {
-		Data []map[string]interface{} `json:"data"`
+		State  bool                      `json:"state"`
+		Error  string                    `json:"error"`
+		ErrNo  int                       `json:"errno"`
+		Data   []map[string]interface{} `json:"data"`
+		Count  int                       `json:"count"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("解析 115 目录失败")
+	}
+
+	// 校验 115 返回状态
+	if !result.State {
+		if result.Error != "" {
+			return nil, fmt.Errorf("115 返回错误: %s", result.Error)
+		}
+		return nil, fmt.Errorf("115 接口返回失败，Cookie 可能已过期")
 	}
 
 	// 只返回文件夹

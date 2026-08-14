@@ -41,10 +41,10 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 
 	// 302 代理核心路由: /d/{pickcode} 或 /d/{pickcode}/{filename}
 	r.GET("/d/:pickcode", func(c *gin.Context) {
-		handleProxyRedirect(c, db)
+		handleProxyRedirect(c, db, cfg)
 	})
 	r.GET("/d/:pickcode/*filename", func(c *gin.Context) {
-		handleProxyRedirect(c, db)
+		handleProxyRedirect(c, db, cfg)
 	})
 
 	log.Printf("302代理服务启动: http://localhost:%d", cfg.ProxyPort)
@@ -54,7 +54,7 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 }
 
 // handleProxyRedirect 处理 302 重定向请求
-func handleProxyRedirect(c *gin.Context, db *gorm.DB) {
+func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	pickcode := c.Param("pickcode")
 	if pickcode == "" {
 		c.String(http.StatusBadRequest, "missing pickcode")
@@ -73,15 +73,22 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB) {
 		return
 	}
 
-	// 获取 115 Cookie
-	var storage model.Storage
-	if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-		c.String(http.StatusServiceUnavailable, "115 账号未绑定")
-		return
+	// 获取 115 Cookie：优先文件，回退数据库
+	cookie := ""
+	if ck, err := cfg.LoadCookie(); err == nil && ck != "" {
+		cookie = ck
+	}
+	if cookie == "" {
+		var storage model.Storage
+		if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
+			c.String(http.StatusServiceUnavailable, "115 账号未绑定")
+			return
+		}
+		cookie = storage.Cookie
 	}
 
 	// 获取下载链接
-	downloadURL, err := get115DownloadURL(pickcode, storage.Cookie)
+	downloadURL, err := get115DownloadURL(pickcode, cookie)
 	if err != nil {
 		log.Printf("302代理获取下载链接失败: %v", err)
 		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)
