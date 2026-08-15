@@ -640,7 +640,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 在我的影视库创建目标目录
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
-		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v（分类=%q 目标目录=%q 新路径=%q）", dir.Name, err, category, targetDir, newPath))
+		msg := fmt.Sprintf("创建目录失败: %v（分类=%q 目标目录=%q）", err, category, targetDir)
+		onLog(fmt.Sprintf("✗ %s/ - %s", dir.Name, msg))
+		results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: msg})
 		return results
 	}
 
@@ -659,6 +661,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	if len(keepFids) > 0 {
 		if err := ops.moveFiles(targetCid, keepFids); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动文件失败: %v", dir.Name, err))
+			results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: "移动文件失败: " + err.Error()})
 			return results
 		}
 	}

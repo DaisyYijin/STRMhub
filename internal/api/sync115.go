@@ -348,11 +348,12 @@ func httpPostForm115(api string, form url.Values, cookie string, timeout time.Du
 
 // mkdir115 在指定父目录下创建文件夹，返回新文件夹 cid
 func mkdir115(cookie, parentCid, folderName string) (string, error) {
+	// 字段名以 p115client fs_mkdir 为准：pid + cname（旧字段 n 已失效，
+	// 发 n 会被 115 判定为"目录名称不能为空"）
 	form := url.Values{
-		"aid":  {"1"},
-		"pid":  {parentCid},
-		"cid":  {parentCid},
-		"n":    {folderName},
+		"aid":   {"1"},
+		"pid":   {parentCid},
+		"cname": {folderName},
 	}
 	body, err := httpPostForm115("https://webapi.115.com/files/add", form, cookie, 15*time.Second)
 	if err != nil {
