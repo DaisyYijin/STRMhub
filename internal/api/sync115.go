@@ -592,6 +592,7 @@ func firstStr(d map[string]interface{}, keys ...string) string {
 }
 
 // fetch115LifeEvents 拉取 115 生活事件（type 为空则拉全部类型）
+// 响应结构：{state, data: {count, list: [...]}}，事件字段 type/file_id/file_name/cid/file_size/update_time
 func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEvent, error) {
 	query := url.Values{
 		"limit":  {fmt.Sprint(limit)},
@@ -605,19 +606,31 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 		return nil, err
 	}
 	var result struct {
-		Data []map[string]interface{} `json:"data"`
+		State bool `json:"state"`
+		Error string `json:"error"`
+		Data  struct {
+			Count int                      `json:"count"`
+			List  []map[string]interface{} `json:"list"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析生活事件失败")
+		return nil, fmt.Errorf("解析生活事件失败: %s", truncateStr(string(body), 150))
 	}
-	events := make([]lifeEvent, 0, len(result.Data))
-	for _, d := range result.Data {
+	if !result.State {
+		msg := result.Error
+		if msg == "" {
+			msg = "state=false"
+		}
+		return nil, fmt.Errorf("拉取生活事件被拒: %s", msg)
+	}
+	events := make([]lifeEvent, 0, len(result.Data.List))
+	for _, d := range result.Data.List {
 		ev := lifeEvent{
 			Type:     normalizeEventType(fmt.Sprint(d["type"])),
 			FileID:   firstStr(d, "file_id", "fid", "id"),
 			FileName: firstStr(d, "file_name", "n", "name"),
 			Cid:      firstStr(d, "cid", "pid", "parent_id"),
-			Time:     firstStr(d, "time", "update_time", "create_time"),
+			Time:     firstStr(d, "update_time", "time", "create_time"),
 		}
 		if s, ok := d["file_size"].(float64); ok {
 			ev.Size = int64(s)
