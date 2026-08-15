@@ -641,44 +641,71 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 	return events, nil
 }
 
-// get115DirPath 查询目录在网盘中的云路径（webapi files/get_info）
-func get115DirPath(cookie, cid string) (string, error) {
+// get115DirInfo 查询目录自身的 cid/pid/名称（webapi files/get_info，data 为数组取首项）
+type dirInfo struct {
+	cid, pid, n string
+}
+
+// get115DirInfo 查询目录自身的 cid/pid/名称
+func get115DirInfo(cookie, cid string) (dirInfo, error) {
 	body, err := httpGet115UA("https://webapi.115.com/files/get_info",
 		url.Values{"file_id": {cid}}, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
-		return "", err
+		return dirInfo{}, err
 	}
 	var r struct {
-		State bool   `json:"state"`
-		Error string `json:"error"`
-		Data  struct {
-			Path     string `json:"path"`
-			FileName string `json:"file_name"`
+		State bool `json:"state"`
+		Data  []struct {
+			Cid string `json:"cid"`
+			Pid string `json:"pid"`
+			N   string `json:"n"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &r); err != nil || !r.State {
-		return "", fmt.Errorf("获取目录信息失败: %s", truncateStr(string(body), 120))
+	if err := json.Unmarshal(body, &r); err != nil || !r.State || len(r.Data) == 0 {
+		return dirInfo{}, fmt.Errorf("获取目录信息失败: %s", truncateStr(string(body), 120))
 	}
-	if r.Data.Path != "" {
-		return r.Data.Path, nil
-	}
-	return r.Data.FileName, nil
+	d := r.Data[0]
+	return dirInfo{cid: d.Cid, pid: d.Pid, n: d.N}, nil
 }
 
-// relCloudPath 计算子目录相对媒体库根的路径（都归一化为无首尾斜杠）
-func relCloudPath(rootPath, dirPath string) string {
-	norm := func(p string) string { return strings.Trim(p, "/") }
-	root, dir := norm(rootPath), norm(dirPath)
-	if root == "" {
-		return dir
+// get115RelPath 从 cid 逐级向上爬父目录链至 rootCid，返回相对路径（如 电影/香港动画/xxx）
+// 爬到网盘根仍未遇到 rootCid 说明不在媒体库内，返回 ok=false；memo 缓存减少重复查询
+func get115RelPath(cookie, cid, rootCid string, memo map[string]dirInfo) (string, bool, error) {
+	if cid == rootCid {
+		return "", true, nil
 	}
-	if dir == root {
-		return ""
+	var parts []string
+	cur := cid
+	for i := 0; i < 64; i++ { // 深度保险
+		info, ok := memo[cur]
+		if !ok {
+			var err error
+			info, err = get115DirInfo(cookie, cur)
+			if err != nil {
+				return "", false, err
+			}
+			memo[cur] = info
+		}
+		if cur == rootCid {
+			// 逆序拼接：parts 是从受影响目录向上收集的
+			for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+				parts[l], parts[r] = parts[r], parts[l]
+			}
+			return path.Join(parts...), true, nil
+		}
+		parts = append(parts, info.n)
+		if info.pid == "" || info.pid == "0" {
+			return "", false, nil // 到达网盘根，不在媒体库内
+		}
+		if info.pid == rootCid {
+			for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+				parts[l], parts[r] = parts[r], parts[l]
+			}
+			return path.Join(parts...), true, nil
+		}
+		cur = info.pid
 	}
-	if strings.HasPrefix(dir, root+"/") {
-		return strings.TrimPrefix(dir, root+"/")
-	}
-	return "" // 不在媒体库下
+	return "", false, nil
 }
 
 // RunIncrementalSync 增量同步：拉取生活事件，对受影响目录做定向同步
@@ -761,32 +788,26 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		}
 	}
 
-	// 媒体库根的云路径（用于把受影响目录换算成本地相对路径）
-	rootPath, rerr := get115DirPath(cookie, req.Cid)
-	if rerr != nil {
-		log.Printf("[115增量] 获取媒体库根路径失败: %v（按根路径处理）", rerr)
-	}
-
-	// 逐个受影响目录定向同步
+	// 逐个受影响目录定向同步：爬父目录链定位相对媒体库根的路径
 	domain, format, keepExt, skipExist := h.getStrmConfig()
+	memo := map[string]dirInfo{}
 	var allVideos, allAssets []remoteFile
 	processed, skippedDirs := 0, 0
 	for cid := range dirSet {
-		dirPath, err := get115DirPath(cookie, cid)
+		base, ok, err := get115RelPath(cookie, cid, req.Cid, memo)
 		if err != nil {
-			log.Printf("[115增量] 获取目录路径失败 cid=%s: %v", cid, err)
+			log.Printf("[115增量] 定位目录路径失败 cid=%s: %v", cid, err)
 			skippedDirs++
 			continue
 		}
-		base := relCloudPath(rootPath, dirPath)
-		if rootPath != "" && base == "" && norm(rootPath) != norm(dirPath) {
-			// 目录不在媒体库内，跳过
+		if !ok {
+			// 不在媒体库路径下，跳过
 			skippedDirs++
 			continue
 		}
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, cid, base, &videos, &assets, filter); err != nil {
-			log.Printf("[115增量] 遍历目录失败 %s: %v", dirPath, err)
+			log.Printf("[115增量] 遍历目录失败 %s: %v", base, err)
 			skippedDirs++
 			continue
 		}
@@ -818,9 +839,6 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		"note":             "移动/改名/删除事件仅统计，未改动本地文件",
 	})
 }
-
-// norm 归一化云路径（去首尾斜杠）
-func norm(p string) string { return strings.Trim(p, "/") }
 
 // ==================== 全量同步 ====================
 
