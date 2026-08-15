@@ -70,7 +70,7 @@ type SyncTask struct {
 type TmdbConfig struct {
 	ID             uint   `json:"id" gorm:"primaryKey"`
 	ApiKey         string `json:"api_key" gorm:"size:255"`
-	ApiUrl         string `json:"api_url" gorm:"size:255;default:'https://api.tmdb.org'"`
+	ApiUrl         string `json:"api_url" gorm:"size:255;default:'https://api.themoviedb.org'"`
 	ImageApiUrl    string `json:"image_api_url" gorm:"size:255;default:'https://image.tmdb.org'"`
 	Language       string `json:"language" gorm:"size:10;default:'zh-CN'"`
 	ImageLanguage  string `json:"image_language" gorm:"size:10;default:'zh-CN'"`

@@ -606,7 +606,7 @@ func (h *Handler) GetTmdbConfig(c *gin.Context) {
 		// 返回默认值
 		c.JSON(http.StatusOK, gin.H{
 			"api_key":        "",
-			"api_url":        "https://api.tmdb.org",
+			"api_url":        "https://api.themoviedb.org",
 			"image_api_url":  "https://image.tmdb.org",
 			"language":       "zh-CN",
 			"image_language": "zh-CN",
@@ -770,14 +770,12 @@ func (h *Handler) TestTMDBConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写 TMDB API 密钥"})
 		return
 	}
-	if req.APIURL == "" {
-		req.APIURL = "https://api.tmdb.org"
-	}
+	req.APIURL = normalizeTMDBBase(req.APIURL)
 	if req.Language == "" {
 		req.Language = "zh-CN"
 	}
-	// 用 /configuration 接口测试
-	endpoint := strings.TrimRight(req.APIURL, "/") + "/configuration?api_key=" + req.APIKey
+	// 用 /configuration 接口测试（/3 前缀已在规范化时补齐）
+	endpoint := req.APIURL + "/configuration?api_key=" + req.APIKey
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(endpoint)
 	if err != nil {

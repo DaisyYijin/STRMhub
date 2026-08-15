@@ -58,7 +58,7 @@ func loadTmdbClient(db interface{ Where(query interface{}, args ...interface{}) 
 	}
 	tc := &TmdbClient{
 		APIKey:   cfg.ApiKey,
-		APIURL:   strings.TrimRight(cfg.ApiUrl, "/"),
+		APIURL:   normalizeTMDBBase(cfg.ApiUrl),
 		ImageURL: strings.TrimRight(cfg.ImageApiUrl, "/"),
 		Language: cfg.Language,
 	}
@@ -67,6 +67,19 @@ func loadTmdbClient(db interface{ Where(query interface{}, args ...interface{}) 
 	}
 	tc.httpClient = &http.Client{Timeout: 15 * time.Second}
 	return tc, nil
+}
+
+// normalizeTMDBBase 规范化 TMDB API 地址：去尾斜杠、补 /3 版本前缀
+// TMDB 所有接口都在 /3 下（如 /3/search/movie），漏写前缀会 404
+func normalizeTMDBBase(u string) string {
+	u = strings.TrimRight(strings.TrimSpace(u), "/")
+	if u == "" {
+		return "https://api.themoviedb.org/3"
+	}
+	if !strings.HasSuffix(u, "/3") {
+		u += "/3"
+	}
+	return u
 }
 
 // get 发送 GET 请求到 TMDB API
