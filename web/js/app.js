@@ -41,12 +41,10 @@ const PAGE_TITLES = {
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
   'config-message': ['消息配置', '企业微信与 TG 机器人'],
   'config-extension': ['扩展功能', 'ALIST 同步等插件'],
+  'logs': ['实时日志', '同步与整理操作的服务端与本地日志'],
 };
 
 function showPage(id) {
-  // 切换页面时收起日志面板（避免遮挡其他页面）
-  const logOverlay = document.getElementById('log-overlay');
-  if (logOverlay) logOverlay.style.display = 'none';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById('page-' + id);
@@ -306,6 +304,7 @@ async function startIncrementalSync() {
   const cid = resolveCID('full-cid') || '0';
   if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
   try {
+    toast('增量同步进行中（受 API 间隔限制可能持续数分钟）...');
     appendLog('开始增量同步（拉取 115 生活事件，定向同步受影响目录）...');
     const data = await api('/sync/incremental', { method: 'POST', body: JSON.stringify({
       cid: cid,
@@ -472,6 +471,7 @@ async function startFullSync() {
   const videoExt = getTags('video-ext');
   if (!videoExt.length) { toast('请至少保留一个视频文件后缀'); return; }
   try {
+    toast('全量同步进行中（受 API 间隔限制可能持续数分钟）...');
     appendLog('开始全量同步（视频生成 STRM，图片/字幕/NFO 落盘）...');
     const data = await api('/sync/full', { method: 'POST', body: JSON.stringify({
       cid: cid,
@@ -1253,11 +1253,8 @@ function clearLogViewer() {
   document.getElementById('log-viewer').textContent = '';
 }
 function openLog() {
-  document.getElementById('log-overlay').style.display = 'flex';
+  showPage('logs');
   loadSystemLogs();
-}
-function closeLog() {
-  document.getElementById('log-overlay').style.display = 'none';
 }
 async function loadSystemLogs() {
   const viewer = document.getElementById('log-viewer');

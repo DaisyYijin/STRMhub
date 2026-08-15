@@ -49,6 +49,7 @@
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
       <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
+      <div class="menu-item" data-page="logs"><span class="icon">▤</span><span>实时日志</span></div>
     </div>
     <div class="footer">StrmHub v1.0</div>
   </aside>
@@ -813,6 +814,20 @@ av:
       </div>
     </div>
 
+    <!-- 实时日志 -->
+    <div class="page" id="page-logs">
+      <div class="card" style="height:calc(100vh - 130px);display:flex;flex-direction:column">
+        <div class="form-inline-group" style="justify-content:space-between;margin-bottom:8px">
+          <span style="font-weight:600">操作日志（同步 / 整理实时输出）</span>
+          <span>
+            <button class="btn btn-outline" onclick="loadSystemLogs()">拉取服务端日志</button>
+            <button class="btn btn-outline" onclick="clearLogViewer()">清空</button>
+          </span>
+        </div>
+        <div class="log-viewer" id="log-viewer" style="flex:1;height:auto">暂无日志...</div>
+      </div>
+    </div>
+
     <!-- 扩展功能 -->
     <div class="page" id="page-config-extension">
       <div class="card">
@@ -841,19 +856,6 @@ av:
   </div>
 </div>
 
-<!-- 实时日志面板：铺满侧边栏右侧的整个内容区 -->
-<div id="log-overlay" style="display:none">
-  <div class="log-overlay-bar">
-    <span style="font-weight:600">实时日志</span>
-    <span>
-      <button class="btn btn-outline" onclick="loadSystemLogs()">刷新服务端日志</button>
-      <button class="btn btn-outline" onclick="clearLogViewer()">清空</button>
-      <button class="btn btn-primary" onclick="closeLog()">关闭</button>
-    </span>
-  </div>
-  <div class="log-viewer" id="log-viewer">暂无日志...</div>
-</div>
-
 <!-- 目录选择弹窗 -->
 <div class="modal-mask" id="dir-picker-modal" style="display:none">
   <div class="modal" style="max-width:560px">
@@ -873,6 +875,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=26"></script>
+<script src="/js/app.js?v=27"></script>
 </body>
 </html>
