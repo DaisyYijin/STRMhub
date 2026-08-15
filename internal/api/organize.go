@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -328,11 +329,17 @@ func titleFirstLetter(title string) string {
 	return "0"
 }
 
-// checkExists 检查是否已存在（通过 TMDB ID 在数据库中比对）
+// checkExists 检查是否已存在（通过 TMDB ID 在数据库中比对，命中时输出记录详情）
+// 注意：这是本地整理记录，不代表网盘媒体库当前实际内容；记录有误可
+// 用"重置整理记录"清空后重新整理
 func checkExists(media *TmdbMedia) bool {
-	var count int64
-	model.DB.Model(&model.MediaLibrary{}).Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Count(&count)
-	return count > 0
+	var rec model.MediaLibrary
+	if err := model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).First(&rec).Error; err != nil {
+		return false
+	}
+	log.Printf("[整理] 已存在判定命中: %s (%s) tmdb=%d 记录于 %s 目标=%s",
+		rec.Title, rec.Year, rec.TmdbID, rec.CreatedAt.Format("2006-01-02 15:04"), rec.TargetPath)
+	return true
 }
 
 // recordMedia 记录已整理的媒体到数据库
@@ -538,6 +545,23 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 
 	if len(topEntries) == 0 {
 		onLog("○ 待整理目录为空")
+		return results, 0
+	}
+
+	// 排除整理工作区目录自身：已存在/冗余/待整理配置指向的目录不得被当作影视处理
+	// （否则会出现"已经存在文件夹被移动进自己"的错误）
+	excluded := map[string]bool{cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+	filtered := topEntries[:0]
+	for _, e := range topEntries {
+		if e.IsDir && excluded[e.Cid] {
+			onLog(fmt.Sprintf("○ 跳过整理工作区目录: %s/", e.Name))
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	topEntries = filtered
+	if len(topEntries) == 0 {
+		onLog("○ 待整理目录为空（仅剩整理工作区目录）")
 		return results, 0
 	}
 

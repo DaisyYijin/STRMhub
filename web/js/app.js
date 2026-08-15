@@ -344,6 +344,31 @@ function confirmIncrementalSync(btn) {
   }, 0);
 }
 
+// 重置整理记录（清空去重数据库，误判"已存在"时使用）
+function resetOrgRecords(btn) {
+  closeConfirmBubble();
+  document.removeEventListener('click', closeConfirmBubbleOnOutside);
+  const bubble = document.createElement('div');
+  bubble.id = 'confirm-bubble';
+  bubble.className = 'confirm-bubble';
+  bubble.innerHTML = '<div class="cb-text">清空全部整理去重记录？之后重新整理会重新识别入库（已入库的将判为已存在需人工处理）。</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定清空</button></div>';
+  btn.appendChild(bubble);
+  bubble.classList.add('show');
+  bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
+  bubble.querySelector('.cb-ok').onclick = async (e) => {
+    e.stopPropagation();
+    closeConfirmBubble();
+    try {
+      const data = await api('/organize/reset-records', { method: 'POST' });
+      toast(data.message || '已重置');
+      appendLog('已重置整理记录: ' + (data.message || ''));
+    } catch (err) { toast('重置失败: ' + err.message); }
+  };
+  setTimeout(() => {
+    document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true });
+  }, 0);
+}
+
 // ==================== 增量同步 ====================
 async function startIncrementalSync() {
   const cid = resolveCID('full-cid') || '0';
