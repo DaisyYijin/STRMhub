@@ -114,24 +114,38 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 func get115DownloadURL(pickcode, cookie string) (string, error) {
 	// ---- 首选：POST https://proapi.115.com/open/ufile/downurl ----
 	form := url.Values{"pick_code": {pickcode}}
+	openErr := "未尝试"
 	for _, ua := range []string{ua115Unified(), ""} { // 统一 UA 失败再试空 UA（p115client 默认空 UA）
 		body, err := post115Form("https://proapi.115.com/open/ufile/downurl", form, cookie, ua, 15*time.Second)
 		if err != nil {
+			openErr = "请求失败: " + err.Error()
 			continue
 		}
 		var env struct {
-			State    json.RawMessage          `json:"state"`
-			Code     int64                    `json:"code"`
-			Message  string                   `json:"message"`
-			Data     map[string]json.RawMessage `json:"data"`
+			State   json.RawMessage            `json:"state"`
+			Code    int64                      `json:"code"`
+			Message string                     `json:"message"`
+			Data    map[string]json.RawMessage `json:"data"`
 		}
-		if json.Unmarshal(body, &env) == nil && openStateOK(env.State) && env.Code == 0 {
-			for _, v := range env.Data {
-				if u := openParseDownloadURL(v); u != "" {
-					return u, nil
-				}
+		if jerr := json.Unmarshal(body, &env); jerr != nil {
+			openErr = "响应非 JSON: " + truncateStr(string(body), 150)
+			continue
+		}
+		if !openStateOK(env.State) || env.Code != 0 {
+			openErr = fmt.Sprintf("state=%s code=%d message=%s", strings.TrimSpace(string(env.State)), env.Code, env.Message)
+			continue
+		}
+		found := ""
+		for _, v := range env.Data {
+			if u := openParseDownloadURL(v); u != "" {
+				found = u
+				break
 			}
 		}
+		if found != "" {
+			return found, nil
+		}
+		openErr = "响应无链接: " + truncateStr(string(body), 150)
 	}
 	// ---- 回退：GET https://webapi.115.com/files/download?pickcode=xxx ----
 	apiURL := "https://webapi.115.com/files/download"
@@ -177,7 +191,7 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 	if m := re.FindSubmatch(body); m != nil {
 		return string(m[1]), nil
 	}
-	return "", fmt.Errorf("115 下载响应中未找到链接: %s", truncateStr(string(body), 200))
+	return "", fmt.Errorf("获取下载链接失败 [open接口]: %s；[webapi接口]: %s", openErr, truncateStr(string(body), 150))
 }
 
 // post115Form 带 Cookie 的 115 表单 POST（可指定 UA，空串表示发空 UA 头）

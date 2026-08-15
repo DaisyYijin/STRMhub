@@ -261,36 +261,41 @@ func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest(http.MethodGet, dlURL, nil)
+	// 直链可能与获取直链时的 UA 绑定：统一 UA 拉取失败（403）时用空 UA 重试
+	data, err := httpDownloadUA(dlURL, ua115Unified())
+	if err != nil && strings.Contains(err.Error(), "403") {
+		data, err = httpDownloadUA(dlURL, "")
+	}
 	if err != nil {
 		return "", err
-	}
-	// 115 下载直链与请求时的 UA 绑定，必须用统一 UA 拉取
-	req.Header.Set("User-Agent", ua115Unified())
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("下载返回 HTTP %d", resp.StatusCode)
 	}
 	tmp := dst + ".part"
-	out, err := os.Create(tmp)
-	if err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return "", err
-	}
-	_, werr := io.Copy(out, resp.Body)
-	cerr := out.Close()
-	if werr != nil || cerr != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("写入本地失败")
 	}
 	if err := os.Rename(tmp, dst); err != nil {
 		return "", err
 	}
 	return "download", nil
+}
+
+// httpDownloadUA 下载文件内容到内存（附属文件均为小文件），UA 可为空串（发空 UA 头）
+func httpDownloadUA(rawURL, ua string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", ua)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("下载返回 HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // ==================== 115 文件操作（创建目录 / 移动文件） ====================
