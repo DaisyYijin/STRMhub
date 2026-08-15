@@ -682,6 +682,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	if len(replaceRules) > 0 {
 		name = applyReplaceRules(name, replaceRules)
 	}
+	onLog(fmt.Sprintf("▶ 开始识别: %s/（样本: %s）", dir.Name, mainVideo.Name))
 	parsed := parseFileName(name)
 	if parsed.Title == "" {
 		// 无法识别，整个目录移到冗余
@@ -701,6 +702,8 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
 		return results
 	}
+
+	onLog(fmt.Sprintf("✦ 识别成功: %s/ → %s (%s) [%s/tmdb=%d]", dir.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
 
 	// 检查是否已存在
 	if checkExistsVerified(ops, media, cfg, libAbs) {
@@ -736,6 +739,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	//   视频 + 字幕 → 季目录（电影为根目录）；NFO + 标准封面图 → 剧集根目录；垃圾 → 冗余
 	parts := strings.Split(newPath, "/")
 	rootRel := category + "/" + parts[0]
+	onLog(fmt.Sprintf("▣ 目标目录就绪: %s", rootRel))
 	rootCid, err := ops.ensurePath(cfg.Library, rootRel)
 	if err != nil {
 		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v（目标=%q）", dir.Name, err, rootRel))
@@ -744,6 +748,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 	mediaCid := rootCid
 	if media.MediaType == "tv" && len(parts) >= 2 { // Season XX 层
+		onLog(fmt.Sprintf("▣ 季目录就绪: %s/%s", rootRel, parts[1]))
 		mediaCid, err = ops.ensurePath(cfg.Library, rootRel+"/"+parts[1])
 		if err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 创建季目录失败: %v", dir.Name, err))
@@ -828,6 +833,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	if len(replaceRules) > 0 {
 		name = applyReplaceRules(name, replaceRules)
 	}
+	onLog(fmt.Sprintf("▶ 开始识别: %s", f.Name))
 	parsed := parseFileName(name)
 	oldBase := baseName(f.Name)
 	if parsed.Title == "" {
@@ -855,6 +861,8 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	result.Title = media.Title
 	result.Year = media.Year
 	result.MediaType = media.MediaType
+
+	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s) [%s/tmdb=%d]", f.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
 
 	// 检查是否已存在（带网盘验证，失效记录自动清除）
 	if checkExistsVerified(ops, media, cfg, libAbs) {
@@ -887,6 +895,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 		return result
 	}
 
+	onLog(fmt.Sprintf("▣ 目标目录就绪: %s", category+"/"+strings.Split(newPath, "/")[0]))
 	// 成功入库：附件随行并按视频新名重命名字幕（播放器按视频名匹配外挂字幕）
 	newBase := baseName(pathBase(newPath))
 	moveSiblingAttachments(ops, cfg.Pending, oldBase, newBase, targetCid, true, onLog)
