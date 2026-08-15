@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"bytes"
 	"fmt"
 	"log"
 	"io"
@@ -403,11 +404,128 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	if cleaned != "" && cleaned != parsed.Title {
 		log.Printf("[TMDB] 首次搜索无结果，用清洗标题重试: %q → %q", parsed.Title, cleaned)
 		if parsed.IsTV {
-			return tc.SearchTV(cleaned)
+			media, err = tc.SearchTV(cleaned)
+		} else {
+			media, err = movieThenTV(cleaned)
 		}
-		return movieThenTV(cleaned)
+		if err != nil || media != nil {
+			return media, err
+		}
+	}
+
+	// 第三轮：GPT 兜底（配置了 GPT 识别时）——从原始文件名提取标题/年份再搜
+	if gptCfg := loadGPTFallback(); gptCfg != nil {
+		if ext := gptExtract(gptCfg, parsed.Title); ext != nil && ext.Title != "" && ext.Title != parsed.Title {
+			log.Printf("[TMDB] GPT 兜底提取: %q → %q (%s)", parsed.Title, ext.Title, ext.Year)
+			p2 := *parsed
+			p2.Title = ext.Title
+			p2.Year = ext.Year
+			if p2.Year == "" {
+				p2.Year = parsed.Year
+			}
+			if parsed.IsTV {
+				return tc.SearchTV(p2.Title)
+			}
+			return movieThenTV(p2.Title)
+		}
 	}
 	return media, nil
+}
+
+// gptFallbackCfg GPT 识别配置（org-gpt 设置）
+type gptFallbackCfg struct {
+	URL   string
+	Key   string
+	Model string
+}
+
+var gptFallbackCfgCache struct {
+	val *gptFallbackCfg
+	at  time.Time
+}
+
+// loadGPTFallback 读取 GPT 兜底配置（5 分钟缓存；未配置返回 nil）
+func loadGPTFallback() *gptFallbackCfg {
+	if gptFallbackCfgCache.val != nil && time.Since(gptFallbackCfgCache.at) < 5*time.Minute {
+		return gptFallbackCfgCache.val
+	}
+	v := ""
+	var sRow model.Setting
+	if err := model.DB.Where("`key` = ?", "org-gpt").First(&sRow).Error; err == nil {
+		v = sRow.Value
+	}
+	var cfg struct {
+		URL   string `json:"url"`
+		Key   string `json:"key"`
+		Model string `json:"model"`
+	}
+	gptFallbackCfgCache.val = nil
+	if v != "" && json.Unmarshal([]byte(v), &cfg) == nil && cfg.URL != "" && cfg.Key != "" {
+		if cfg.Model == "" {
+			cfg.Model = "gpt-4o-mini"
+		}
+		gptFallbackCfgCache.val = &gptFallbackCfg{URL: cfg.URL, Key: cfg.Key, Model: cfg.Model}
+	}
+	gptFallbackCfgCache.at = time.Now()
+	return gptFallbackCfgCache.val
+}
+
+// gptExtract 用 GPT 从文件名提取 标题/年份
+type gptExtractResult struct {
+	Title string
+	Year  string
+}
+
+func gptExtract(cfg *gptFallbackCfg, filename string) *gptExtractResult {
+	if filename == "" {
+		return nil
+	}
+	payload := map[string]interface{}{
+		"model": cfg.Model,
+		"messages": []map[string]string{
+			{"role": "system", "content": "从影视文件名中提取标准标题和上映/开播年份。只输出 JSON：{\"title\":\"...\",\"year\":\"...\"}，找不到年份输出空字符串。"},
+			{"role": "user", "content": filename},
+		},
+		"temperature": 0,
+	}
+	b, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.URL, "/")+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.Key)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		log.Printf("[GPT] 调用失败: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		log.Printf("[GPT] HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
+		return nil
+	}
+	var r struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(body, &r) != nil || len(r.Choices) == 0 {
+		return nil
+	}
+	content := r.Choices[0].Message.Content
+	m := regexp.MustCompile(`\{[^}]*\}`).FindString(content)
+	if m == "" {
+		return nil
+	}
+	var out gptExtractResult
+	if json.Unmarshal([]byte(m), &out) != nil || out.Title == "" {
+		return nil
+	}
+	return &out
 }
 
 // cleanSearchTitle 清洗搜索标题：仅保留中文/字母/数字/空格，压紧空白

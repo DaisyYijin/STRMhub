@@ -392,6 +392,19 @@ async function startIncrementalSync() {
   }
 }
 
+// 分享链接转存
+async function receiveShare() {
+  const link = document.getElementById('share-url').value.trim();
+  const code = document.getElementById('share-code').value.trim();
+  if (!link || !code) { toast('请填写分享链接和提取码'); return; }
+  try {
+    toast('转存进行中...');
+    const data = await api('/share/receive', { method: 'POST', body: JSON.stringify({ url: link, code }) });
+    toast(data.message || '转存完成');
+    appendLog('分享转存: ' + (data.message || ''));
+  } catch (e) { toast('转存失败: ' + e.message); }
+}
+
 // ==================== 任务状态（同步/整理互斥提示） ====================
 let taskPollTimer = null;
 async function pollTaskStatus() {
@@ -1187,7 +1200,7 @@ function collectConfig(key) {
     return { cron: val('incr-cron') };
   }
   if (key === 'share') {
-    return { folder: val('share-folder') };
+    return { folder: resolveCID('share-folder'), folder_path: val('share-folder') };
   }
   if (key === 'monitor') {
     return { dir: val('monitor-dir'), target: val('monitor-target') };
@@ -1260,7 +1273,9 @@ function applyConfig(key, v) {
   } else if (key === 'incr') {
     setVal('incr-cron', v.cron);
   } else if (key === 'share') {
-    setVal('share-folder', v.folder);
+    const el = document.getElementById('share-folder');
+    if (el) el.dataset.cid = v.folder || '';
+    setVal('share-folder', v.folder_path !== undefined ? v.folder_path : (v.folder || ''));
   } else if (key === 'monitor') {
     setVal('monitor-dir', v.dir);
     setVal('monitor-target', v.target);

@@ -839,27 +839,26 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		return results
 	}
 
-	// 检查是否已存在
-	if checkExistsVerified(ops, media, cfg, libAbs) {
-		// 已存在 → 移到"已经存在"目录
-		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+	// 检查是否已存在（含洗版判定）
+	if rec, ok := lookupMediaRecord(media); ok {
+		targetDirForWash := rec.TargetPath
+		// 洗版：新版更好 → 旧版移冗余后继续正常入库流程
+		if tryWashReplace(ops, cfg, media, mainVideo.Name, targetDirForWash, onLog) {
+			// 旧版已让位，落入下方正常入库
 		} else {
-			onLog(fmt.Sprintf("○ %s/ → 已存在: %s (%s)，已移到已存在目录", dir.Name, media.Title, media.Year))
+			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+			} else {
+				onLog(fmt.Sprintf("○ %s/ → 已存在: %s (%s)，已移到已存在目录", dir.Name, media.Title, media.Year))
+			}
+			for _, vf := range videoFiles {
+				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Title: media.Title, Year: media.Year, MediaType: media.MediaType,
+					Message: "已存在（洗版判定：保留库内版本）"})
+			}
+			return results
 		}
-		// 为每个视频文件生成结果
-		for _, vf := range videoFiles {
-			results = append(results, OrganizeResult{
-				FileName:  vf.Name,
-				Status:    "exists",
-				Title:     media.Title,
-				Year:      media.Year,
-				MediaType: media.MediaType,
-				Message:   fmt.Sprintf("已存在: %s (%s)", media.Title, media.Year),
-			})
-		}
-		return results
 	}
+
 
 	// 不存在 → 分类 + 移动到我的影视库
 	category := classifyMedia(media)

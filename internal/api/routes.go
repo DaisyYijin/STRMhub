@@ -29,6 +29,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动增量同步 cron 调度器（每分钟检查 incr 配置）
 	StartIncrScheduler(h)
 
+	// 启动监控上传引擎（Emby 生成图片回传 115）
+	StartMonitorUploader(h)
+
 	// 认证
 	auth := r.Group("/auth")
 	{
@@ -110,6 +113,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 整理→同步闭环
 		protected.POST("/organize/pipeline", h.RunOrganizePipeline)
+
+		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
+		protected.POST("/share/receive", h.ShareReceive)
 
 		// 重置整理记录（清空 MediaLibrary 去重表，误判已存在时使用）
 		protected.POST("/organize/reset-records", func(c *gin.Context) {

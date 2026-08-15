@@ -131,8 +131,11 @@
 
         <!-- 分享同步 -->
         <div class="card">
-          <div class="form-row"><div class="label">我的接收文件夹</div><div class="control"><input type="text" id="share-folder" placeholder="115 接收分享的文件夹"></div></div>
+          <div class="form-row"><div class="label">我的接收文件夹</div><div class="control"><div class="form-inline-group"><input type="text" id="share-folder" placeholder="115 接收分享的文件夹 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('share-folder')">选择目录</button></div></div></div>
+          <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="share-url" placeholder="https://115.com/s/xxx?password=xxxx"></div></div>
+          <div class="form-row"><div class="label">提取码</div><div class="control"><div class="form-inline-group"><input type="text" id="share-code" placeholder="分享提取码" class="inline-input"><button class="btn btn-primary" onclick="receiveShare()">立即转存</button></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('share', this)" style="position:relative">重置配置</button></div></div>
+          <div class="alert alert-info">转存到接收文件夹后，若接收文件夹在待整理目录下，下一轮「整理+增量」会自动识别入库。</div>
         </div>
 
       </div>
@@ -894,6 +897,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=40"></script>
+<script src="/js/app.js?v=41"></script>
 </body>
 </html>
