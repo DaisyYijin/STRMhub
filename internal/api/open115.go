@@ -936,6 +936,11 @@ func (o *pan115Ops) downloadURLFull(pickcode string) (string, map[string]string,
 	return get115DownloadURL(pickcode, o.cookie)
 }
 
+// cookieForDL 附属文件下载重试用的登录 Cookie（OpenAPI 通道返回空）
+func (o *pan115Ops) cookieForDL() string {
+	return o.cookie
+}
+
 // proxyDownloadURL 302 代理专用：不依赖 Handler，直接从 DB+配置构造通道
 func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode string) (string, error) {
 	// OpenAPI 通道

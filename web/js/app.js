@@ -314,7 +314,8 @@ async function startIncrementalSync() {
       data_ext: getTags('data-ext'),
     }) });
     toast(data.message || '增量同步完成');
-    appendLog(`增量同步完成：事件 ${data.total}（媒体相关 ${data.relevant}，结构性 ${data.structural}），受影响目录 ${data.dirs}（跳过 ${data.dirs_skipped}），视频 ${data.videos}（STRM ${data.strm_created}），附属下载 ${data.assets_downloaded}`);
+    const sm = data.summary || {};
+    appendLog(`增量同步完成：事件 ${sm.events_total}（新 ${sm.events_fresh}，媒体相关 ${sm.relevant}，结构性 ${sm.structural}：删 ${sm.deleted} 移/改 ${sm.moved}），目录 ${sm.dirs}（跳过 ${sm.dirs_skipped}），视频 ${sm.videos}（STRM ${sm.strm_created}），附属下载 ${sm.assets_downloaded}`);
   } catch (e) {
     appendLog('✗ 增量同步失败: ' + e.message);
     toast('增量同步失败：' + e.message);

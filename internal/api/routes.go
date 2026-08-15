@@ -25,6 +25,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 应用用户设置的 115 API 请求间隔（数据库 > 环境变量 > 默认 1s）
 	Apply115Interval(db)
 
+	// 启动增量同步 cron 调度器（每分钟检查 incr 配置）
+	StartIncrScheduler(h)
+
 	// 认证
 	auth := r.Group("/auth")
 	{

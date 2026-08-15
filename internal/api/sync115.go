@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ==================== 115 同步引擎（webapi） ====================
@@ -252,40 +254,6 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 		offset += len(entries)
 	}
 	return nil
-}
-
-// syncAssetFile 下载媒体附属文件（图片/字幕/nfo）为本地真实文件，保持目录结构
-// Emby/Jellyfin 无法通过 .strm 读取海报和字幕，附属文件必须实体存在；已存在则跳过
-func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, error) {
-	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
-	dst := filepath.Join(dir, f.Name)
-	if _, err := os.Stat(dst); err == nil {
-		return "skip", nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	if f.PickCode == "" || f.PickCode == "<nil>" {
-		return "", fmt.Errorf("缺少 pickcode")
-	}
-	dlURL, hdrs, err := ops.downloadURLFull(f.PickCode)
-	if err != nil {
-		return "", err
-	}
-	// CDN 直链的访问要求（p115client 文档）：f=1 需与获取直链时相同的 UA，
-	// f=3 还需直链响应 Set-Cookie 下发的 Cookie。按组合重试直至成功
-	data, dlErr := downloadAssetBytes(dlURL, hdrs, ops.cookie)
-	if dlErr != nil {
-		return "", dlErr
-	}
-	tmp := dst + ".part"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return "", err
-	}
-	return "download", nil
 }
 
 // downloadAssetBytes 下载附属文件内容，按 UA/Cookie 组合重试
@@ -552,6 +520,7 @@ const (
 
 // lifeEvent 一条生活事件
 type lifeEvent struct {
+	ID       string `json:"id"`        // 115 事件 id（单调递增，增量游标/去重用）
 	Type     string `json:"type"`      // 归一化后的操作类型
 	FileID   string `json:"file_id"`   // 文件 id
 	FileName string `json:"file_name"` // 文件名
@@ -632,8 +601,9 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 	events := make([]lifeEvent, 0, len(result.Data.List))
 	for _, d := range result.Data.List {
 		ev := lifeEvent{
+			ID:       firstStr(d, "id"),
 			Type:     normalizeEventType(fmt.Sprint(d["type"])),
-			FileID:   firstStr(d, "file_id", "fid", "id"),
+			FileID:   firstStr(d, "file_id", "fid"),
 			FileName: firstStr(d, "file_name", "n", "name"),
 			Cid:      firstStr(d, "cid", "pid", "parent_id"),
 			Time:     firstStr(d, "update_time", "time", "create_time"),
@@ -713,9 +683,35 @@ func get115RelPath(cookie, cid, rootCid string, memo map[string]dirInfo) (string
 	return "", false, nil
 }
 
-// RunIncrementalSync 增量同步：拉取生活事件，对受影响目录做定向同步
-// 新增/转存/复制的事件 → 定向遍历其所在目录（视频生成 strm，附属文件落盘）；
-// 移动/改名/删除事件只统计上报，不动本地文件（防误删，参照 AutoFilm 保护思路）
+// incrParams 增量同步参数（HTTP 与 cron 调度器共用）
+type incrParams struct {
+	Cid        string
+	LocalPath  string
+	VideoExt   []string
+	ImageExt   []string
+	DataExt    []string
+	Limit      int
+}
+
+// incrSummary 增量同步结果摘要
+type incrSummary struct {
+	EventsTotal      int `json:"events_total"`
+	EventsFresh      int `json:"events_fresh"`
+	Relevant         int `json:"relevant"`
+	Structural       int `json:"structural"`
+	Deleted          int `json:"deleted"`
+	Moved            int `json:"moved"`
+	Dirs             int `json:"dirs"`
+	DirsSkipped      int `json:"dirs_skipped"`
+	Videos           int `json:"videos"`
+	StrmCreated      int `json:"strm_created"`
+	AssetsTotal      int `json:"assets_total"`
+	AssetsDownloaded int `json:"assets_downloaded"`
+	AssetsSkipped    int `json:"assets_skipped"`
+	AssetsFailed     int `json:"assets_failed"`
+}
+
+// RunIncrementalSync 增量同步 HTTP 入口
 // POST /sync/incremental  body: {"cid":"...","local_path":"...","video_ext":[],"image_ext":[],"data_ext":[],"limit":1000}
 func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	var req struct {
@@ -730,46 +726,98 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	if req.Limit <= 0 || req.Limit > 1000 {
-		req.Limit = 1000
-	}
-	if req.LocalPath == "" {
-		req.LocalPath = "/media"
-	}
-	if req.Cid == "" {
-		req.Cid = "0"
-	}
+	p := normalizeIncrParams(req.Cid, req.LocalPath, req.VideoExt, req.ImageExt, req.DataExt, req.Limit)
 
+	if !fullSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "同步任务正在进行中，请等待完成后再试"})
+		return
+	}
+	defer fullSyncMu.Unlock()
+
+	sum, err := h.executeIncrementalSync(p)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "增量同步完成", "summary": sum})
+}
+
+func normalizeIncrParams(cid, localPath string, videoExt, imageExt, dataExt []string, limit int) incrParams {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	if localPath == "" {
+		localPath = "/media"
+	}
+	if cid == "" {
+		cid = "0"
+	}
+	return incrParams{Cid: cid, LocalPath: localPath, VideoExt: videoExt, ImageExt: imageExt, DataExt: dataExt, Limit: limit}
+}
+
+// executeIncrementalSync 增量同步核心（CMS 两阶段模式）：
+// 阶段一：小批量分页拉取生活事件并落库去重（SyncEvent 表，事件 id 唯一，永不丢失）
+// 阶段二：按时间正序应用事件——新增类定向重遍历受影响目录；
+//         move/rename/delete 基于本地文件台账（SyncedFile）精确执行
+func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
+	sum := &incrSummary{}
 	cookie, err := h.get115Cookie()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return sum, err
 	}
 	ops, err := h.newPan115Ops()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return sum, err
 	}
 
-	// 拉取生活事件（全部类型）
-	events, err := fetch115LifeEvents(cookie, req.Limit, 0, "")
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "拉取生活事件失败: " + err.Error()})
-		return
-	}
+	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
+	time.Sleep(3 * time.Second)
 
-	// 时间水位：只处理上次增量之后的新事件（首次运行处理整个窗口）
-	lastAt := int64(0)
-	if v := h.Config.GetSetting("incr-last"); v != "" {
-		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
-			lastAt = n
+	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
+	var pending []model.SyncEvent
+	offset := 0
+	for {
+		events, err := fetch115LifeEvents(cookie, 30, offset, "")
+		if err != nil {
+			return sum, fmt.Errorf("拉取生活事件失败: %w", err)
+		}
+		sum.EventsTotal += len(events)
+		fresh := 0
+		for _, ev := range events {
+			if ev.ID == "" {
+				continue
+			}
+			ts, _ := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64)
+			se := model.SyncEvent{
+				EventID: ev.ID, Type: ev.Type, FileID: ev.FileID,
+				FileName: ev.FileName, Cid: ev.Cid, Size: ev.Size, EventTime: ts,
+			}
+			res := h.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&se)
+			if res.Error == nil && res.RowsAffected > 0 {
+				fresh++
+				pending = append(pending, se)
+			}
+		}
+		sum.EventsFresh += fresh
+		log.Printf("[115增量] 事件拉取: 本页 %d 条，新事件 %d 条（offset=%d）", len(events), fresh, offset)
+		if fresh == 0 || sum.EventsFresh >= p.Limit {
+			break // 已追平或达到单次上限
+		}
+		offset += len(events)
+		if len(events) < 30 {
+			break
 		}
 	}
 
-	// 分类：受影响目录集合 + 结构性变更统计
+	// 事件按时间正序应用（接口返回最新在前）
+	for i, j := 0, len(pending)-1; i < j; i, j = i+1, j-1 {
+		pending[i], pending[j] = pending[j], pending[i]
+	}
+
+	// ---- 阶段二：应用事件 ----
 	filter := &syncFilter{
-		videoExts: buildExtSet(req.VideoExt),
-		assetExts: buildExtSet(append(append([]string{}, req.ImageExt...), req.DataExt...)),
+		videoExts: buildExtSet(p.VideoExt),
+		assetExts: buildExtSet(append(append([]string{}, p.ImageExt...), p.DataExt...)),
 	}
 	filter.assetExts[".nfo"] = true
 	isMedia := func(name string) bool {
@@ -778,50 +826,60 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	}
 
 	dirSet := map[string]bool{}
-	structural := 0
-	relevant := 0
-	for _, ev := range events {
-		if lastAt > 0 {
-			if ts, err := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64); err == nil && ts <= lastAt {
-				continue // 上次增量已处理过的事件
-			}
-		}
+	for _, ev := range pending {
 		switch ev.Type {
 		case evUpload, evReceive, evCopy:
 			if isMedia(ev.FileName) {
 				dirSet[ev.Cid] = true
-				relevant++
+				sum.Relevant++
 			} else if ev.FileID != "" && ev.Cid == "" {
-				// 无父目录信息的事件（目录上传等），按目录自身处理
 				dirSet[ev.FileID] = true
-				relevant++
+				sum.Relevant++
 			}
 		case evNewFolder:
 			if ev.FileID != "" {
 				dirSet[ev.FileID] = true
-				relevant++
+				sum.Relevant++
 			}
-		case evMove, evDelete, evRename, evFolderRename:
-			structural++
+		case evDelete:
+			// 精确删除：只删台账中记录的、本工具生成的本地文件
+			if h.removeSyncedFile(ev.FileID, p.LocalPath) {
+				sum.Deleted++
+			}
+			sum.Structural++
+		case evMove, evRename:
+			// 移动/改名：删除旧位置本地文件，新位置由目录重遍历重建
+			if h.removeSyncedFile(ev.FileID, p.LocalPath) {
+				sum.Moved++
+			}
+			if ev.Cid != "" {
+				dirSet[ev.Cid] = true
+			}
+			sum.Structural++
+		case evFolderRename:
+			// 目录改名：重遍历父目录重建；旧名子树可能残留，交由后续清理功能
+			if ev.Cid != "" {
+				dirSet[ev.Cid] = true
+			}
+			sum.Structural++
+		default:
+			sum.Structural++
 		}
 	}
 
-	// 解析全部受影响目录的相对路径，并做祖先去重：
-	// 同批事件常同时命中父目录与子目录（如"电影"和"电影/印度电影/xx"），
-	// 保留最上层目录即可，避免重复遍历
+	// 受影响目录：定位相对路径 + 祖先去重
 	type targetDir struct{ cid, base string }
 	var targets []targetDir
 	memo := map[string]dirInfo{}
-	skippedDirs := 0
 	for cid := range dirSet {
-		base, ok, err := get115RelPath(cookie, cid, req.Cid, memo)
+		base, ok, err := get115RelPath(cookie, cid, p.Cid, memo)
 		if err != nil {
 			log.Printf("[115增量] 定位目录路径失败 cid=%s: %v", cid, err)
-			skippedDirs++
+			sum.DirsSkipped++
 			continue
 		}
 		if !ok {
-			skippedDirs++ // 不在媒体库路径下
+			sum.DirsSkipped++ // 不在媒体库路径下
 			continue
 		}
 		targets = append(targets, targetDir{cid: cid, base: base})
@@ -832,7 +890,7 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		covered := false
 		for _, u := range uniqTargets {
 			if u.base == "" || t.base == u.base || strings.HasPrefix(t.base, u.base+"/") {
-				covered = true // 已被上层目录的遍历覆盖
+				covered = true
 				break
 			}
 		}
@@ -841,53 +899,63 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		}
 	}
 
-	// 逐目录遍历并【立即】落盘（不等全部遍历完，同步过程文件即时可见）
+	// 逐目录遍历并立即落盘
 	domain, format, keepExt, skipExist := h.getStrmConfig()
-	var allVideos, allAssets []remoteFile
-	strmCreated, downloaded, assetSkipped, assetFailed := 0, 0, 0, 0
-	processed := 0
 	for _, t := range uniqTargets {
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
 			log.Printf("[115增量] 遍历目录失败 %s: %v", t.base, err)
-			skippedDirs++
+			sum.DirsSkipped++
 			continue
 		}
-		sc, dl, sk, fl := applySyncResults(ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist)
-		allVideos = append(allVideos, videos...)
-		allAssets = append(allAssets, assets...)
-		strmCreated += sc
-		downloaded += dl
-		assetSkipped += sk
-		assetFailed += fl
-		processed++
+		sc, dl, sk, fl := applySyncResults(h.DB, ops, videos, assets, p.LocalPath, domain, format, keepExt, skipExist, t.base)
+		sum.Dirs++
+		sum.Videos += len(videos)
+		sum.StrmCreated += sc
+		sum.AssetsTotal += len(assets)
+		sum.AssetsDownloaded += dl
+		sum.AssetsSkipped += sk
+		sum.AssetsFailed += fl
 		log.Printf("[115增量] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
 	}
 
-	// 更新时间水位（仅在有事件被处理时）
-	h.Config.SaveSetting("incr-last", fmt.Sprint(time.Now().Unix()))
-
-	if strmCreated+downloaded > 0 {
-		h.notifyEmbyRefresh(req.LocalPath)
+	// 标记事件已应用 + 更新水位
+	now := time.Now()
+	ids := make([]string, 0, len(pending))
+	for _, ev := range pending {
+		ids = append(ids, ev.EventID)
 	}
-	log.Printf("[115增量] 完成: 事件 %d（媒体相关 %d，结构性 %d，水位前 %d），受影响目录 %d（处理 %d，跳过 %d），视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d，失败 %d）",
-		len(events), relevant, structural, len(dirSet)-len(uniqTargets), len(dirSet), processed, skippedDirs, len(allVideos), strmCreated, len(allAssets), downloaded, assetSkipped, assetFailed)
+	if len(ids) > 0 {
+		h.DB.Model(&model.SyncEvent{}).Where("event_id IN ?", ids).
+			Updates(map[string]interface{}{"status": "applied", "applied_at": now})
+	}
+	h.Config.SaveSetting("incr-last", fmt.Sprint(now.Unix()))
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":          "增量同步完成",
-		"total":            len(events),
-		"relevant":         relevant,
-		"structural":       structural,
-		"dirs":             processed,
-		"dirs_skipped":     skippedDirs,
-		"videos":           len(allVideos),
-		"strm_created":     strmCreated,
-		"assets_total":     len(allAssets),
-		"assets_downloaded": downloaded,
-		"assets_skipped":   assetSkipped,
-		"assets_failed":    assetFailed,
-		"note":             "移动/改名/删除事件仅统计，未改动本地文件",
-	})
+	if sum.StrmCreated+sum.AssetsDownloaded+sum.Deleted+sum.Moved > 0 {
+		h.notifyEmbyRefresh(p.LocalPath)
+	}
+	log.Printf("[115增量] 完成: 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录 %d（跳过 %d），视频 %d（STRM %d），附属下载 %d",
+		sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Dirs, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	return sum, nil
+}
+
+// removeSyncedFile 按文件 id 从台账定位并删除本地文件（仅删除本工具生成过的文件）
+func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
+	if fileID == "" {
+		return false
+	}
+	var sf model.SyncedFile
+	if err := h.DB.Where("file_id = ?", fileID).First(&sf).Error; err != nil {
+		return false // 台账无记录（从未同步过），无需处理
+	}
+	full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
+	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+		log.Printf("[115增量] 删除本地文件失败 %s: %v", full, err)
+		return false
+	}
+	h.DB.Delete(&sf)
+	log.Printf("[115增量] 文件删除-执行成功: %s", sf.RelPath)
+	return true
 }
 
 // ==================== 全量同步 ====================
@@ -946,7 +1014,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		return
 	}
 
-	strmCreated, downloaded, skipped, failed := applySyncResults(ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist)
+	strmCreated, downloaded, skipped, failed := applySyncResults(h.DB, ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist, "")
 
 	totalNew := strmCreated + downloaded
 	if totalNew > 0 {
@@ -966,31 +1034,112 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	})
 }
 
-// applySyncResults 对遍历结果执行落盘：视频生成 strm，附属文件下载（已存在跳过）
-func applySyncResults(ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool) (strmCreated, downloaded, skipped, failed int) {
+// assetDLWorkers 附属文件并发下载线程数（CDN 下载不占 API 限额，CMS 同款思路）
+const assetDLWorkers = 5
+
+// applySyncResults 对遍历结果执行落盘：视频生成 strm，附属文件下载（已存在跳过），
+// 全部登记到 SyncedFile 台账（move/delete 事件精确执行的依据）
+func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool, dirLabel string) (strmCreated, downloaded, skipped, failed int) {
 	for _, f := range videos {
 		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
 			log.Printf("[115同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
 			continue
 		}
 		strmCreated++
+		upsertSyncedFile(db, f, path.Join(f.Path, f.Name+".strm"), "video")
+	}
+
+	// 附属文件：生产者串行取直链（守 API 间隔），worker 池并发下载
+	type assetJob struct {
+		f    remoteFile
+		url  string
+		hdrs map[string]string
+	}
+	type assetRes struct {
+		f      remoteFile
+		status string
+		err    error
+	}
+	jobs := make(chan assetJob)
+	resCh := make(chan assetRes, len(assets))
+	var wg sync.WaitGroup
+	for i := 0; i < assetDLWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				data, err := downloadAssetBytes(j.url, j.hdrs, ops.cookieForDL())
+				if err != nil {
+					resCh <- assetRes{f: j.f, err: err}
+					continue
+				}
+				st, err := writeAssetBytes(j.f, localPath, data)
+				resCh <- assetRes{f: j.f, status: st, err: err}
+			}
+		}()
 	}
 	for i, f := range assets {
-		if i%20 == 0 {
+		if i%20 == 0 && i > 0 {
 			log.Printf("[115同步] 附属文件进度: %d/%d", i, len(assets))
 		}
-		st, err := syncAssetFile(ops, f, localPath)
+		dst := filepath.Join(localPath, filepath.FromSlash(f.Path), f.Name)
+		if _, err := os.Stat(dst); err == nil {
+			resCh <- assetRes{f: f, status: "skip"}
+			upsertSyncedFile(db, f, path.Join(f.Path, f.Name), "asset")
+			continue
+		}
+		u, hdrs, err := ops.downloadURLFull(f.PickCode)
+		if err != nil {
+			resCh <- assetRes{f: f, err: err}
+			continue
+		}
+		jobs <- assetJob{f: f, url: u, hdrs: hdrs}
+	}
+	close(jobs)
+	wg.Wait()
+	close(resCh)
+	for r := range resCh {
 		switch {
-		case err != nil:
+		case r.err != nil:
 			failed++
-			log.Printf("[115同步] 附属文件失败: %s/%s: %v", f.Path, f.Name, err)
-		case st == "skip":
+			log.Printf("[115同步] 附属文件失败: %s/%s: %v", r.f.Path, r.f.Name, r.err)
+		case r.status == "skip":
 			skipped++
 		default:
 			downloaded++
+			upsertSyncedFile(db, r.f, path.Join(r.f.Path, r.f.Name), "asset")
 		}
 	}
 	return
+}
+
+// upsertSyncedFile 登记本地文件台账（file_id 唯一）
+func upsertSyncedFile(db *gorm.DB, f remoteFile, relPath, kind string) {
+	if db == nil || f.Fid == "" {
+		return
+	}
+	sf := model.SyncedFile{FileID: f.Fid, PickCode: f.PickCode, RelPath: relPath, Kind: kind, Size: f.Size}
+	db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "file_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "updated_at"}),
+	}).Create(&sf)
+}
+
+// writeAssetBytes 把附属文件内容写到本地（.part 临时文件原子改名）
+func writeAssetBytes(f remoteFile, localRoot string, data []byte) (string, error) {
+	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
+	dst := filepath.Join(dir, f.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	tmp := dst + ".part"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", err
+	}
+	return "download", nil
 }
 
 // getStrmConfig 读取 STRM 直链配置
@@ -1262,15 +1411,66 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 	}
 	embyServer := u.Scheme + "://" + u.Host
 
-	// 调用 Emby API 刷新媒体库（不带 API Key，依赖 Emby 的局域网开放访问）
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// 优先按库刷新（CMS 同款）：取媒体库列表，将变更路径映射到所属库后逐库 Refresh
+	apiKey := ""
+	var refreshCfg struct {
+		ApiKey string `json:"api_key"`
+	}
+	_ = json.Unmarshal([]byte(s.Value), &refreshCfg)
+	apiKey = strings.TrimSpace(refreshCfg.ApiKey)
+	q := ""
+	if apiKey != "" {
+		q = "?api_key=" + url.QueryEscape(apiKey)
+	}
+	libResp, err := client.Get(embyServer + "/Library/MediaFolders" + q)
+	if err == nil {
+		defer libResp.Body.Close()
+		var libs struct {
+			Items []struct {
+				ID         string   `json:"Id"`
+				Name       string   `json:"Name"`
+				Locations  []string `json:"Locations"`
+			} `json:"Items"`
+		}
+		if json.NewDecoder(libResp.Body).Decode(&libs) == nil {
+			refreshed := 0
+			for _, lib := range libs.Items {
+				hit := false
+				for _, loc := range lib.Locations {
+					if strings.HasPrefix(embyPath, strings.TrimRight(loc, "/")+"/") || embyPath == loc {
+						hit = true
+						break
+					}
+				}
+				if !hit {
+					continue
+				}
+				r, err := client.Post(embyServer+"/Library/"+lib.ID+"/Refresh"+q, "", nil)
+				if err != nil {
+					log.Printf("Emby 按库刷新失败 %s: %v", lib.Name, err)
+					continue
+				}
+				r.Body.Close()
+				refreshed++
+				log.Printf("Emby 媒体库刷新任务提交成功：%s %s", lib.ID, lib.Name)
+			}
+			if refreshed > 0 {
+				return
+			}
+			log.Printf("Emby 按库刷新：变更路径未命中任何媒体库（%s），回退路径通知", embyPath)
+		}
+	}
+
+	// 回退：按路径通知
 	// POST /Library/Media/Updated { "Updates": [{"Path":"...","UpdateType":"Created"}] }
 	body, _ := json.Marshal(map[string]interface{}{
 		"Updates": []map[string]string{
 			{"Path": embyPath, "UpdateType": "Created"},
 		},
 	})
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, _ := http.NewRequest("POST", embyServer+"/Library/Media/Updated", strings.NewReader(string(body)))
+	req, _ := http.NewRequest("POST", embyServer+"/Library/Media/Updated"+q, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {

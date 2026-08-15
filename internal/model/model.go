@@ -134,6 +134,33 @@ type MediaLibrary struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// SyncEvent 115 生活事件落库（增量同步两阶段：先落库去重，再应用到本地）
+type SyncEvent struct {
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	EventID   string `json:"event_id" gorm:"uniqueIndex;size:64;not null"` // 115 事件 id（单调递增，可作游标）
+	Type      string `json:"type" gorm:"size:40"`
+	FileID    string `json:"file_id" gorm:"index;size:64"`
+	FileName  string `json:"file_name" gorm:"size:500"`
+	Cid       string `json:"cid" gorm:"size:64"`
+	Size      int64  `json:"size"`
+	EventTime int64  `json:"event_time"` // unix 秒
+	Status    string `json:"status" gorm:"size:20;default:'pending'"` // pending / applied
+	CreatedAt time.Time `json:"created_at"`
+	AppliedAt *time.Time `json:"applied_at"`
+}
+
+// SyncedFile 已同步到本地的文件台账（ strm 与附属文件），供 move/delete 事件精确定位
+type SyncedFile struct {
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	FileID    string `json:"file_id" gorm:"uniqueIndex;size:64;not null"` // 115 文件 id
+	PickCode  string `json:"pick_code" gorm:"size:64"`
+	RelPath   string `json:"rel_path" gorm:"size:500;not null"`           // 相对本地库根的路径（含文件名）
+	Kind      string `json:"kind" gorm:"size:10"`                         // video / asset
+	Size      int64  `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 var DB *gorm.DB
 
 func InitDB(dbPath string) (*gorm.DB, error) {
@@ -156,6 +183,8 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&CategoryRule{},
 		&WashRule{},
 		&MediaLibrary{},
+		&SyncEvent{},
+		&SyncedFile{},
 	); err != nil {
 		return nil, err
 	}
