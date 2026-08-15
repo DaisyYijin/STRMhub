@@ -609,8 +609,9 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 		State bool `json:"state"`
 		Error string `json:"error"`
 		Data  struct {
-			Count int                      `json:"count"`
-			List  []map[string]interface{} `json:"list"`
+			// 注意：count 在响应中是字符串（"118262"），声明为 int 会导致整体解析失败；
+			// 当前不需要该值，故意不解析
+			List []map[string]interface{} `json:"list"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
