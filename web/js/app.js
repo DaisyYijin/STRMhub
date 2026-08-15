@@ -37,6 +37,7 @@ const PAGE_TITLES = {
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
+  'dashboard': ['仪表盘', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
   'config-message': ['消息配置', '企业微信与 TG 机器人'],
@@ -46,6 +47,8 @@ const PAGE_TITLES = {
 
 function showPage(id) {
   if (id === 'logs') startLogPoll(); else stopLogPoll();
+  if (id === 'dashboard') loadDashboard();
+  if (id === 'config-system') loadStrmList();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById('page-' + id);
@@ -405,6 +408,83 @@ async function receiveShare() {
   } catch (e) { toast('转存失败: ' + e.message); }
 }
 
+// ==================== 仪表盘 ====================
+async function loadDashboard() {
+  try {
+    const d = await api('/dashboard');
+    const p = d.pan115 || {};
+    document.getElementById('dash-capacity').textContent = (p.used_h || '-') + ' / ' + (p.total_h || '-');
+    const total = Number(p.total || 0), used = Number(p.used || 0);
+    if (total > 0) {
+      const pct = Math.min(100, Math.round(used / total * 1000) / 10);
+      document.getElementById('dash-cap-bar').style.width = pct + '%';
+      document.getElementById('dash-cap-text').textContent = '已用 ' + pct + '%';
+    }
+    const strm = d.strm || {};
+    document.getElementById('dash-strm-count').textContent = strm.total || 0;
+    document.getElementById('dash-strm-active').textContent = strm.active || 0;
+    document.getElementById('dash-strm-invalid').textContent = strm.invalid || 0;
+    document.getElementById('dash-synced').textContent = d.synced_files || 0;
+    document.getElementById('dash-organized').textContent = d.organized || 0;
+    document.getElementById('dash-task').textContent = d.task_running ? '⏳ 任务进行中' : '✓ 空闲';
+    document.getElementById('dash-task-detail').textContent = '待处理事件 ' + (d.pending_events || 0) + ' 条';
+    const recent = d.recent_media || [];
+    if (recent.length > 0) {
+      document.getElementById('dash-recent').innerHTML = recent.map(m =>
+        `<div>★ ${m.title} (${m.year || '?'}) [${m.category || m.type || '-'}] <span style="color:var(--text-3);font-size:12px">${m.at}</span></div>`
+      ).join('');
+    } else {
+      document.getElementById('dash-recent').textContent = '暂无整理记录';
+    }
+  } catch (e) {}
+}
+
+// ==================== STRM 管理 ====================
+async function strmFastScan() {
+  toast('快速扫描进行中（可能需要几分钟）...');
+  try {
+    const d = await api('/strm/scan/fast', { method: 'POST' });
+    toast(d.message || '扫描完成');
+    document.getElementById('strm-scan-result').textContent = d.message || '';
+    appendLog('STRM 快扫: ' + (d.message || ''));
+  } catch (e) { toast('快扫失败: ' + e.message); }
+}
+async function strmSlowScan() {
+  toast('深度扫描进行中（可能需要较长时间）...');
+  try {
+    const d = await api('/strm/scan/slow', { method: 'POST' });
+    toast(d.message || '扫描完成');
+    document.getElementById('strm-scan-result').textContent = d.message || '';
+    appendLog('STRM 慢扫: ' + (d.message || ''));
+  } catch (e) { toast('慢扫失败: ' + e.message); }
+}
+async function strmCleanup() {
+  if (!confirm('确定清理所有失效 STRM（将删除数据库记录和本地文件）？')) return;
+  toast('清理进行中...');
+  try {
+    const d = await api('/strm/cleanup', { method: 'POST' });
+    toast(d.message || '清理完成');
+    document.getElementById('strm-scan-result').textContent = d.message || '';
+    appendLog('STRM 清理: ' + (d.message || ''));
+  } catch (e) { toast('清理失败: ' + e.message); }
+}
+async function loadStrmList() {
+  try {
+    const d = await api('/strm');
+    const tbody = document.getElementById('strm-table-body');
+    if (!tbody) return;
+    const items = (d.data || []).slice(0, 50);
+    if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-3)">暂无记录</td></tr>'; return; }
+    tbody.innerHTML = items.map(f =>
+      `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.local_path || f.remote_path || '-'}</td><td>${f.status === 'active' ? '✓' : '✗ ' + f.status}</td><td><button class="btn btn-outline btn-sm" onclick="strmDelete(${f.ID || f.id || 0})">删</button></td></tr>`
+    ).join('');
+  } catch (e) {}
+}
+async function strmDelete(id) {
+  try { await api('/strm/' + id, { method: 'DELETE' }); toast('已删除'); loadStrmList(); }
+  catch (e) { toast('删除失败: ' + e.message); }
+}
+
 // ==================== 任务状态（同步/整理互斥提示） ====================
 let taskPollTimer = null;
 async function pollTaskStatus() {
@@ -616,7 +696,17 @@ function switchUDTab(tab) {
   document.querySelectorAll('#page-upload-download .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
 }
 function transfer() { toast('转存功能开发中'); }
-function testProxy() { toast('代理延迟测试中...'); }
+async function testProxy() {
+  const url = document.getElementById('proxy-url').value.trim();
+  if (!url) { toast('请先填写代理地址'); return; }
+  const el = document.getElementById('proxy-test-result');
+  if (el) el.textContent = '测试中...';
+  try {
+    const d = await api('/proxy/test', { method: 'POST', body: JSON.stringify({ url }) });
+    if (d.ok) { if (el) { el.textContent = '✓ 延迟 ' + d.latency_ms + 'ms'; el.style.color = 'var(--primary)'; } }
+    else { if (el) { el.textContent = '✗ ' + (d.error || '连接失败'); el.style.color = '#e74c3c'; } }
+  } catch (e) { if (el) { el.textContent = '✗ ' + e.message; el.style.color = '#e74c3c'; } }
+}
 function genDirTree() { toast('目录树生成工具开发中'); }
 
 // ==================== 115 扫码登录 ====================

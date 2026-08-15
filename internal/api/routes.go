@@ -45,7 +45,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	protected.Use(h.AuthMiddleware())
 	{
 		// 仪表盘
-		protected.GET("/dashboard", h.Dashboard)
+		protected.GET("/dashboard", h.DashboardEnhanced)
+
+		// 代理测试
+		protected.POST("/proxy/test", h.TestProxyLatency)
 
 		// 存储管理
 		protected.GET("/storage", h.ListStorage)
@@ -101,7 +104,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.DELETE("/strm/:id", h.DeleteStrmFile)
 		protected.POST("/strm/scan/fast", h.FastScan)
 		protected.POST("/strm/scan/slow", h.SlowScan)
-		protected.POST("/strm/cleanup", h.CleanupInvalid)
+		protected.POST("/strm/cleanup", h.CleanupInvalidEnhanced)
 
 		// 刮削整理
 		protected.GET("/scrape/rules", h.ListScrapeRules)
@@ -690,18 +693,7 @@ func (h *Handler) DeleteStrmFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-func (h *Handler) FastScan(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "快扫已启动（开发中）"})
-}
-
-func (h *Handler) SlowScan(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "慢扫已启动（开发中）"})
-}
-
-func (h *Handler) CleanupInvalid(c *gin.Context) {
-	result := h.DB.Where("status = ?", "invalid").Delete(&model.StrmFile{})
-	c.JSON(http.StatusOK, gin.H{"message": "清理完成", "count": result.RowsAffected})
-}
+// FastScan / SlowScan / CleanupInvalidEnhanced 实现在 strm_mgmt.go
 
 // ==================== 刮削整理（占位） ====================
 
