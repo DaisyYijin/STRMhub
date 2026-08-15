@@ -45,6 +45,7 @@ const PAGE_TITLES = {
 };
 
 function showPage(id) {
+  if (id === 'logs') startLogPoll(); else stopLogPoll();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById('page-' + id);
@@ -314,6 +315,27 @@ function confirmFullSync(btn) {
     e.stopPropagation();
     closeConfirmBubble();
     startFullSync();
+  };
+  setTimeout(() => {
+    document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true });
+  }, 0);
+}
+
+// 增量同步确认气泡
+function confirmIncrementalSync(btn) {
+  closeConfirmBubble();
+  document.removeEventListener('click', closeConfirmBubbleOnOutside);
+  const bubble = document.createElement('div');
+  bubble.id = 'confirm-bubble';
+  bubble.className = 'confirm-bubble';
+  bubble.innerHTML = '<div class="cb-text">将拉取 115 生活事件并同步最新变化（增/删/移），确定执行？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
+  btn.appendChild(bubble);
+  bubble.classList.add('show');
+  bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
+  bubble.querySelector('.cb-ok').onclick = (e) => {
+    e.stopPropagation();
+    closeConfirmBubble();
+    startIncrementalSync();
   };
   setTimeout(() => {
     document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true });
@@ -1264,28 +1286,47 @@ async function loadConfigs() {
 }
 
 // ==================== 日志 ====================
+let logPollTimer = null;
 function appendLog(line) {
-  const viewer = document.getElementById('log-viewer');
+  const viewer = document.getElementById('client-log');
+  if (!viewer) return;
   const time = new Date().toLocaleTimeString();
   viewer.textContent = (viewer.textContent === '暂无日志...' ? '' : viewer.textContent) + `[${time}] ${line}\n`;
   viewer.scrollTop = viewer.scrollHeight;
 }
 function clearLogViewer() {
-  document.getElementById('log-viewer').textContent = '';
+  const c = document.getElementById('client-log');
+  const sv = document.getElementById('server-log-viewer');
+  if (c) c.textContent = '暂无操作...';
+  if (sv) sv.textContent = '暂无日志...';
 }
 function openLog() {
   showPage('logs');
+}
+// 服务端日志轮询：日志页可见时每 3 秒刷新，离开自动停止
+function startLogPoll() {
+  stopLogPoll();
   loadSystemLogs();
+  logPollTimer = setInterval(() => {
+    const page = document.getElementById('page-logs');
+    if (!page || !page.classList.contains('active')) { stopLogPoll(); return; }
+    loadSystemLogs();
+  }, 3000);
+}
+function stopLogPoll() {
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
 }
 async function loadSystemLogs() {
-  const viewer = document.getElementById('log-viewer');
-  viewer.textContent = '加载中...';
+  const viewer = document.getElementById('server-log-viewer');
+  if (!viewer) return;
+  if (viewer.textContent === '暂无日志...') viewer.textContent = '加载中...';
   try {
     const data = await api('/system/logs');
+    const nearBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 60;
     viewer.textContent = data.logs || '暂无日志';
-    viewer.scrollTop = viewer.scrollHeight;
+    if (nearBottom) viewer.scrollTop = viewer.scrollHeight;
   } catch (e) {
-    viewer.textContent = '加载失败: ' + (e.message || '');
+    if (viewer.textContent.startsWith('加载中')) viewer.textContent = '暂无日志...';
   }
 }
 

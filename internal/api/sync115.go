@@ -771,6 +771,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
+	log.Printf("[115增量] 开始: 媒体库 cid=%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----

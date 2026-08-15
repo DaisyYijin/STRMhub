@@ -125,7 +125,7 @@
         <div class="card">
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
           <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" onclick="startIncrementalSync()">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <!-- 分享同步 -->
@@ -816,14 +816,16 @@ av:
     <!-- 实时日志 -->
     <div class="page" id="page-logs">
       <div class="card" style="height:calc(100vh - 130px);display:flex;flex-direction:column">
-        <div class="form-inline-group" style="justify-content:space-between;margin-bottom:8px">
-          <span style="font-weight:600">操作日志（同步 / 整理实时输出）</span>
+        <div style="font-weight:600;margin-bottom:6px">操作记录（本地即时输出）</div>
+        <div class="log-viewer" id="client-log" style="height:110px;flex:none">暂无操作...</div>
+        <div class="form-inline-group" style="justify-content:space-between;margin:10px 0 6px">
+          <span style="font-weight:600">服务端日志（每 3 秒自动刷新）</span>
           <span>
-            <button class="btn btn-outline" onclick="loadSystemLogs()">拉取服务端日志</button>
+            <button class="btn btn-outline" onclick="loadSystemLogs()">立即刷新</button>
             <button class="btn btn-outline" onclick="clearLogViewer()">清空</button>
           </span>
         </div>
-        <div class="log-viewer" id="log-viewer" style="flex:1;height:auto">暂无日志...</div>
+        <div class="log-viewer" id="server-log-viewer" style="flex:1;height:auto">暂无日志...</div>
       </div>
     </div>
 
@@ -874,6 +876,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=30"></script>
+<script src="/js/app.js?v=31"></script>
 </body>
 </html>
