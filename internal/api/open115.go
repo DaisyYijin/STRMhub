@@ -923,8 +923,15 @@ func (o *pan115Ops) moveFiles(targetCid string, fids []string) error {
 
 // downloadURL 获取下载直链
 func (o *pan115Ops) downloadURL(pickcode string) (string, error) {
+	u, _, err := o.downloadURLFull(pickcode)
+	return u, err
+}
+
+// downloadURLFull 获取下载直链及 CDN 要求的请求头（直链响应 Set-Cookie 下发）
+func (o *pan115Ops) downloadURLFull(pickcode string) (string, map[string]string, error) {
 	if o.open != nil {
-		return o.open.downloadURL(pickcode)
+		u, err := o.open.downloadURL(pickcode)
+		return u, nil, err
 	}
 	return get115DownloadURL(pickcode, o.cookie)
 }
@@ -947,5 +954,6 @@ func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode string) (string,
 		}
 		cookie = storage.Cookie
 	}
-	return get115DownloadURL(pickcode, cookie)
+	u, _, err := get115DownloadURL(pickcode, cookie)
+	return u, err
 }

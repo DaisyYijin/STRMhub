@@ -257,17 +257,15 @@ func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, erro
 	if f.PickCode == "" || f.PickCode == "<nil>" {
 		return "", fmt.Errorf("缺少 pickcode")
 	}
-	dlURL, err := ops.downloadURL(f.PickCode)
+	dlURL, hdrs, err := ops.downloadURLFull(f.PickCode)
 	if err != nil {
 		return "", err
 	}
-	// 直链可能与获取直链时的 UA 绑定：统一 UA 拉取失败（403）时用空 UA 重试
-	data, err := httpDownloadUA(dlURL, ua115Unified())
-	if err != nil && strings.Contains(err.Error(), "403") {
-		data, err = httpDownloadUA(dlURL, "")
-	}
-	if err != nil {
-		return "", err
+	// CDN 直链的访问要求（p115client 文档）：f=1 需与获取直链时相同的 UA，
+	// f=3 还需直链响应 Set-Cookie 下发的 Cookie。按组合重试直至成功
+	data, dlErr := downloadAssetBytes(dlURL, hdrs, ops.cookie)
+	if dlErr != nil {
+		return "", dlErr
 	}
 	tmp := dst + ".part"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
@@ -279,13 +277,50 @@ func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, erro
 	return "download", nil
 }
 
+// downloadAssetBytes 下载附属文件内容，按 UA/Cookie 组合重试
+func downloadAssetBytes(rawURL string, cdnHeaders map[string]string, loginCookie string) ([]byte, error) {
+	setCookie := cdnHeaders["Cookie"]
+	combined := setCookie
+	if combined != "" && loginCookie != "" {
+		combined += "; "
+	}
+	combined += loginCookie
+	type attempt struct{ ua, cookie string }
+	var attempts []attempt
+	if setCookie != "" {
+		attempts = append(attempts, attempt{ua115Unified(), setCookie}) // 标准：同 UA + 直链下发 Cookie
+	}
+	attempts = append(attempts,
+		attempt{ua115Unified(), combined},  // 直链 Cookie + 登录 Cookie
+		attempt{ua115Unified(), loginCookie},
+	)
+	if setCookie != "" {
+		attempts = append(attempts, attempt{"", setCookie})
+	}
+	var lastErr error
+	for _, a := range attempts {
+		data, err := httpDownloadUA(rawURL, a.ua, a.cookie)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !strings.Contains(err.Error(), "403") {
+			return nil, err // 非 403（如 404/超时）重试无意义
+		}
+	}
+	return nil, fmt.Errorf("CDN 下载被拒(403)：已尝试 UA/Cookie 全部组合，%v", lastErr)
+}
+
 // httpDownloadUA 下载文件内容到内存（附属文件均为小文件），UA 可为空串（发空 UA 头）
-func httpDownloadUA(rawURL, ua string) ([]byte, error) {
+func httpDownloadUA(rawURL, ua, cookieHeader string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", ua)
+	if cookieHeader != "" {
+		req.Header.Set("Cookie", cookieHeader)
+	}
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {

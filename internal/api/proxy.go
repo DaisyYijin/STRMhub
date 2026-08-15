@@ -110,13 +110,14 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 
 // get115DownloadURL 通过 pickcode 获取 115 文件下载链接
 // 首选 App 加密接口（pro.api/android/2.0/ufile/download，openStrm 同款），
-// webapi files/download 在部分 Cookie 类型下只返回元数据不含链接
-func get115DownloadURL(pickcode, cookie string) (string, error) {
+// webapi files/download 在部分 Cookie 类型下只返回元数据不含链接。
+// 返回的 headers 为 CDN 要求携带的请求头（直链响应 Set-Cookie 下发，f=3 时必需）
+func get115DownloadURL(pickcode, cookie string) (string, map[string]string, error) {
 	// ---- 首选：App 加密接口 ----
 	appErr := "未尝试"
 	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
 	form := url.Values{"data": {encrypt115(payload)}}
-	body, err := post115Form("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Unified(), 15*time.Second)
+	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
 		appErr = "请求失败: " + err.Error()
 	} else {
@@ -141,14 +142,26 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 				var d struct {
 					URL json.RawMessage `json:"url"`
 				}
+				var u string
 				if json.Unmarshal(plain, &d) == nil {
-					if u := openParseDownloadURL(d.URL); u != "" {
-						return u, nil
+					u = openParseDownloadURL(d.URL)
+				}
+				if u == "" {
+					if m := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`).FindSubmatch(plain); m != nil {
+						u = string(m[1])
 					}
 				}
-				// 兜底正则
-				if m := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`).FindSubmatch(plain); m != nil {
-					return string(m[1]), nil
+				if u != "" {
+					// 收集直链响应下发的 Set-Cookie（CDN f=3 场景要求回带）
+					var parts []string
+					for _, ck := range resp.Cookies() {
+						parts = append(parts, ck.Name+"="+ck.Value)
+					}
+					headers := map[string]string{}
+					if len(parts) > 0 {
+						headers["Cookie"] = strings.Join(parts, "; ")
+					}
+					return u, headers, nil
 				}
 				appErr = "解密后无链接: " + truncateStr(string(plain), 150)
 			}
@@ -162,7 +175,7 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 
 	body, err = httpGet115(fullURL, nil, cookie, 15*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %v", appErr, err)
+		return "", nil, fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %v", appErr, err)
 	}
 
 	var result struct {
@@ -185,29 +198,35 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 			if msg == "" {
 				msg = "未知错误"
 			}
-			return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: 拒绝: %s", appErr, msg)
+			return "", nil, fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: 拒绝: %s", appErr, msg)
 		}
 		if result.URL.URL != "" {
-			return result.URL.URL, nil
+			return result.URL.URL, nil, nil
 		}
 		if result.Data.URL != "" {
-			return result.Data.URL, nil
+			return result.Data.URL, nil, nil
 		}
 	}
 	// 常规字段为空时用正则兜底提取任意位置的下载链接
 	re := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
 	if m := re.FindSubmatch(body); m != nil {
-		return string(m[1]), nil
+		return string(m[1]), nil, nil
 	}
-	return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %s", appErr, truncateStr(string(body), 150))
+	return "", nil, fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %s", appErr, truncateStr(string(body), 150))
 }
 
 // post115Form 带 Cookie 的 115 表单 POST（可指定 UA，空串表示发空 UA 头）
 func post115Form(api string, form url.Values, cookie, ua string, timeout time.Duration) ([]byte, error) {
+	body, _, err := post115FormResp(api, form, cookie, ua, timeout)
+	return body, err
+}
+
+// post115FormResp 同 post115Form 但额外返回响应对象（读取 Set-Cookie 用）
+func post115FormResp(api string, form url.Values, cookie, ua string, timeout time.Duration) ([]byte, *http.Response, error) {
 	throttle115(api)
 	req, err := http.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Referer", "https://115.com/")
@@ -217,17 +236,17 @@ func post115Form(api string, form url.Values, cookie, ua string, timeout time.Du
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, resp, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("115 接口返回 HTTP %d", resp.StatusCode)
+		return nil, resp, fmt.Errorf("115 接口返回 HTTP %d", resp.StatusCode)
 	}
-	return b, nil
+	return b, resp, nil
 }
 
 // 清理过期缓存（定期调用）
