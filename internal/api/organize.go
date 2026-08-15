@@ -730,32 +730,57 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	newPath := buildNewName(media, parsed, ext)
 	targetDir := category + "/" + pathDir(newPath)
 
-	// 在我的影视库创建目标目录
-	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
+	_ = targetDir // 目标目录在下方按新结构创建（根目录 + 季目录）
+
+	// 按文件分类移动（规范结构）：
+	//   视频 + 字幕 → 季目录（电影为根目录）；NFO + 标准封面图 → 剧集根目录；垃圾 → 冗余
+	parts := strings.Split(newPath, "/")
+	rootRel := category + "/" + parts[0]
+	rootCid, err := ops.ensurePath(cfg.Library, rootRel)
 	if err != nil {
-		msg := fmt.Sprintf("创建目录失败: %v（分类=%q 目标目录=%q）", err, category, targetDir)
-		onLog(fmt.Sprintf("✗ %s/ - %s", dir.Name, msg))
-		results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: msg})
+		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v（目标=%q）", dir.Name, err, rootRel))
+		results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: "创建目录失败: " + err.Error()})
 		return results
 	}
-
-	// 按文件分类移动
-	var keepFids, junkFids []string
-	for _, f := range files {
-		ft := classifyFile(f.Name)
-		if ft == FileTypeJunk {
-			junkFids = append(junkFids, f.Fid)
-		} else {
-			keepFids = append(keepFids, f.Fid)
+	mediaCid := rootCid
+	if media.MediaType == "tv" && len(parts) >= 2 { // Season XX 层
+		mediaCid, err = ops.ensurePath(cfg.Library, rootRel+"/"+parts[1])
+		if err != nil {
+			onLog(fmt.Sprintf("✗ %s/ - 创建季目录失败: %v", dir.Name, err))
+			results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: "创建季目录失败: " + err.Error()})
+			return results
 		}
 	}
 
-	// 移动保留文件到影视库
-	if len(keepFids) > 0 {
-		if err := ops.moveFiles(targetCid, keepFids); err != nil {
+	var mediaFids, metaFids, junkFids []string
+	for _, f := range files {
+		switch classifyFile(f.Name) {
+		case FileTypeVideo, FileTypeSubtitle:
+			mediaFids = append(mediaFids, f.Fid)
+		case FileTypeNFO, FileTypeStdImage:
+			metaFids = append(metaFids, f.Fid) // 封面/NFO 放剧集根目录
+		default:
+			junkFids = append(junkFids, f.Fid)
+		}
+	}
+
+	// 视频/字幕 → 季目录（电影为根目录）
+	if len(mediaFids) > 0 {
+		if err := ops.moveFiles(mediaCid, mediaFids); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动文件失败: %v", dir.Name, err))
 			results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: "移动文件失败: " + err.Error()})
 			return results
+		}
+	}
+	// 封面/NFO → 剧集根目录
+	if len(metaFids) > 0 && mediaCid != rootCid {
+		if err := ops.moveFiles(rootCid, metaFids); err != nil {
+			onLog(fmt.Sprintf("○ %s/ - 封面/NFO 移动到根目录失败（留在季目录）: %v", dir.Name, err))
+		}
+	} else if len(metaFids) > 0 {
+		// 电影：全部进根目录
+		if err := ops.moveFiles(rootCid, metaFids); err != nil {
+			onLog(fmt.Sprintf("○ %s/ - 封面/NFO 移动失败: %v", dir.Name, err))
 		}
 	}
 
@@ -765,6 +790,11 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		if err == nil {
 			ops.moveFiles(junkCid, junkFids)
 		}
+	}
+
+	// 整理完毕：已移空的源目录移到冗余（避免待整理目录残留空壳）
+	if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {
+		onLog(fmt.Sprintf("○ %s/ - 空源目录移到冗余失败（可忽略）: %v", dir.Name, err))
 	}
 
 	// 记录到数据库
