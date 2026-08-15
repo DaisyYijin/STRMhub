@@ -359,13 +359,16 @@ func mkdir115(cookie, parentCid, folderName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 成功响应的 data 可能是对象（含 cid）也可能是字符串提示，宽容解析
+	// 实测成功响应为平铺结构：{"state":true,"cid":"...","file_id":"...","file_name":"..."}
+	// 且 errno 可能是空字符串（不能声明为 int），失败时才有 data/errMsg
 	var result struct {
-		State  bool            `json:"state"`
-		Error  string          `json:"error"`
-		Data   json.RawMessage `json:"data"`
-		ErrNo  int             `json:"errNo"`
-		ErrMsg string          `json:"errMsg"`
+		State   bool            `json:"state"`
+		Error   string          `json:"error"`
+		Data    json.RawMessage `json:"data"`
+		ErrNo   json.RawMessage `json:"errNo"`
+		ErrMsg  string          `json:"errMsg"`
+		Cid     string          `json:"cid"`
+		FileID  string          `json:"file_id"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("解析创建目录响应失败: %s", truncateStr(string(body), 150))
@@ -376,6 +379,14 @@ func mkdir115(cookie, parentCid, folderName string) (string, error) {
 		}
 		return "", fmt.Errorf("创建目录失败: %s", result.Error)
 	}
+	// 平铺字段优先
+	if result.Cid != "" || result.FileID != "" {
+		if result.Cid != "" {
+			return result.Cid, nil
+		}
+		return result.FileID, nil
+	}
+	// 兼容嵌套 data 结构
 	var d struct {
 		Cid    string `json:"cid"`
 		FID    string `json:"fid"`

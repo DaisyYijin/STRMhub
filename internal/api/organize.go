@@ -429,8 +429,13 @@ func listPendingTopLevel(ops *pan115Ops, cid string) ([]dirEntry, error) {
 		}
 		for _, d := range raw {
 			isDir := fmt.Sprint(d["f"]) == "0"
+			fid := fmt.Sprint(d["fid"])
+			if isDir && (fid == "" || fid == "<nil>") {
+				// webapi 列表中目录自身 id 在 cid 字段（无 fid），移动目录必须用它
+				fid = fmt.Sprint(d["cid"])
+			}
 			e := dirEntry{
-				Fid:  fmt.Sprint(d["fid"]),
+				Fid:  fid,
 				Name: fmt.Sprint(d["n"]),
 				IsDir: isDir,
 				Cid:  fmt.Sprint(d["cid"]),
