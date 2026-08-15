@@ -109,52 +109,60 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 }
 
 // get115DownloadURL 通过 pickcode 获取 115 文件下载链接
-// 首选开放平台 downurl 接口（Cookie 亦可用，p115client download_url_info 同款），
-// 旧 webapi files/download 在部分 Cookie 类型下只返回文件元数据不含链接
+// 首选 App 加密接口（pro.api/android/2.0/ufile/download，openStrm 同款），
+// webapi files/download 在部分 Cookie 类型下只返回元数据不含链接
 func get115DownloadURL(pickcode, cookie string) (string, error) {
-	// ---- 首选：POST https://proapi.115.com/open/ufile/downurl ----
-	form := url.Values{"pick_code": {pickcode}}
-	openErr := "未尝试"
-	for _, ua := range []string{ua115Unified(), ""} { // 统一 UA 失败再试空 UA（p115client 默认空 UA）
-		body, err := post115Form("https://proapi.115.com/open/ufile/downurl", form, cookie, ua, 15*time.Second)
-		if err != nil {
-			openErr = "请求失败: " + err.Error()
-			continue
-		}
+	// ---- 首选：App 加密接口 ----
+	appErr := "未尝试"
+	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
+	form := url.Values{"data": {encrypt115(payload)}}
+	body, err := post115Form("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		appErr = "请求失败: " + err.Error()
+	} else {
 		var env struct {
-			State   json.RawMessage            `json:"state"`
-			Code    int64                      `json:"code"`
-			Message string                     `json:"message"`
-			Data    map[string]json.RawMessage `json:"data"`
+			State   json.RawMessage `json:"state"`
+			ErrNo   int             `json:"errno"`
+			ErrCode int             `json:"errcode"`
+			Error   string          `json:"error"`
+			Data    string          `json:"data"`
 		}
 		if jerr := json.Unmarshal(body, &env); jerr != nil {
-			openErr = "响应非 JSON: " + truncateStr(string(body), 150)
-			continue
-		}
-		if !openStateOK(env.State) || env.Code != 0 {
-			openErr = fmt.Sprintf("state=%s code=%d message=%s", strings.TrimSpace(string(env.State)), env.Code, env.Message)
-			continue
-		}
-		found := ""
-		for _, v := range env.Data {
-			if u := openParseDownloadURL(v); u != "" {
-				found = u
-				break
+			appErr = "响应非 JSON: " + truncateStr(string(body), 150)
+		} else if !openStateOK(env.State) {
+			appErr = fmt.Sprintf("state=%s error=%s", strings.TrimSpace(string(env.State)), env.Error)
+		} else if env.Data == "" {
+			appErr = "响应无加密数据: " + truncateStr(string(body), 150)
+		} else {
+			plain, derr := decrypt115(env.Data)
+			if derr != nil {
+				appErr = "解密失败: " + derr.Error()
+			} else {
+				var d struct {
+					URL json.RawMessage `json:"url"`
+				}
+				if json.Unmarshal(plain, &d) == nil {
+					if u := openParseDownloadURL(d.URL); u != "" {
+						return u, nil
+					}
+				}
+				// 兜底正则
+				if m := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`).FindSubmatch(plain); m != nil {
+					return string(m[1]), nil
+				}
+				appErr = "解密后无链接: " + truncateStr(string(plain), 150)
 			}
 		}
-		if found != "" {
-			return found, nil
-		}
-		openErr = "响应无链接: " + truncateStr(string(body), 150)
 	}
+
 	// ---- 回退：GET https://webapi.115.com/files/download?pickcode=xxx ----
 	apiURL := "https://webapi.115.com/files/download"
 	params := fmt.Sprintf("pickcode=%s", pickcode)
 	fullURL := apiURL + "?" + params
 
-	body, err := httpGet115(fullURL, nil, cookie, 15*time.Second)
+	body, err = httpGet115(fullURL, nil, cookie, 15*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("请求 115 下载接口失败: %w", err)
+		return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %v", appErr, err)
 	}
 
 	var result struct {
@@ -177,7 +185,7 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 			if msg == "" {
 				msg = "未知错误"
 			}
-			return "", fmt.Errorf("115 下载接口拒绝: %s", msg)
+			return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: 拒绝: %s", appErr, msg)
 		}
 		if result.URL.URL != "" {
 			return result.URL.URL, nil
@@ -191,7 +199,7 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 	if m := re.FindSubmatch(body); m != nil {
 		return string(m[1]), nil
 	}
-	return "", fmt.Errorf("获取下载链接失败 [open接口]: %s；[webapi接口]: %s", openErr, truncateStr(string(body), 150))
+	return "", fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %s", appErr, truncateStr(string(body), 150))
 }
 
 // post115Form 带 Cookie 的 115 表单 POST（可指定 UA，空串表示发空 UA 头）

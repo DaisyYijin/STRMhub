@@ -39,6 +39,7 @@ func loadThrottleInterval() time.Duration {
 func isThrottledHost(api string) bool {
 	return strings.Contains(api, "webapi.115.com") ||
 		strings.Contains(api, "web.api.115.com") ||
+		strings.Contains(api, "pro.api.115.com") ||
 		strings.Contains(api, "115cdn.com") ||
 		strings.Contains(api, "115vod.com") ||
 		strings.Contains(api, "proapi.115.com")
