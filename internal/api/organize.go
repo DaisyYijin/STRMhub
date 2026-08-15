@@ -548,9 +548,10 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 		return results, 0
 	}
 
-	// 排除整理工作区目录自身：已存在/冗余/待整理配置指向的目录不得被当作影视处理
-	// （否则会出现"已经存在文件夹被移动进自己"的错误）
-	excluded := map[string]bool{cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+	// 四个工作区根目录（媒体库/待整理/已存在/冗余）永不被移动：
+	// 引擎只往它们里面放内容，目录自身绝不能被当作影视条目处理
+	// （否则会出现"已经存在文件夹移进自己"，或媒体库嵌在待整理内时整库被搬进已存在）
+	excluded := map[string]bool{cfg.Library: true, cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
 	filtered := topEntries[:0]
 	for _, e := range topEntries {
 		if e.IsDir && excluded[e.Cid] {
