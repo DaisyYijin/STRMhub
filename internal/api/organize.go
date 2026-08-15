@@ -261,8 +261,14 @@ func matchCategory(cat *model.CategoryRule, media *TmdbMedia) bool {
 	return true
 }
 
-// buildNewName 根据命名规则生成新文件名
+// sanitizeName 清洗名称中会破坏路径/被 115 拒绝的字符
+func sanitizeName(name string) string {
+	r := strings.NewReplacer("/", " ", "\\", " ", ":", "：", "*", " ", "?", "？", "\"", " ", "<", "(", ">", ")", "|", " ")
+	return strings.TrimSpace(r.Replace(name))
+}
+
 func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
+	media.Title = sanitizeName(media.Title)
 	// 首字母
 	firstLetter := "0"
 	if len(media.Title) > 0 {
@@ -634,7 +640,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 在我的影视库创建目标目录
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
-		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v", dir.Name, err))
+		onLog(fmt.Sprintf("✗ %s/ - 创建目录失败: %v（分类=%q 目标目录=%q 新路径=%q）", dir.Name, err, category, targetDir, newPath))
 		return results
 	}
 

@@ -715,6 +715,7 @@ type incrSummary struct {
 	AssetsDownloaded int `json:"assets_downloaded"`
 	AssetsSkipped    int `json:"assets_skipped"`
 	AssetsFailed     int `json:"assets_failed"`
+	Elapsed          string `json:"elapsed"`
 }
 
 // RunIncrementalSync 增量同步 HTTP 入口
@@ -778,6 +779,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		return sum, err
 	}
 
+	incrStart := time.Now()
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
 	log.Printf("[115增量] 开始: 媒体库 cid=%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
@@ -948,8 +950,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	if sum.StrmCreated+sum.AssetsDownloaded+sum.Deleted+sum.Moved > 0 {
 		h.notifyEmbyRefresh(p.LocalPath)
 	}
-	log.Printf("[115增量] 完成: 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
-		sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
+	log.Printf("[115增量] 任务完成: 增量同步, 耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
+		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
 	return sum, nil
 }
 
@@ -1156,6 +1159,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	defer fullSyncMu.Unlock()
 	beginTask("全量同步")
 	defer endTask()
+	fullStart := time.Now()
 
 	// 读取 STRM 直链配置
 	domain, format, keepExt, skipExist := h.getStrmConfig()
@@ -1196,11 +1200,12 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 			log.Printf("[115同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
 		}
 	}
-	log.Printf("[115同步] 全量同步完成: 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
-		len(videos), strmCreated, len(assets), downloaded, skipped, failed)
+	log.Printf("[115同步] 任务完成: 全量同步, 耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
+		time.Since(fullStart).Truncate(time.Second), len(videos), strmCreated, len(assets), downloaded, skipped, failed)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "全量同步完成",
+		"elapsed": time.Since(fullStart).Truncate(time.Second).String(),
 		"total":   len(videos),
 		"created": strmCreated,
 		"assets_total":      len(assets),
@@ -1466,6 +1471,8 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 // 加载配置 → 整理引擎 → 可选对影视库执行全量同步
 // 返回步骤摘要与错误（错误时 steps 里带原因）
 func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
+	orgStart := time.Now()
+	log.Printf("[整理] 开始: 待整理归位 %s", time.Now().Format("15:04:05"))
 	steps := []gin.H{}
 
 	orgCfg, err := h.loadOrgConfig()
@@ -1552,6 +1559,9 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
 			strings.Join(titles, "\n"),
 		)
 	}
+	log.Printf("[整理] 任务完成: 自动整理, 耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
+		time.Since(orgStart).Truncate(time.Second), totalFiles, successCount, existsCount, failedCount,
+		map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
 	_ = strmTotal
 	_ = strmCreated
 	return steps, nil

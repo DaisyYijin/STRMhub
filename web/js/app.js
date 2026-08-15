@@ -360,7 +360,7 @@ async function startIncrementalSync() {
     }) });
     toast(data.message || '增量同步完成');
     const sm = data.summary || {};
-    appendLog(`增量同步完成：事件 ${sm.events_total}（新 ${sm.events_fresh}，媒体相关 ${sm.relevant}，结构性 ${sm.structural}：删 ${sm.deleted} 移/改 ${sm.moved}），目录 ${sm.dirs}（跳过 ${sm.dirs_skipped}），视频 ${sm.videos}（STRM ${sm.strm_created}），附属下载 ${sm.assets_downloaded}`);
+    appendLog(`任务完成: 增量同步, 耗时 ${sm.elapsed || '-'} · 事件 ${sm.events_total}（新 ${sm.events_fresh}，媒体相关 ${sm.relevant}，结构性 ${sm.structural}：删 ${sm.deleted} 移/改 ${sm.moved}），目录 ${sm.dirs}（跳过 ${sm.dirs_skipped}），视频 ${sm.videos}（STRM ${sm.strm_created}），附属下载 ${sm.assets_downloaded}`);
   } catch (e) {
     appendLog('✗ 增量同步失败: ' + e.message);
     toast('增量同步失败：' + e.message);
@@ -553,7 +553,7 @@ async function startFullSync() {
       data_ext: getTags('data-ext'),
     }) });
     toast(data.message || '全量同步完成');
-    appendLog(`全量同步完成：视频 ${data.total} 个（生成 STRM ${data.created}），附属文件 ${data.assets_total} 个（下载 ${data.assets_downloaded}，跳过 ${data.assets_skipped}，失败 ${data.assets_failed}）`);
+    appendLog(`任务完成: 全量同步 · 视频 ${data.total} 个（生成 STRM ${data.created}），附属文件 ${data.assets_total} 个（下载 ${data.assets_downloaded}，跳过 ${data.assets_skipped}，失败 ${data.assets_failed}）；详细耗时见服务端日志`);
   } catch (e) { toast(e.message); }
 }
 
@@ -1014,6 +1014,7 @@ async function startOrganize() {
   toast('整理任务执行中...');
   appendLog('开始执行整理任务');
   try {
+    const t0 = Date.now();
     const data = await api('/organize/pipeline', { method: 'POST', body: JSON.stringify({ sync_after: true }) });
     toast(data.message || '整理完成');
     if (data.steps) {
@@ -1022,6 +1023,7 @@ async function startOrganize() {
         appendLog(`${icon} ${s.step}: ${s.message}`);
       });
     }
+    appendLog(`任务完成: 自动整理, 耗时 ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
   } catch (e) {
     toast(e.message);
     appendLog('✗ 整理执行失败: ' + e.message);
