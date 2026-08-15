@@ -359,30 +359,44 @@ func mkdir115(cookie, parentCid, folderName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// 成功响应的 data 可能是对象（含 cid）也可能是字符串提示，宽容解析
 	var result struct {
-		State bool   `json:"state"`
-		Error string `json:"error"`
-		Data  struct {
-			Cid  string `json:"cid"`
-			FID  string `json:"fid"`
-		} `json:"data"`
-		ErrNo  int    `json:"errNo"`
-		ErrMsg string `json:"errMsg"`
+		State  bool            `json:"state"`
+		Error  string          `json:"error"`
+		Data   json.RawMessage `json:"data"`
+		ErrNo  int             `json:"errNo"`
+		ErrMsg string          `json:"errMsg"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("解析创建目录响应失败")
+		return "", fmt.Errorf("解析创建目录响应失败: %s", truncateStr(string(body), 150))
 	}
 	if !result.State {
-		// 目录可能已存在
 		if result.ErrMsg != "" {
 			return "", fmt.Errorf("创建目录失败: %s", result.ErrMsg)
 		}
 		return "", fmt.Errorf("创建目录失败: %s", result.Error)
 	}
-	if result.Data.Cid != "" {
-		return result.Data.Cid, nil
+	var d struct {
+		Cid    string `json:"cid"`
+		FID    string `json:"fid"`
+		FileID string `json:"file_id"`
 	}
-	return result.Data.FID, nil
+	if json.Unmarshal(result.Data, &d) == nil {
+		if d.Cid != "" {
+			return d.Cid, nil
+		}
+		if d.FID != "" {
+			return d.FID, nil
+		}
+		if d.FileID != "" {
+			return d.FileID, nil
+		}
+	}
+	// data 无 cid（如字符串提示）：目录实际已创建，列出父目录按名找回 cid
+	if cid, err := findSubDir115(cookie, parentCid, folderName); err == nil && cid != "" {
+		return cid, nil
+	}
+	return "", fmt.Errorf("目录已创建但未获取到 cid（data=%s）", truncateStr(string(result.Data), 100))
 }
 
 // findSubDir115 在指定目录下查找名为 name 的子目录，返回 cid（不存在返回空）
@@ -433,11 +447,12 @@ func move115Files(cookie, targetCid string, fileIds []string) error {
 	if len(fileIds) == 0 {
 		return nil
 	}
+	// 字段格式以 p115client fs_move 为准：fid[0]、fid[1]...（重复的裸 fid 已失效）
 	form := url.Values{
 		"pid": {targetCid},
 	}
-	for _, fid := range fileIds {
-		form.Add("fid", fid)
+	for i, fid := range fileIds {
+		form.Set(fmt.Sprintf("fid[%d]", i), fid)
 	}
 	body, err := httpPostForm115("https://webapi.115.com/files/move", form, cookie, 20*time.Second)
 	if err != nil {
