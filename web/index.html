@@ -686,6 +686,7 @@ av:
             <div class="acc-line" style="font-size:13px;color:var(--text-2)">容量：<span id="acc-capacity">-</span></div>
             <div class="acc-bar-wrap"><div class="acc-bar" id="acc-bar" style="width:0%"></div></div>
             <div class="acc-line" style="font-size:12px;color:var(--text-3)"><span id="acc-bar-text"></span></div>
+            <details id="acc-devices" style="margin-top:6px;font-size:12px"></details>
           </div>
         </div></div></div>
         <div class="form-row"><div class="label">Cookie设备类型<i class="help-tip">?<span class="tip-bubble">网页端 Cookie 与 115Browser UA 配套，兼容性最好（默认推荐）。App 端 Cookie 有设备槽位校验，与桌面 UA 不匹配会报"服务器开小差"。避免选常用设备导致被挤下线。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="web" selected>115浏览器_网页端(推荐)</option><option value="115ios">115生活_iOS端</option><option value="115android">115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option><option value="tv">115生活_TV端</option><option value="qandroid">115浏览器_Android端</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
@@ -892,6 +893,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=32"></script>
+<script src="/js/app.js?v=33"></script>
 </body>
 </html>

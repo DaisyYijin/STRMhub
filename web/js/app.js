@@ -704,6 +704,20 @@ function updateAccCard(data) {
     document.getElementById('acc-bar').style.width = pct + '%';
     document.getElementById('acc-bar-text').textContent = '已用 ' + pct + '%';
   }
+  // 登录设备列表（可折叠，排查风控/异常登录）
+  const devBox = document.getElementById('acc-devices');
+  if (Array.isArray(data.devices) && data.devices.length) {
+    const rows = data.devices.map(d => {
+      const t = d.utime > 0 ? new Date(d.utime * 1000).toLocaleString() : '';
+      return '<div style="padding:2px 0">' + (d.is_current ? '🟢 ' : '· ') +
+        (d.name || d.device || '未知设备') + '　' + (d.ip || '') + (d.city ? '（' + d.city + '）' : '') +
+        (t ? '　' + t : '') + '</div>';
+    }).join('');
+    devBox.innerHTML = '<summary style="cursor:pointer;color:var(--text-2)">登录设备（' + data.devices.length + '）</summary>' + rows;
+    devBox.style.display = '';
+  } else {
+    devBox.style.display = 'none';
+  }
 }
 
 

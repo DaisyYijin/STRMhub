@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
 	"time"
@@ -227,6 +228,7 @@ func (h *Handler) Dashboard(c *gin.Context) {
 	h.DB.Model(&model.StrmFile{}).Where("status = ?", "invalid").Count(&invalidCount)
 
 	c.JSON(http.StatusOK, gin.H{
+		"pan115": h.pan115CapacityCached(),
 		"server": gin.H{
 			"cpu":    "23%",
 			"memory": "1.2G/8G",
@@ -453,6 +455,32 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 			totalSize = info.Data.SpaceInfo.AllTotal.Size
 			capacity = fmt.Sprintf("%s / %s", formatBytes(usedSize), formatBytes(totalSize))
 		}
+		// 登录设备列表（排查风控/异常登录用）
+		var info2 struct {
+			State bool `json:"state"`
+			Data  struct {
+				LoginDevicesInfo struct {
+					List []struct {
+						Name      string `json:"name"`
+						Device    string `json:"device"`
+						IP        string `json:"ip"`
+						City      string `json:"city"`
+						Utime     int64  `json:"utime"`
+						IsCurrent int    `json:"is_current"`
+					} `json:"list"`
+				} `json:"login_devices_info"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(infoBody, &info2) == nil && info2.State && len(info2.Data.LoginDevicesInfo.List) > 0 {
+			devices := make([]gin.H, 0, len(info2.Data.LoginDevicesInfo.List))
+			for _, d := range info2.Data.LoginDevicesInfo.List {
+				devices = append(devices, gin.H{
+					"name": d.Name, "device": d.Device, "ip": d.IP,
+					"city": d.City, "utime": d.Utime, "is_current": d.IsCurrent == 1,
+				})
+			}
+			accInfo["devices"] = devices
+		}
 	}
 	accInfo["used_size"] = usedSize
 	accInfo["total_size"] = totalSize
@@ -476,6 +504,71 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		h.upsert115Storage(cookie, "web", userName)
 		log.Printf("[115] 已导入并保存手动提供的 Cookie，账号=%s", userName)
 	}
+}
+
+// pan115Capacity 115 容量信息（仪表盘用，5 分钟内存缓存）
+type pan115Cap struct {
+	Username  string `json:"username"`
+	Used      int64  `json:"used"`
+	Total     int64  `json:"total"`
+	FetchedAt int64  `json:"-"`
+}
+
+var (
+	pan115CapMu    sync.Mutex
+	pan115CapCache *pan115Cap
+)
+
+// pan115CapacityCached 带缓存读取 115 容量（Cookie 有效才查询）
+func (h *Handler) pan115CapacityCached() gin.H {
+	pan115CapMu.Lock()
+	cached := pan115CapCache
+	pan115CapMu.Unlock()
+	if cached != nil && time.Since(time.Unix(cached.FetchedAt, 0)) < 5*time.Minute {
+		return gin.H{"username": cached.Username, "used": cached.Used, "total": cached.Total,
+			"used_h": formatBytes(cached.Used), "total_h": formatBytes(cached.Total)}
+	}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return gin.H{"enabled": false}
+	}
+	const navAPI = "https://my.115.com/?ct=ajax&ac=nav"
+	body, err := httpGet115UA(navAPI, nil, cookie, ua115Unified(), 10*time.Second)
+	if err != nil {
+		return gin.H{"enabled": false}
+	}
+	var resp struct {
+		State bool            `json:"state"`
+		Data  json.RawMessage `json:"data"`
+	}
+	cap2 := &pan115Cap{}
+	if json.Unmarshal(body, &resp) == nil && resp.State {
+		var d struct {
+			UserName string `json:"user_name"`
+		}
+		_ = json.Unmarshal(resp.Data, &d)
+		cap2.Username = d.UserName
+	}
+	if infoBody, err := httpGet115UA("https://webapi.115.com/files/index_info", nil, cookie, ua115Unified(), 10*time.Second); err == nil {
+		var info struct {
+			State bool `json:"state"`
+			Data  struct {
+				SpaceInfo struct {
+					AllTotal struct{ Size int64 } `json:"all_total"`
+					AllUse   struct{ Size int64 } `json:"all_use"`
+				} `json:"space_info"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(infoBody, &info) == nil && info.State {
+			cap2.Used, cap2.Total = info.Data.SpaceInfo.AllUse.Size, info.Data.SpaceInfo.AllTotal.Size
+		}
+	}
+	cap2.FetchedAt = time.Now().Unix()
+	pan115CapMu.Lock()
+	pan115CapCache = cap2
+	pan115CapMu.Unlock()
+	return gin.H{"username": cap2.Username, "used": cap2.Used, "total": cap2.Total,
+		"used_h": formatBytes(cap2.Used), "total_h": formatBytes(cap2.Total)}
 }
 
 // formatBytes 将字节数格式化为人类可读容量（如 1.50 GiB）

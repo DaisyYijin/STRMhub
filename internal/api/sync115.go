@@ -1018,7 +1018,71 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 				return true
 			}
 		}
+		// 目录事件：台账中出现过该名称路径段的，按最浅前缀整树删除
+		var segs []model.SyncedFile
+		h.DB.Where("rel_path LIKE ? OR rel_path LIKE ?", "%/"+ev.FileName+"/%", "%/"+ev.FileName).Limit(50).Find(&segs)
+		bestPrefix := ""
+		for _, sf := range segs {
+			parts := strings.Split(sf.RelPath, "/")
+			for i, part := range parts {
+				if part == ev.FileName {
+					prefix := strings.Join(parts[:i+1], "/")
+					if bestPrefix == "" || len(prefix) < len(bestPrefix) {
+						bestPrefix = prefix
+					}
+					break
+				}
+			}
+		}
+		if bestPrefix != "" {
+			full := filepath.Join(localRoot, filepath.FromSlash(bestPrefix))
+			if err := os.RemoveAll(full); err == nil {
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", bestPrefix, bestPrefix+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[115增量] 目录删除-执行成功(台账前缀): %s", bestPrefix)
+				return true
+			}
+		}
 	}
+	// 4) 本地磁盘按名搜索兜底（父目录与台账均不可用时）：
+	//    目录精确名匹配取最浅层整树删除；文件匹配 实体/strm 两种形态
+	if ev.FileName != "" {
+		var hitDir, hitFile string
+		filepath.WalkDir(localRoot, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			name := d.Name()
+			if name == ev.FileName {
+				if d.IsDir() {
+					if hitDir == "" || len(p) < len(hitDir) {
+						hitDir = p
+					}
+				} else {
+					hitFile = p
+				}
+			} else if name == ev.FileName+".strm" {
+				hitFile = p
+			}
+			return nil
+		})
+		if hitDir != "" {
+			if err := os.RemoveAll(hitDir); err == nil {
+				rel, _ := filepath.Rel(localRoot, hitDir)
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", filepath.ToSlash(rel), filepath.ToSlash(rel)+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[115增量] 目录删除-执行成功(本地搜索): %s", rel)
+				return true
+			}
+		}
+		if hitFile != "" {
+			if err := os.Remove(hitFile); err == nil {
+				rel, _ := filepath.Rel(localRoot, hitFile)
+				h.DB.Where("rel_path = ?", filepath.ToSlash(rel)).Delete(&model.SyncedFile{})
+				log.Printf("[115增量] 文件删除-执行成功(本地搜索): %s", rel)
+				return true
+			}
+		}
+	}
+	log.Printf("[115增量] 删除事件未命中本地: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
 	return false
 }
 
