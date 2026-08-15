@@ -71,20 +71,21 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 		return
 	}
 
-	log.Printf("302代理请求: pickcode=%s, UA=%s", pickcode, c.Request.UserAgent())
+	reqUA := c.Request.UserAgent()
+	log.Printf("302代理请求: pickcode=%s, UA=%s", pickcode, reqUA)
 
-	// 检查缓存
+	// 缓存键含 UA：115 直链与签发 UA 绑定，Emby(Lavf) 与浏览器链不可混用
+	cacheKey := pickcode + "|" + reqUA
 	downloadCacheMu.Lock()
-	cached, ok := downloadLinkCache[pickcode]
+	cached, ok := downloadLinkCache[cacheKey]
 	downloadCacheMu.Unlock()
 	if ok && time.Now().Before(cached.Expiry) {
-		log.Printf("302代理命中缓存: %s", pickcode)
 		c.Redirect(http.StatusFound, cached.URL)
 		return
 	}
 
-	// 获取下载链接：OpenAPI 优先，Cookie 回退
-	downloadURL, err := proxyDownloadURL(db, cfg, pickcode)
+	// 获取下载链接：按请求方 UA 签发（OpenAPI 优先，Cookie 回退）
+	downloadURL, err := proxyDownloadURL(db, cfg, pickcode, reqUA)
 	if err != nil {
 		log.Printf("302代理获取下载链接失败: %v", err)
 		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)
@@ -98,7 +99,7 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 
 	// 缓存链接（10 分钟有效）
 	downloadCacheMu.Lock()
-	downloadLinkCache[pickcode] = downloadCacheEntry{
+	downloadLinkCache[cacheKey] = downloadCacheEntry{
 		URL:    downloadURL,
 		Expiry: time.Now().Add(10 * time.Minute),
 	}
@@ -116,12 +117,15 @@ const ua115Download = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) Ap
 // 首选 App 加密接口（pro.api/android/2.0/ufile/download，openStrm 同款），
 // webapi files/download 在部分 Cookie 类型下只返回元数据不含链接。
 // 返回的 headers 为 CDN 要求携带的请求头（下载 UA + 直链响应 Set-Cookie）
-func get115DownloadURL(pickcode, cookie string) (string, map[string]string, error) {
-	// ---- 首选：App 加密接口 ----
+func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]string, error) {
+	if signUA == "" {
+		signUA = ua115Download // 默认浏览器 UA（附属文件下载等自有场景）
+	}
+	// ---- 首选：App 加密接口（用签发 UA 请求，直链即绑定该 UA）----
 	appErr := "未尝试"
 	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
 	form := url.Values{"data": {encrypt115(payload)}}
-	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Download, 15*time.Second)
+	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, signUA, 15*time.Second)
 	if err != nil {
 		appErr = "请求失败: " + err.Error()
 	} else {
@@ -161,7 +165,7 @@ func get115DownloadURL(pickcode, cookie string) (string, map[string]string, erro
 					for _, ck := range resp.Cookies() {
 						parts = append(parts, ck.Name+"="+ck.Value)
 					}
-					headers := map[string]string{"User-Agent": ua115Download}
+					headers := map[string]string{"User-Agent": signUA}
 					if len(parts) > 0 {
 						headers["Cookie"] = strings.Join(parts, "; ")
 					}

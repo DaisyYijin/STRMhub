@@ -135,6 +135,66 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 	}
 }
 
+// renameToStandard 视频按标准名重命名（入库后调用，按 fid 重命名）：
+//   电影单文件 → 标题 (年份) [tmdb id].ext
+//   剧集（可解析出 S/E）→ 标题 - S01E02.ext
+//   无法解析集号的保留原名；同目录字幕的基名跟随所属视频新名
+func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, newPath string, onLog func(string)) {
+	type vRen struct{ fid, oldBase, newBase, ext string }
+	var renames []vRen
+	stdBase := ""
+	if media.MediaType == "movie" {
+		// buildNewName 的文件段即标准名（去掉扩展名）
+		stdBase = baseName(pathBase(newPath))
+	}
+	for _, vf := range videoFiles {
+		ext := pathExt(vf.Name)
+		oldBase := baseName(vf.Name)
+		nb := ""
+		if media.MediaType == "movie" && stdBase != "" && len(videoFiles) == 1 {
+			nb = stdBase
+		} else if media.MediaType == "tv" {
+			if p := parseFileName(vf.Name); p.Season > 0 && p.Episode > 0 {
+				nb = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
+			}
+		}
+		if nb == "" || nb == oldBase {
+			continue
+		}
+		renames = append(renames, vRen{fid: vf.Fid, oldBase: oldBase, newBase: nb, ext: ext})
+	}
+	if len(renames) == 0 {
+		return
+	}
+	// 视频重命名
+	for _, r := range renames {
+		if err := ops.rename(r.fid, r.newBase+r.ext); err != nil {
+			onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", r.oldBase+r.ext, err))
+		} else {
+			onLog(fmt.Sprintf("✓ 重命名 %s → %s%s", r.oldBase, r.newBase, r.ext))
+		}
+	}
+	// 字幕基名跟随所属视频（前缀匹配视频旧基名）
+	for _, f := range files {
+		ext := strings.ToLower(pathExt(f.Name))
+		if !orgAttachmentExts[ext] {
+			continue
+		}
+		fb := baseName(f.Name)
+		for _, r := range renames {
+			if fb == r.oldBase || strings.HasPrefix(fb, r.oldBase+".") {
+				suffix := strings.TrimPrefix(fb, r.oldBase)
+				if err := ops.rename(f.Fid, r.newBase+suffix+ext); err != nil {
+					onLog(fmt.Sprintf("○ 字幕重命名失败保持原名 %s: %v", f.Name, err))
+				} else {
+					onLog(fmt.Sprintf("✓ 字幕重命名 %s → %s%s", f.Name, r.newBase, suffix+ext))
+				}
+				break
+			}
+		}
+	}
+}
+
 // moveQuietly 移动并记录失败（失败不再被吞掉）
 func moveQuietly(ops *pan115Ops, targetCid string, fids []string, label string, onLog func(string)) {
 	if err := ops.moveFiles(targetCid, fids); err != nil {
@@ -871,6 +931,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
+	// 视频与字幕按标准名重命名
+	renameToStandard(ops, media, videoFiles, files, newPath, onLog)
+
 	// 整理完毕：已移空的源目录移到冗余（避免待整理目录残留空壳）
 	if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {
 		onLog(fmt.Sprintf("○ %s/ - 空源目录移到冗余失败: %v", dir.Name, err))
@@ -976,6 +1039,14 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 		result.Message = "移动文件失败: " + err.Error()
 		onLog(fmt.Sprintf("✗ %s - 移动失败: %v", f.Name, err))
 		return result
+	}
+	// 视频本体重命名为标准名
+	if stdName := pathBase(newPath); stdName != "" && stdName != f.Name {
+		if err := ops.rename(f.Fid, stdName); err != nil {
+			onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", f.Name, err))
+		} else {
+			onLog(fmt.Sprintf("✓ 重命名 %s → %s", f.Name, stdName))
+		}
 	}
 
 	onLog(fmt.Sprintf("▣ 目标目录就绪: %s", category+"/"+strings.Split(newPath, "/")[0]))

@@ -929,19 +929,20 @@ func (o *pan115Ops) moveFiles(targetCid string, fids []string) error {
 	return move115Files(o.cookie, targetCid, fids)
 }
 
-// downloadURL 获取下载直链
+// downloadURL 获取下载直链（默认签发 UA）
 func (o *pan115Ops) downloadURL(pickcode string) (string, error) {
-	u, _, err := o.downloadURLFull(pickcode)
+	u, _, err := o.downloadURLFull(pickcode, "")
 	return u, err
 }
 
 // downloadURLFull 获取下载直链及 CDN 要求的请求头（直链响应 Set-Cookie 下发）
-func (o *pan115Ops) downloadURLFull(pickcode string) (string, map[string]string, error) {
+// ua 为签发 UA（空则用默认浏览器 UA）；直链与签发 UA 绑定，302 场景应传播放端 UA
+func (o *pan115Ops) downloadURLFull(pickcode, ua string) (string, map[string]string, error) {
 	if o.open != nil {
 		u, err := o.open.downloadURL(pickcode)
 		return u, nil, err
 	}
-	return get115DownloadURL(pickcode, o.cookie)
+	return get115DownloadURL(pickcode, o.cookie, ua)
 }
 
 // cookieForDL 附属文件下载重试用的登录 Cookie（OpenAPI 通道返回空）
@@ -950,7 +951,7 @@ func (o *pan115Ops) cookieForDL() string {
 }
 
 // proxyDownloadURL 302 代理专用：不依赖 Handler，直接从 DB+配置构造通道
-func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode string) (string, error) {
+func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode, ua string) (string, error) {
 	// OpenAPI 通道
 	if oc := open115FromDB(db, cfg); oc != nil && oc.authorized() {
 		return oc.downloadURL(pickcode)
@@ -967,6 +968,6 @@ func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode string) (string,
 		}
 		cookie = storage.Cookie
 	}
-	u, _, err := get115DownloadURL(pickcode, cookie)
+	u, _, err := get115DownloadURL(pickcode, cookie, ua)
 	return u, err
 }

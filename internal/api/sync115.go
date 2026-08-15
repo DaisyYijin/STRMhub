@@ -819,12 +819,28 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
+	// 拉取失败重试：30 秒 × 3 次（网络抖动/瞬时风控不应让整轮作废，QMediaSync 同款）
+	fetchWithRetry := func(offset int) ([]lifeEvent, error) {
+		var lastErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			evs, err := fetch115LifeEvents(cookie, 30, offset, "")
+			if err == nil {
+				return evs, nil
+			}
+			lastErr = err
+			log.Printf("[115增量] 事件拉取失败（第 %d/3 次）: %v", attempt, err)
+			if attempt < 3 {
+				time.Sleep(30 * time.Second)
+			}
+		}
+		return nil, lastErr
+	}
 	var pending []model.SyncEvent
 	offset := 0
 	for {
-		events, err := fetch115LifeEvents(cookie, 30, offset, "")
+		events, err := fetchWithRetry(offset)
 		if err != nil {
-			return sum, fmt.Errorf("拉取生活事件失败: %w", err)
+			return sum, fmt.Errorf("拉取生活事件失败（已重试 3 次）: %w", err)
 		}
 		sum.EventsTotal += len(events)
 		fresh := 0
@@ -1003,9 +1019,13 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	for _, t := range uniqTargets {
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
-			log.Printf("[115增量] 遍历目录失败 %s: %v", t.base, err)
-			sum.DirsSkipped++
-			continue
+			log.Printf("[115增量] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
+			time.Sleep(30 * time.Second)
+			if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+				log.Printf("[115增量] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
+				sum.DirsSkipped++
+				continue
+			}
 		}
 		sc, dl, sk, fl := applySyncResults(h.DB, ops, videos, assets, p.LocalPath, domain, format, keepExt, skipExist, t.base)
 		sum.Dirs++
@@ -1383,7 +1403,7 @@ func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, 
 			upsertSyncedFile(db, f, path.Join(f.Path, f.Name), "asset")
 			continue
 		}
-		u, hdrs, err := ops.downloadURLFull(f.PickCode)
+		u, hdrs, err := ops.downloadURLFull(f.PickCode, "")
 		if err != nil {
 			resCh <- assetRes{f: f, err: err}
 			continue
