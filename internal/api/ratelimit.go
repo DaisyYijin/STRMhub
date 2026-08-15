@@ -52,7 +52,8 @@ func isThrottledHost(api string) bool {
 		strings.Contains(api, "proapi.115.com")
 }
 
-// throttle115 在发起 115 文件类 API 请求前调用，确保全局最小间隔
+// throttle115 在发起 115 文件类 API 请求前调用，确保与上一请求【完成时刻】
+// 的间隔不小于设置值（完成一个之后等待 N 秒再发下一个）
 func throttle115(api string) {
 	if !isThrottledHost(api) {
 		return
@@ -61,18 +62,27 @@ func throttle115(api string) {
 	var waited time.Duration
 	if elapsed := time.Since(throttleLast); elapsed < throttleMinGap {
 		waited = throttleMinGap - elapsed
-		// 正常 1 秒内的等待不记录；只有明显拥堵（排队超过 3 个间隔）才提示
+		// 明显拥堵（排队超过 3 个间隔）才提示
 		if waited > 3*throttleMinGap {
 			log.Printf("[115节流] 等待 %v 后再请求 %s", waited.Truncate(time.Millisecond), api)
 		}
 		time.Sleep(waited)
 	}
-	throttleLast = time.Now()
 	throttleMu.Unlock()
 
 	lastWaitMu.Lock()
 	lastWait = waited
 	lastWaitMu.Unlock()
+}
+
+// throttle115Done 请求完成后调用，推进节流锚点（锚点=完成时刻）
+func throttle115Done(api string) {
+	if !isThrottledHost(api) {
+		return
+	}
+	throttleMu.Lock()
+	throttleLast = time.Now()
+	throttleMu.Unlock()
 }
 
 // throttle115LastWait 返回最近一次节流的等待时长（同步日志展示用）

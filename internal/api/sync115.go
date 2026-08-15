@@ -100,6 +100,7 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
+	throttle115Done(api) // 节流锚点推进到本请求完成时刻
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +363,7 @@ func httpPostForm115(api string, form url.Values, cookie string, timeout time.Du
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
+	throttle115Done(api) // 节流锚点推进到本请求完成时刻
 	if err != nil {
 		return nil, err
 	}

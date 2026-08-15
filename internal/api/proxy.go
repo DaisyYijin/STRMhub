@@ -245,6 +245,7 @@ func post115FormResp(api string, form url.Values, cookie, ua string, timeout tim
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
+	throttle115Done(api) // 节流锚点推进到本请求完成时刻
 	if err != nil {
 		return nil, resp, err
 	}
