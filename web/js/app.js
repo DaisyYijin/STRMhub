@@ -303,14 +303,16 @@ async function startIncrementalSync() {
   const cid = resolveCID('full-cid') || '0';
   if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
   try {
-    appendLog('开始增量同步（拉取 115 生活事件）...');
+    appendLog('开始增量同步（拉取 115 生活事件，定向同步受影响目录）...');
     const data = await api('/sync/incremental', { method: 'POST', body: JSON.stringify({
       cid: cid,
       local_path: document.getElementById('full-local').value,
       video_ext: getTags('video-ext'),
+      image_ext: getTags('image-ext'),
+      data_ext: getTags('data-ext'),
     }) });
     toast(data.message || '增量同步完成');
-    appendLog(`增量同步完成：共拉取 ${data.total} 个事件，其中 ${data.relevant} 个与媒体文件相关`);
+    appendLog(`增量同步完成：事件 ${data.total}（媒体相关 ${data.relevant}，结构性 ${data.structural}），受影响目录 ${data.dirs}（跳过 ${data.dirs_skipped}），视频 ${data.videos}（STRM ${data.strm_created}），附属下载 ${data.assets_downloaded}`);
   } catch (e) {
     appendLog('✗ 增量同步失败: ' + e.message);
     toast('增量同步失败：' + e.message);

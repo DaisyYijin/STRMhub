@@ -641,14 +641,58 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 	return events, nil
 }
 
-// RunIncrementalSync 增量同步：拉取生活事件，处理媒体库文件变化
-// POST /sync/incremental  body: {"cid":"...","local_path":"...","video_ext":["mp4","mkv"],"limit":1000}
+// get115DirPath 查询目录在网盘中的云路径（webapi files/get_info）
+func get115DirPath(cookie, cid string) (string, error) {
+	body, err := httpGet115UA("https://webapi.115.com/files/get_info",
+		url.Values{"file_id": {cid}}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		State bool   `json:"state"`
+		Error string `json:"error"`
+		Data  struct {
+			Path     string `json:"path"`
+			FileName string `json:"file_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil || !r.State {
+		return "", fmt.Errorf("获取目录信息失败: %s", truncateStr(string(body), 120))
+	}
+	if r.Data.Path != "" {
+		return r.Data.Path, nil
+	}
+	return r.Data.FileName, nil
+}
+
+// relCloudPath 计算子目录相对媒体库根的路径（都归一化为无首尾斜杠）
+func relCloudPath(rootPath, dirPath string) string {
+	norm := func(p string) string { return strings.Trim(p, "/") }
+	root, dir := norm(rootPath), norm(dirPath)
+	if root == "" {
+		return dir
+	}
+	if dir == root {
+		return ""
+	}
+	if strings.HasPrefix(dir, root+"/") {
+		return strings.TrimPrefix(dir, root+"/")
+	}
+	return "" // 不在媒体库下
+}
+
+// RunIncrementalSync 增量同步：拉取生活事件，对受影响目录做定向同步
+// 新增/转存/复制的事件 → 定向遍历其所在目录（视频生成 strm，附属文件落盘）；
+// 移动/改名/删除事件只统计上报，不动本地文件（防误删，参照 AutoFilm 保护思路）
+// POST /sync/incremental  body: {"cid":"...","local_path":"...","video_ext":[],"image_ext":[],"data_ext":[],"limit":1000}
 func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	var req struct {
-		Cid       string   `json:"cid"`
-		LocalPath string   `json:"local_path"`
-		VideoExt  []string `json:"video_ext"`
-		Limit     int      `json:"limit"`
+		Cid        string   `json:"cid"`
+		LocalPath  string   `json:"local_path"`
+		VideoExt   []string `json:"video_ext"`
+		ImageExt   []string `json:"image_ext"`
+		DataExt    []string `json:"data_ext"`
+		Limit      int      `json:"limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -657,8 +701,19 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	if req.Limit <= 0 || req.Limit > 1000 {
 		req.Limit = 1000
 	}
+	if req.LocalPath == "" {
+		req.LocalPath = "/media"
+	}
+	if req.Cid == "" {
+		req.Cid = "0"
+	}
 
 	cookie, err := h.get115Cookie()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ops, err := h.newPan115Ops()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -671,28 +726,101 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		return
 	}
 
-	// 过滤出与媒体文件相关的操作
-	exts := buildExtSet(req.VideoExt)
-	relevant := make([]lifeEvent, 0)
+	// 分类：受影响目录集合 + 结构性变更统计
+	filter := &syncFilter{
+		videoExts: buildExtSet(req.VideoExt),
+		assetExts: buildExtSet(append(append([]string{}, req.ImageExt...), req.DataExt...)),
+	}
+	filter.assetExts[".nfo"] = true
+	isMedia := func(name string) bool {
+		ext := strings.ToLower(path.Ext(name))
+		return filter.videoExts[ext] || filter.assetExts[ext]
+	}
+
+	dirSet := map[string]bool{}
+	structural := 0
+	relevant := 0
 	for _, ev := range events {
 		switch ev.Type {
-		case evUpload, evReceive, evCopy, evMove, evDelete, evRename:
-			// 只看视频后缀文件；删除/移动事件可能无后缀信息，也纳入
-			ext := strings.ToLower(path.Ext(ev.FileName))
-			if ext != "" && len(exts) > 0 && !exts[ext] {
-				continue
+		case evUpload, evReceive, evCopy:
+			if isMedia(ev.FileName) {
+				dirSet[ev.Cid] = true
+				relevant++
+			} else if ev.FileID != "" && ev.Cid == "" {
+				// 无父目录信息的事件（目录上传等），按目录自身处理
+				dirSet[ev.FileID] = true
+				relevant++
 			}
-			relevant = append(relevant, ev)
+		case evNewFolder:
+			if ev.FileID != "" {
+				dirSet[ev.FileID] = true
+				relevant++
+			}
+		case evMove, evDelete, evRename, evFolderRename:
+			structural++
 		}
 	}
 
+	// 媒体库根的云路径（用于把受影响目录换算成本地相对路径）
+	rootPath, rerr := get115DirPath(cookie, req.Cid)
+	if rerr != nil {
+		log.Printf("[115增量] 获取媒体库根路径失败: %v（按根路径处理）", rerr)
+	}
+
+	// 逐个受影响目录定向同步
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+	var allVideos, allAssets []remoteFile
+	processed, skippedDirs := 0, 0
+	for cid := range dirSet {
+		dirPath, err := get115DirPath(cookie, cid)
+		if err != nil {
+			log.Printf("[115增量] 获取目录路径失败 cid=%s: %v", cid, err)
+			skippedDirs++
+			continue
+		}
+		base := relCloudPath(rootPath, dirPath)
+		if rootPath != "" && base == "" && norm(rootPath) != norm(dirPath) {
+			// 目录不在媒体库内，跳过
+			skippedDirs++
+			continue
+		}
+		var videos, assets []remoteFile
+		if err := walk115Dir(ops, cid, base, &videos, &assets, filter); err != nil {
+			log.Printf("[115增量] 遍历目录失败 %s: %v", dirPath, err)
+			skippedDirs++
+			continue
+		}
+		allVideos = append(allVideos, videos...)
+		allAssets = append(allAssets, assets...)
+		processed++
+	}
+
+	strmCreated, downloaded, assetSkipped, assetFailed := applySyncResults(ops, allVideos, allAssets, req.LocalPath, domain, format, keepExt, skipExist)
+	if strmCreated+downloaded > 0 {
+		h.notifyEmbyRefresh(req.LocalPath)
+	}
+	log.Printf("[115增量] 完成: 事件 %d（媒体相关 %d，结构性 %d），受影响目录 %d（处理 %d，跳过 %d），视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d，失败 %d）",
+		len(events), relevant, structural, len(dirSet), processed, skippedDirs, len(allVideos), strmCreated, len(allAssets), downloaded, assetSkipped, assetFailed)
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "生活事件拉取成功",
-		"total":    len(events),
-		"relevant": len(relevant),
-		"events":   relevant,
+		"message":          "增量同步完成",
+		"total":            len(events),
+		"relevant":         relevant,
+		"structural":       structural,
+		"dirs":             processed,
+		"dirs_skipped":     skippedDirs,
+		"videos":           len(allVideos),
+		"strm_created":     strmCreated,
+		"assets_total":     len(allAssets),
+		"assets_downloaded": downloaded,
+		"assets_skipped":   assetSkipped,
+		"assets_failed":    assetFailed,
+		"note":             "移动/改名/删除事件仅统计，未改动本地文件",
 	})
 }
+
+// norm 归一化云路径（去首尾斜杠）
+func norm(p string) string { return strings.Trim(p, "/") }
 
 // ==================== 全量同步 ====================
 
@@ -750,32 +878,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		return
 	}
 
-	// 视频 → 生成 STRM
-	strmCreated := 0
-	for _, f := range videos {
-		if err := writeStrm(req.LocalPath, domain, format, keepExt, skipExist, f); err != nil {
-			continue
-		}
-		strmCreated++
-	}
-
-	// 附属文件 → 下载实体文件（已存在跳过）
-	downloaded, skipped, failed := 0, 0, 0
-	for i, f := range assets {
-		if i%20 == 0 {
-			log.Printf("[115同步] 附属文件进度: %d/%d", i, len(assets))
-		}
-		st, err := syncAssetFile(ops, f, req.LocalPath)
-		switch {
-		case err != nil:
-			failed++
-			log.Printf("[115同步] 附属文件失败: %s/%s: %v", f.Path, f.Name, err)
-		case st == "skip":
-			skipped++
-		default:
-			downloaded++
-		}
-	}
+	strmCreated, downloaded, skipped, failed := applySyncResults(ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist)
 
 	totalNew := strmCreated + downloaded
 	if totalNew > 0 {
@@ -793,6 +896,32 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		"assets_skipped":    skipped,
 		"assets_failed":     failed,
 	})
+}
+
+// applySyncResults 对遍历结果执行落盘：视频生成 strm，附属文件下载（已存在跳过）
+func applySyncResults(ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool) (strmCreated, downloaded, skipped, failed int) {
+	for _, f := range videos {
+		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
+			continue
+		}
+		strmCreated++
+	}
+	for i, f := range assets {
+		if i%20 == 0 {
+			log.Printf("[115同步] 附属文件进度: %d/%d", i, len(assets))
+		}
+		st, err := syncAssetFile(ops, f, localPath)
+		switch {
+		case err != nil:
+			failed++
+			log.Printf("[115同步] 附属文件失败: %s/%s: %v", f.Path, f.Name, err)
+		case st == "skip":
+			skipped++
+		default:
+			downloaded++
+		}
+	}
+	return
 }
 
 // getStrmConfig 读取 STRM 直链配置
