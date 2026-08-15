@@ -621,13 +621,7 @@ function startQrCodePolling(uid, time, sign) {
         box.style.display = 'block';
         document.getElementById('acc-username').textContent = data.username || '-';
         document.getElementById('acc-capacity').textContent = '已绑定';
-        if (data.warning) {
-          // 设备槽位不匹配等可用性警告，提示用户改用网页端重新扫码
-          document.getElementById('qrcode-status').textContent = '警告：' + data.warning;
-          setTimeout(() => { closeQrCode(); toast('扫码设备类型不配套，请改用「115浏览器_网页端」重新扫码'); }, 3500);
-        } else {
-          setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); }, 1000);
-        }
+        setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); checkCookie(); }, 1200);
       } else if (status === 'expired' || status === 'cancelled') {
         document.getElementById('qrcode-status').textContent = status === 'expired' ? '二维码已过期，请重新获取' : '已取消登录';
       } else {
@@ -672,13 +666,44 @@ function checkCookie() {
         toast('Cookie 无效：' + (data.message || '未知原因'));
         return;
       }
-      const box = document.getElementById('acc-status-box');
-      box.style.display = 'block';
-      document.getElementById('acc-username').textContent = data.username || '-';
-      document.getElementById('acc-capacity').textContent = data.capacity || '-';
+      updateAccCard(data);
       toast('Cookie 检测成功');
     })
     .catch(e => toast('Cookie 检测失败：' + (e.message || '无效')));
+}
+
+// 填充账号信息卡片：头像/会员/容量进度条/UID/通道
+function updateAccCard(data) {
+  const box = document.getElementById('acc-status-box');
+  box.style.display = 'flex';
+  const avatar = document.getElementById('acc-avatar');
+  const ph = avatar.nextElementSibling;
+  if (data.avatar) {
+    avatar.src = data.avatar; avatar.style.display = ''; ph.style.display = 'none';
+  } else { avatar.style.display = 'none'; ph.style.display = 'flex'; }
+  document.getElementById('acc-username').textContent = data.username || '-';
+  document.getElementById('acc-channel').textContent = '通道：' + (data.channel || '-');
+  document.getElementById('acc-uid').textContent = data.user_id || '-';
+  // 会员：0=非会员；forever=终身；expire=到期时间戳（秒）
+  const badge = document.getElementById('acc-vip-badge');
+  const vipText = document.getElementById('acc-vip');
+  if (data.vip_forever === 1 || data.vip_forever === true) {
+    badge.style.display = ''; badge.textContent = '终身VIP';
+    vipText.textContent = '终身会员';
+  } else if (data.vip > 0) {
+    badge.style.display = ''; badge.textContent = 'VIP';
+    vipText.textContent = data.vip_expire > 0 ? '会员，到期 ' + new Date(data.vip_expire * 1000).toLocaleDateString() : '会员';
+  } else {
+    badge.style.display = 'none';
+    vipText.textContent = '非会员';
+  }
+  document.getElementById('acc-capacity').textContent = data.capacity || '-';
+  const used = Number(data.used_size || 0), total = Number(data.total_size || 0);
+  if (total > 0) {
+    const pct = Math.min(100, Math.round(used / total * 1000) / 10);
+    document.getElementById('acc-bar').style.width = pct + '%';
+    document.getElementById('acc-bar-text').textContent = '已用 ' + pct + '%';
+  }
 }
 
 
@@ -695,11 +720,10 @@ async function loadAccount() {
     document.getElementById('acc-interval').value = acc.interval || 3.0;
     document.getElementById('acc-appid').value = acc.app_id || '';
     setOpenapi(!!acc.openapi_enabled);
-    if (acc.name && acc.name !== '115主号') {
-      document.getElementById('acc-status-box').style.display = 'block';
-      document.getElementById('acc-username').textContent = acc.name;
-      document.getElementById('acc-capacity').textContent = acc.status === 'online' ? '已绑定' : '-';
-    }
+    // 静默刷新账号卡片（真实容量/会员/头像）
+    api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115' }) })
+      .then(d => { if (d.valid) updateAccCard(d); })
+      .catch(() => {});
   } catch (e) {}
 }
 

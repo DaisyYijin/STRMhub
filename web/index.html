@@ -671,7 +671,23 @@ av:
       <div class="tab-panel active" data-panel="acc-115">
       <div class="card">
         <div class="form-row"><div class="label">Cookie文件路径<i class="help-tip">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button></div>
-        <div class="alert alert-success" id="acc-status-box" style="display:none;margin-top:8px"><span class="icon">✓</span> 账号：<span id="acc-username">-</span>，容量：<span id="acc-capacity">-</span></div></div></div>
+        <div class="acc-card" id="acc-status-box" style="display:none;margin-top:10px">
+          <img id="acc-avatar" class="acc-avatar" src="" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="acc-avatar acc-avatar-ph" style="display:none">👤</div>
+          <div class="acc-info">
+            <div class="acc-line1">
+              <span id="acc-username" style="font-weight:600">-</span>
+              <span id="acc-vip-badge" class="acc-vip" style="display:none">VIP</span>
+              <span style="flex:1"></span>
+              <span id="acc-channel" style="font-size:12px;color:var(--text-3)">-</span>
+            </div>
+            <div class="acc-line" style="font-size:13px;color:var(--text-2)">UID：<span id="acc-uid">-</span></div>
+            <div class="acc-line" style="font-size:13px;color:var(--text-2)">会员：<span id="acc-vip">-</span></div>
+            <div class="acc-line" style="font-size:13px;color:var(--text-2)">容量：<span id="acc-capacity">-</span></div>
+            <div class="acc-bar-wrap"><div class="acc-bar" id="acc-bar" style="width:0%"></div></div>
+            <div class="acc-line" style="font-size:12px;color:var(--text-3)"><span id="acc-bar-text"></span></div>
+          </div>
+        </div></div></div>
         <div class="form-row"><div class="label">Cookie设备类型<i class="help-tip">?<span class="tip-bubble">网页端 Cookie 与 115Browser UA 配套，兼容性最好（默认推荐）。App 端 Cookie 有设备槽位校验，与桌面 UA 不匹配会报"服务器开小差"。避免选常用设备导致被挤下线。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="web" selected>115浏览器_网页端(推荐)</option><option value="115ios">115生活_iOS端</option><option value="115android">115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option><option value="tv">115生活_TV端</option><option value="qandroid">115浏览器_Android端</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
         <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip">?<span class="tip-bubble">强烈推荐！使用 115 官方开放平台接口（同 LitePan/QMediaSync 方案），无 UA 风控、无"服务器开小差"，token 自动续期。Cookie 通道作为回退保留。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用(推荐)</div></div></div></div>
         <div class="form-row"><div class="label">开放平台 AppID<i class="help-tip">?<span class="tip-bubble">在 115 开放平台（open.115.com）申请应用后获取。填入后点击"扫码授权"，用 115 App 扫码完成 OAuth 授权。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-appid" placeholder="请输入 115 开放平台 AppID" style="flex:1"><button class="btn btn-success" onclick="saveAccount().then(openQrCode)">保存并扫码授权</button></div></div></div>
@@ -876,6 +892,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=31"></script>
+<script src="/js/app.js?v=32"></script>
 </body>
 </html>

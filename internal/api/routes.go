@@ -394,12 +394,27 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 	}
 	// state=false 时 data 可能是 []，仅在 state=true 时解析用户信息
 	var userName string
+	accInfo := gin.H{}
 	if resp.State && len(resp.Data) > 0 {
 		var d struct {
-			UserName string `json:"user_name"`
+			UserName    string `json:"user_name"`
+			UserID      int64  `json:"user_id"`
+			Face        string `json:"face"`   // 头像 URL
+			Vip         int    `json:"vip"`    // 0=非会员 1/2=会员
+			Expire      int64  `json:"expire"` // 会员到期时间戳（秒）
+			Forever     int    `json:"forever"`
+			IsPrivilege bool   `json:"is_privilege"`
 		}
 		_ = json.Unmarshal(resp.Data, &d)
 		userName = d.UserName
+		accInfo = gin.H{
+			"avatar":        d.Face,
+			"user_id":       d.UserID,
+			"vip":           d.Vip,
+			"vip_expire":    d.Expire,
+			"vip_forever":   d.Forever,
+			"is_privilege":  d.IsPrivilege,
+		}
 	}
 	if !resp.State || userName == "" {
 		msg := resp.Error
@@ -415,6 +430,7 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 
 	// 容量信息（webapi files/index_info，115driver GetInfo 同款）
 	capacity := "-"
+	var usedSize, totalSize int64
 	const infoAPI = "https://webapi.115.com/files/index_info"
 	if infoBody, err := httpGet115UA(infoAPI, nil, cookie, ua115Unified(), 15*time.Second); err == nil {
 		var info struct {
@@ -433,17 +449,25 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 			} `json:"data"`
 		}
 		if json.Unmarshal(infoBody, &info) == nil && info.State && info.Data.SpaceInfo.AllTotal.Size > 0 {
-			capacity = fmt.Sprintf("%s / %s", formatBytes(info.Data.SpaceInfo.AllUse.Size), formatBytes(info.Data.SpaceInfo.AllTotal.Size))
+			usedSize = info.Data.SpaceInfo.AllUse.Size
+			totalSize = info.Data.SpaceInfo.AllTotal.Size
+			capacity = fmt.Sprintf("%s / %s", formatBytes(usedSize), formatBytes(totalSize))
 		}
 	}
+	accInfo["used_size"] = usedSize
+	accInfo["total_size"] = totalSize
 
-	c.JSON(http.StatusOK, gin.H{
+	resp2 := gin.H{
 		"username": userName,
 		"capacity": capacity,
 		"valid":    true,
 		"message":  "Cookie 有效",
 		"channel":  "Cookie",
-	})
+	}
+	for k, v := range accInfo {
+		resp2[k] = v
+	}
+	c.JSON(http.StatusOK, resp2)
 
 	// 手动导入的 Cookie 检测通过后自动保存（绕过被风控的扫码登录接口）
 	if strings.TrimSpace(req.Cookie) != "" {
