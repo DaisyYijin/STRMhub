@@ -7,6 +7,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"strmhub/internal/model"
+
+	"gorm.io/gorm"
 )
 
 // ==================== 115 全局请求节流器 ====================
@@ -22,6 +26,9 @@ var (
 	throttleMu     sync.Mutex
 	throttleLast   time.Time
 	throttleMinGap = loadThrottleInterval()
+
+	lastWaitMu sync.Mutex
+	lastWait   time.Duration // 最近一次节流等待时长（供同步日志显示）
 )
 
 // loadThrottleInterval 读取节流间隔配置
@@ -51,16 +58,28 @@ func throttle115(api string) {
 		return
 	}
 	throttleMu.Lock()
-	defer throttleMu.Unlock()
+	var waited time.Duration
 	if elapsed := time.Since(throttleLast); elapsed < throttleMinGap {
-		sleep := throttleMinGap - elapsed
+		waited = throttleMinGap - elapsed
 		// 正常 1 秒内的等待不记录；只有明显拥堵（排队超过 3 个间隔）才提示
-		if sleep > 3*throttleMinGap {
-			log.Printf("[115节流] 等待 %v 后再请求 %s", sleep.Truncate(time.Millisecond), api)
+		if waited > 3*throttleMinGap {
+			log.Printf("[115节流] 等待 %v 后再请求 %s", waited.Truncate(time.Millisecond), api)
 		}
-		time.Sleep(sleep)
+		time.Sleep(waited)
 	}
 	throttleLast = time.Now()
+	throttleMu.Unlock()
+
+	lastWaitMu.Lock()
+	lastWait = waited
+	lastWaitMu.Unlock()
+}
+
+// throttle115LastWait 返回最近一次节流的等待时长（同步日志展示用）
+func throttle115LastWait() time.Duration {
+	lastWaitMu.Lock()
+	defer lastWaitMu.Unlock()
+	return lastWait
 }
 
 // Set115Interval 运行时调整节流间隔（供设置接口调用）
@@ -71,4 +90,15 @@ func Set115Interval(d time.Duration) {
 	throttleMu.Lock()
 	throttleMinGap = d
 	throttleMu.Unlock()
+}
+
+// Apply115Interval 从数据库读取用户设置的 API 请求间隔并应用
+// 优先级：数据库设置 > STRMHUB_115_INTERVAL 环境变量 > 默认 1 秒
+func Apply115Interval(db *gorm.DB) {
+	var storage model.Storage
+	if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Interval <= 0 {
+		return
+	}
+	Set115Interval(time.Duration(storage.Interval * float64(time.Second)))
+	log.Printf("[115节流] 已应用用户设置的 API 请求间隔: %v", time.Duration(storage.Interval*float64(time.Second)))
 }

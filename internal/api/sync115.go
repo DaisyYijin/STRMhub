@@ -194,13 +194,18 @@ func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, i
 // walk115Dir 递归遍历目录，按过滤器分别收集视频（生成 strm）和附属文件（实体落盘）
 // assets 为 nil 时只收集视频（整理管线等场景）
 func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFile, f *syncFilter) error {
-	log.Printf("[115同步] 遍历目录: %s", map[bool]string{true: basePath, false: "(根目录)"}[basePath != ""])
+	dirLabel := basePath
+	if dirLabel == "" {
+		dirLabel = "(根目录)"
+	}
 	offset := 0
 	for {
 		entries, count, err := ops.listEntries(cid, offset)
 		if err != nil {
 			return err
 		}
+		// 展示该次列表请求因 API 间隔设置的等待时长，让节流可见
+		log.Printf("[115同步] 同步%s，API等待%v", dirLabel, throttle115LastWait().Truncate(time.Millisecond))
 		for _, d := range entries {
 			isDir := fmt.Sprint(d["f"]) == "0"
 			name := fmt.Sprint(d["n"])

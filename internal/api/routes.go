@@ -22,6 +22,9 @@ import (
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	h := &Handler{DB: db, Config: cfg}
 
+	// 应用用户设置的 115 API 请求间隔（数据库 > 环境变量 > 默认 1s）
+	Apply115Interval(db)
+
 	// 认证
 	auth := r.Group("/auth")
 	{
@@ -282,6 +285,10 @@ func (h *Handler) CreateStorage(c *gin.Context) {
 			updates["cookie"] = storage.Cookie
 		}
 		h.DB.Model(&existing).Updates(updates)
+		// 间隔设置变更立即生效
+		if storage.Type == "115" {
+			Apply115Interval(h.DB)
+		}
 		c.JSON(http.StatusOK, gin.H{"data": existing, "message": "保存成功"})
 		return
 	}
@@ -290,6 +297,9 @@ func (h *Handler) CreateStorage(c *gin.Context) {
 		storage.Name = "115主号"
 	}
 	h.DB.Create(&storage)
+	if storage.Type == "115" {
+		Apply115Interval(h.DB)
+	}
 	c.JSON(http.StatusOK, gin.H{"data": storage, "message": "创建成功"})
 }
 
