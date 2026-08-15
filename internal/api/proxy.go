@@ -108,16 +108,20 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	c.Redirect(http.StatusFound, downloadURL)
 }
 
+// ua115Download 下载链路专用 UA（openStrm defaultUA 同款，浏览器 UA 签发的直链
+// 在 CDN 侧校验更宽松；直链绑定时也要求下载携带同一 UA）
+const ua115Download = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/116.0.5845.89 Mobile/15E148 Safari/604.1"
+
 // get115DownloadURL 通过 pickcode 获取 115 文件下载链接
 // 首选 App 加密接口（pro.api/android/2.0/ufile/download，openStrm 同款），
 // webapi files/download 在部分 Cookie 类型下只返回元数据不含链接。
-// 返回的 headers 为 CDN 要求携带的请求头（直链响应 Set-Cookie 下发，f=3 时必需）
+// 返回的 headers 为 CDN 要求携带的请求头（下载 UA + 直链响应 Set-Cookie）
 func get115DownloadURL(pickcode, cookie string) (string, map[string]string, error) {
 	// ---- 首选：App 加密接口 ----
 	appErr := "未尝试"
 	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
 	form := url.Values{"data": {encrypt115(payload)}}
-	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Unified(), 15*time.Second)
+	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, ua115Download, 15*time.Second)
 	if err != nil {
 		appErr = "请求失败: " + err.Error()
 	} else {
@@ -157,10 +161,11 @@ func get115DownloadURL(pickcode, cookie string) (string, map[string]string, erro
 					for _, ck := range resp.Cookies() {
 						parts = append(parts, ck.Name+"="+ck.Value)
 					}
-					headers := map[string]string{}
+					headers := map[string]string{"User-Agent": ua115Download}
 					if len(parts) > 0 {
 						headers["Cookie"] = strings.Join(parts, "; ")
 					}
+					log.Printf("[115下载] 获取直链成功: %s", truncateStr(u, 160))
 					return u, headers, nil
 				}
 				appErr = "解密后无链接: " + truncateStr(string(plain), 150)

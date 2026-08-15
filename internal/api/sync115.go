@@ -278,7 +278,12 @@ func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, erro
 }
 
 // downloadAssetBytes 下载附属文件内容，按 UA/Cookie 组合重试
+// UA 必须与直链签发时一致（headers["User-Agent"]），直链对该 UA 绑定
 func downloadAssetBytes(rawURL string, cdnHeaders map[string]string, loginCookie string) ([]byte, error) {
+	dlUA := cdnHeaders["User-Agent"]
+	if dlUA == "" {
+		dlUA = ua115Unified()
+	}
 	setCookie := cdnHeaders["Cookie"]
 	combined := setCookie
 	if combined != "" && loginCookie != "" {
@@ -288,15 +293,13 @@ func downloadAssetBytes(rawURL string, cdnHeaders map[string]string, loginCookie
 	type attempt struct{ ua, cookie string }
 	var attempts []attempt
 	if setCookie != "" {
-		attempts = append(attempts, attempt{ua115Unified(), setCookie}) // 标准：同 UA + 直链下发 Cookie
+		attempts = append(attempts, attempt{dlUA, setCookie}) // 同 UA + 直链下发 Cookie（f=3）
 	}
 	attempts = append(attempts,
-		attempt{ua115Unified(), combined},  // 直链 Cookie + 登录 Cookie
-		attempt{ua115Unified(), loginCookie},
+		attempt{dlUA, ""},          // openStrm 实战组合：同 UA，不带 Cookie
+		attempt{dlUA, combined},    // 直链 Cookie + 登录 Cookie
+		attempt{dlUA, loginCookie},
 	)
-	if setCookie != "" {
-		attempts = append(attempts, attempt{"", setCookie})
-	}
 	var lastErr error
 	for _, a := range attempts {
 		data, err := httpDownloadUA(rawURL, a.ua, a.cookie)
