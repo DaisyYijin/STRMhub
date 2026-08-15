@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"strmhub/internal/model"
+
+	"github.com/mozillazg/go-pinyin"
 )
 
 // ==================== 整理引擎 ====================
@@ -276,26 +278,22 @@ func sanitizeName(name string) string {
 
 func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 	media.Title = sanitizeName(media.Title)
-	// 首字母
-	firstLetter := "0"
-	if len(media.Title) > 0 {
-		ch := media.Title[0]
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') {
-			firstLetter = strings.ToUpper(string(ch))
-		} else if ch >= '0' && ch <= '9' {
-			firstLetter = "#"
-		}
+	firstLetter := titleFirstLetter(media.Title)
+	year := media.Year
+	if year == "" {
+		year = "0000"
 	}
 
+	// 目录命名：{first_letter}-{title}-{year}-[tmdb={tmdb_id}]（与既有媒体库风格一致）
+	folder := fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+
 	if media.MediaType == "movie" {
-		// 电影：{first_letter}/{title} ({year}) [{tmdb_id}]/{title} ({year}) [{tmdb_id}].{ext}
-		folder := fmt.Sprintf("%s/%s (%s) [%d]", firstLetter, media.Title, media.Year, media.TmdbID)
-		file := fmt.Sprintf("%s (%s) [%d]%s", media.Title, media.Year, media.TmdbID, ext)
+		// 电影文件：{title} ({year}) [{tmdb_id}].{ext}
+		file := fmt.Sprintf("%s (%s) [%d]%s", media.Title, year, media.TmdbID, ext)
 		return folder + "/" + file
 	}
 
-	// 电视剧：{first_letter}/{title} ({year}) [{tmdb_id}]/Season {season}/{title} - S{season:02d}E{episode:02d}.{ext}
-	folder := fmt.Sprintf("%s/%s (%s) [%d]", firstLetter, media.Title, media.Year, media.TmdbID)
+	// 电视剧：.../Season {season}/{title} - S{season:02d}E{episode:02d}.{ext}
 	if parsed.Season > 0 {
 		subFolder := fmt.Sprintf("Season %02d", parsed.Season)
 		if parsed.Episode > 0 {
@@ -305,6 +303,29 @@ func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 		return folder + "/" + subFolder
 	}
 	return folder
+}
+
+// titleFirstLetter 取标题首字母：英文取首字母，中文取拼音首字母（巴→B），数字为 #
+func titleFirstLetter(title string) string {
+	for _, r := range title {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return strings.ToUpper(string(r))
+		case r >= 'A' && r <= 'Z':
+			return string(r)
+		case r >= '0' && r <= '9':
+			return "#"
+		case r >= 0x4e00 && r <= 0x9fff: // 汉字
+			py := pinyin.Pinyin(string(r), pinyin.NewArgs())
+			if len(py) > 0 && len(py[0]) > 0 && py[0][0] != "" {
+				c := py[0][0][0]
+				if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+					return strings.ToUpper(string(c))
+				}
+			}
+		}
+	}
+	return "0"
 }
 
 // checkExists 检查是否已存在（通过 TMDB ID 在数据库中比对）
