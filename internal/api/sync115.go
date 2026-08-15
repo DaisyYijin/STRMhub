@@ -742,6 +742,7 @@ type incrSummary struct {
 	AssetsDownloaded int `json:"assets_downloaded"`
 	AssetsSkipped    int `json:"assets_skipped"`
 	AssetsFailed     int `json:"assets_failed"`
+	Ignored          int `json:"ignored"` // 非媒体库区域（待整理/已存在/冗余等）的事件
 	Elapsed          string `json:"elapsed"`
 }
 
@@ -864,6 +865,42 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	memo := map[string]dirInfo{}
+	// 作用域：只监控媒体库子树；待整理/已存在/冗余等整理工作区的事件静默忽略
+	libAbs := absPathOf(cookie, p.Cid, memo)
+	var excludedAbs []string
+	var orgCfgRaw struct {
+		Pending   string `json:"pending"`
+		Existing  string `json:"existing"`
+		Redundant string `json:"redundant"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw)
+	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant} {
+		if cid != "" {
+			if a := absPathOf(cookie, cid, memo); a != "" {
+				excludedAbs = append(excludedAbs, strings.TrimSuffix(a, "/"))
+			}
+		}
+	}
+	scopeOf := func(cid string) string {
+		if cid == "" || cid == "0" {
+			return "unknown"
+		}
+		abs := absPathOf(cookie, cid, memo)
+		if abs == "" {
+			return "unknown"
+		}
+		abs = strings.TrimSuffix(abs, "/")
+		if libAbs != "" && strings.HasPrefix(abs+"/", strings.TrimSuffix(libAbs, "/")+"/") {
+			return "library"
+		}
+		for _, ex := range excludedAbs {
+			if strings.HasPrefix(abs+"/", ex+"/") {
+				return "excluded"
+			}
+		}
+		return "other"
+	}
+
 	dirSet := map[string]bool{}
 	for _, ev := range pending {
 		switch ev.Type {
@@ -882,18 +919,31 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				sum.Relevant++
 			}
 		case evDelete:
-			// 精确删除：台账 → 路径推导（支持整目录删除与无台账的旧文件）
-			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo) {
-				sum.Deleted++
+			// 作用域过滤：待整理/已存在/冗余等非媒体库区域的删除不监控
+			switch scopeOf(ev.Cid) {
+			case "excluded", "other":
+				sum.Ignored++
+				continue
+			case "library":
+				// 精确删除：台账 → 路径推导（支持整目录删除与无台账的旧文件）
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, false) {
+					sum.Deleted++
+				}
+			default: // unknown（cid=0 等）：仅按台账名称匹配，静默处理
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
+					sum.Deleted++
+				} else {
+					sum.Ignored++
+				}
 			}
 			sum.Structural++
 		case evMove, evMoveImage, evRename:
 			// 移动/改名：清理旧位置（台账/路径推导），新位置由目录重遍历重建
-			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo) {
+			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
 				sum.Moved++
 			}
-			if ev.Cid != "" {
-				dirSet[ev.Cid] = true
+			if ev.Cid != "" && scopeOf(ev.Cid) == "library" {
+				dirSet[ev.Cid] = true // 移入媒体库才重建；移入已存在/冗余只清理本地
 			}
 			sum.Structural++
 		case evFolderRename:
@@ -978,9 +1028,38 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		h.notifyEmbyRefresh(p.LocalPath)
 	}
 	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
-	log.Printf("[115增量] 任务完成: 增量同步, 耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
-		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	log.Printf("[115增量] 任务完成: 增量同步, 耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
+		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Ignored, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
 	return sum, nil
+}
+
+// absPathOf 爬到网盘根，返回目录绝对路径（如 /整理/已存在），失败返回空
+func absPathOf(cookie, cid string, memo map[string]dirInfo) string {
+	if cid == "" || cid == "0" {
+		return ""
+	}
+	var parts []string
+	cur := cid
+	for i := 0; i < 64; i++ {
+		info, ok := memo[cur]
+		if !ok {
+			var err error
+			info, err = get115DirInfo(cookie, cur)
+			if err != nil {
+				return ""
+			}
+			memo[cur] = info
+		}
+		parts = append(parts, info.n)
+		if info.pid == "" || info.pid == "0" {
+			break
+		}
+		cur = info.pid
+	}
+	for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+		parts[l], parts[r] = parts[r], parts[l]
+	}
+	return "/" + strings.Join(parts, "/")
 }
 
 // removeSyncedFile 按文件 id 从台账定位并删除本地文件（仅删除本工具生成过的文件）
@@ -1007,7 +1086,7 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 // 2) 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
 //    （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
 // 3) 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
-func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo) bool {
+func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo, quiet bool) bool {
 	// 1) 台账精确匹配
 	if ev.FileID != "" && h.removeSyncedFile(ev.FileID, localRoot) {
 		return true
@@ -1122,7 +1201,9 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 			}
 		}
 	}
-	log.Printf("[115增量] 删除事件未命中本地: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
+	if !quiet {
+		log.Printf("[115增量] 删除事件未命中本地: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
+	}
 	return false
 }
 
