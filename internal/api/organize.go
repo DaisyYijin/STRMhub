@@ -688,7 +688,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			Message:   fmt.Sprintf("→ %s (%s) [%s]", media.Title, media.Year, media.MediaType),
 		})
 	}
-	onLog(fmt.Sprintf("✓ %s/ → %s (%s) [%s/%s]", dir.Name, media.Title, media.Year, category, media.MediaType))
+	onLog(fmt.Sprintf("✓ %s/ → %s (%s) [%s/%s] → %s", dir.Name, media.Title, media.Year, category, media.MediaType, targetDir))
 
 	return results
 }
@@ -769,8 +769,8 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	result.Category = category
 	result.TargetDir = targetDir
 	result.Status = "success"
-	result.Message = fmt.Sprintf("→ %s (%s) [%s]", media.Title, media.Year, media.MediaType)
-	onLog(fmt.Sprintf("✓ %s → %s (%s) [%s]", f.Name, media.Title, media.Year, category))
+	result.Message = fmt.Sprintf("→ %s (%s) [%s/%s] → %s", media.Title, media.Year, category, media.MediaType, targetDir)
+	onLog(fmt.Sprintf("✓ %s → %s (%s) [%s/%s] → %s", f.Name, media.Title, media.Year, category, media.MediaType, targetDir))
 
 	return result
 }

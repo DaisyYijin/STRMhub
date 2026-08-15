@@ -1023,6 +1023,11 @@ async function startOrganize() {
         appendLog(`${icon} ${s.step}: ${s.message}`);
       });
     }
+    // 逐项详情：识别出的标题/年份/分类/目标路径
+    (data.details || []).forEach(d => {
+      const icon = d.status === 'success' ? '✓' : d.status === 'exists' ? '○' : '✗';
+      appendLog(`${icon} ${d.file_name} ${d.message}`);
+    });
     appendLog(`任务完成: 自动整理, 耗时 ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
   } catch (e) {
     toast(e.message);

@@ -1470,19 +1470,19 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 // executeOrganize 整理核心（HTTP 与 cron 调度器共用）：
 // 加载配置 → 整理引擎 → 可选对影视库执行全量同步
 // 返回步骤摘要与错误（错误时 steps 里带原因）
-func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
+func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, error) {
 	orgStart := time.Now()
 	log.Printf("[整理] 开始: 待整理归位 %s", time.Now().Format("15:04:05"))
 	steps := []gin.H{}
 
 	orgCfg, err := h.loadOrgConfig()
 	if err != nil {
-		return append(steps, gin.H{"step": "整理", "status": "跳过", "message": err.Error()}), err
+		return append(steps, gin.H{"step": "整理", "status": "跳过", "message": err.Error()}), nil, err
 	}
 
 	ops, err := h.newPan115Ops()
 	if err != nil {
-		return append(steps, gin.H{"step": "整理", "status": "失败", "message": err.Error()}), err
+		return append(steps, gin.H{"step": "整理", "status": "失败", "message": err.Error()}), nil, err
 	}
 
 	logFn := func(msg string) { log.Println(msg) }
@@ -1529,7 +1529,7 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, orgCfg.Library, "", &videos, &assets, filter); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
-			return steps, nil
+			return steps, orgResults, nil
 		}
 		sc, dl, _, _ := applySyncResults(h.DB, ops, videos, assets, syncCfg.LocalPath, domain, format, keepExt, skipExist, "")
 		strmTotal, strmCreated = len(videos), sc
@@ -1564,7 +1564,7 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
 		map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
 	_ = strmTotal
 	_ = strmCreated
-	return steps, nil
+	return steps, orgResults, nil
 }
 
 // RunOrganizePipeline 整理→同步闭环 HTTP 入口
@@ -1583,8 +1583,8 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 	beginTask("自动整理")
 	defer endTask()
 
-	steps, _ := h.executeOrganize(req.SyncAfter)
-	c.JSON(http.StatusOK, gin.H{"steps": steps, "message": "整理执行完成"})
+	steps, details, _ := h.executeOrganize(req.SyncAfter)
+	c.JSON(http.StatusOK, gin.H{"steps": steps, "details": details, "message": "整理执行完成"})
 }
 
 // ==================== EMBY 入库刷新通知 ====================

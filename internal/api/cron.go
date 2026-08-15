@@ -123,7 +123,7 @@ func StartIncrScheduler(h *Handler) {
 			beginTask("定时整理+增量")
 			start := time.Now()
 			// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
-			orgSteps, orgErr := h.executeOrganize(false)
+			orgSteps, _, orgErr := h.executeOrganize(false)
 			if orgErr != nil {
 				log.Printf("[调度] 自动整理跳过: %v", orgErr)
 			} else {
