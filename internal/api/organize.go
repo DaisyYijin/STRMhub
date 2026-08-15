@@ -331,6 +331,16 @@ func titleFirstLetter(title string) string {
 	return "0"
 }
 
+// sha1ExistsInLibrary 文件 sha1 是否已存在于媒体库台账（同一文件不同命名也能识别）
+func sha1ExistsInLibrary(sha1 string) bool {
+	if sha1 == "" {
+		return false
+	}
+	var count int64
+	model.DB.Model(&model.SyncedFile{}).Where("sha1 = ? AND sha1 != ''", sha1).Count(&count)
+	return count > 0
+}
+
 // checkExistsVerified 去重判定：本地记录命中后到网盘验证目标路径仍存在，
 // 记录失效（库被清空/内容被移走）则自动删除记录并视为不存在——
 // 空库误判"已存在"的根治方案；网盘查询失败时保守按存在处理
@@ -473,6 +483,7 @@ type dirEntry struct {
 	IsDir bool   // 是否文件夹
 	Size  int64  // 文件大小
 	Cid   string // 子目录 cid（仅文件夹有）
+	Sha1  string // 文件 sha1（散文件去重用）
 }
 
 // listPendingTopLevel 列出待整理目录下的顶层条目（不递归）
@@ -496,6 +507,10 @@ func listPendingTopLevel(ops *pan115Ops, cid string) ([]dirEntry, error) {
 				Name: fmt.Sprint(d["n"]),
 				IsDir: isDir,
 				Cid:  fmt.Sprint(d["cid"]),
+			}
+			sha1 := fmt.Sprint(d["sha"])
+			if sha1 != "<nil>" {
+				e.Sha1 = sha1
 			}
 			if s, ok := d["s"].(float64); ok {
 				e.Size = int64(s)
@@ -533,11 +548,16 @@ func collectDirFiles(ops *pan115Ops, cid, basePath string) ([]remoteFile, error)
 				if s, ok := d["s"].(float64); ok {
 					size = int64(s)
 				}
+				sha1 := fmt.Sprint(d["sha"])
+				if sha1 == "<nil>" {
+					sha1 = ""
+				}
 				files = append(files, remoteFile{
 					Fid:  fmt.Sprint(d["fid"]),
 					Name: name,
 					Path: basePath,
 					Size: size,
+					Sha1: sha1,
 				})
 			}
 		}
@@ -630,7 +650,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 			if cfg.MinSize > 0 && entry.Size > 0 && entry.Size < cfg.MinSize*1024*1024 {
 				continue
 			}
-			f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size}
+			f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size, Sha1: entry.Sha1}
 			result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
 			results = append(results, result)
 			if result.Status == "success" {
@@ -704,6 +724,20 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	onLog(fmt.Sprintf("✦ 识别成功: %s/ → %s (%s) [%s/tmdb=%d]", dir.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
+
+	// sha1 去重（快路径）：主视频文件已在媒体库中（同一文件不同命名也算）
+	if sha1ExistsInLibrary(mainVideo.Sha1) {
+		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+			onLog(fmt.Sprintf("✗ %s/ - sha1去重移动失败: %v", dir.Name, err))
+		} else {
+			onLog(fmt.Sprintf("○ %s/ - 文件sha1已存在媒体库，已移到已存在目录（%s…）", dir.Name, mainVideo.Sha1[:8]))
+		}
+		for _, vf := range videoFiles {
+			results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Title: media.Title, Year: media.Year, MediaType: media.MediaType,
+				Message: "文件sha1已存在媒体库"})
+		}
+		return results
+	}
 
 	// 检查是否已存在
 	if checkExistsVerified(ops, media, cfg, libAbs) {
@@ -832,6 +866,13 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	name := f.Name
 	if len(replaceRules) > 0 {
 		name = applyReplaceRules(name, replaceRules)
+	}
+	// sha1 去重快路径：文件已在媒体库中，无需识别
+	if sha1ExistsInLibrary(f.Sha1) {
+		ops.moveFiles(cfg.Existing, []string{f.Fid})
+		moveSiblingAttachments(ops, cfg.Pending, baseName(f.Name), "", cfg.Existing, false, onLog)
+		onLog(fmt.Sprintf("○ %s - 文件sha1已存在媒体库，已移到已存在目录（%s…）", f.Name, f.Sha1[:8]))
+		return OrganizeResult{FileName: f.Name, Status: "exists", Message: "文件sha1已存在媒体库"}
 	}
 	onLog(fmt.Sprintf("▶ 开始识别: %s", f.Name))
 	parsed := parseFileName(name)

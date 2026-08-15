@@ -154,6 +154,7 @@ type SyncedFile struct {
 	ID        uint   `json:"id" gorm:"primaryKey"`
 	FileID    string `json:"file_id" gorm:"uniqueIndex;size:64;not null"` // 115 文件 id
 	PickCode  string `json:"pick_code" gorm:"size:64"`
+	Sha1      string `json:"sha1" gorm:"index;size:40"` // 文件 sha1（整理去重用）
 	RelPath   string `json:"rel_path" gorm:"size:500;not null"`           // 相对本地库根的路径（含文件名）
 	Kind      string `json:"kind" gorm:"size:10"`                         // video / asset
 	Size      int64  `json:"size"`

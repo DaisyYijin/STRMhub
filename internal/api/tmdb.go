@@ -374,20 +374,53 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 		return nil, fmt.Errorf("无法从文件名提取标题")
 	}
 
-	// 先尝试按文件类型判断
+	// movieThenTV：先电影后剧集（CMS 同款兜底顺序）
+	movieThenTV := func(q string) (*TmdbMedia, error) {
+		media, err := tc.SearchMovie(q, parsed.Year)
+		if err != nil {
+			return nil, err
+		}
+		if media != nil {
+			return media, nil
+		}
+		return tc.SearchTV(q)
+	}
+
+	// 第一轮：原始标题（剧集直接搜 TV）
+	var media *TmdbMedia
+	var err error
 	if parsed.IsTV {
-		return tc.SearchTV(parsed.Title)
+		media, err = tc.SearchTV(parsed.Title)
+	} else {
+		media, err = movieThenTV(parsed.Title)
+	}
+	if err != nil || media != nil {
+		return media, err
 	}
 
-	// 电影：先搜索，如果没结果再尝试 TV
-	media, err := tc.SearchMovie(parsed.Title, parsed.Year)
-	if err != nil {
-		return nil, err
+	// 第二轮：清洗后的标题重试（去掉特殊字符/残留标记，压紧空白）
+	cleaned := cleanSearchTitle(parsed.Title)
+	if cleaned != "" && cleaned != parsed.Title {
+		log.Printf("[TMDB] 首次搜索无结果，用清洗标题重试: %q → %q", parsed.Title, cleaned)
+		if parsed.IsTV {
+			return tc.SearchTV(cleaned)
+		}
+		return movieThenTV(cleaned)
 	}
-	if media != nil {
-		return media, nil
-	}
+	return media, nil
+}
 
-	// 电影没找到，尝试 TV
-	return tc.SearchTV(parsed.Title)
+// cleanSearchTitle 清洗搜索标题：仅保留中文/字母/数字/空格，压紧空白
+func cleanSearchTitle(title string) string {
+	var b []rune
+	for _, r := range title {
+		switch {
+		case r >= 0x4e00 && r <= 0x9fff, // 汉字
+			r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b = append(b, r)
+		case r == ' ' || r == '　' || r == '.' || r == '-' || r == '_' || r == ':' || r == '：':
+			b = append(b, ' ')
+		}
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(string(b)), " "))
 }

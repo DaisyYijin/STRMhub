@@ -55,6 +55,7 @@ type remoteFile struct {
 	Path     string `json:"path"`     // 相对媒体库根目录的路径
 	Size     int64  `json:"size"`
 	PickCode string `json:"pickcode"` // 下载直链用
+	Sha1     string `json:"sha1"`     // 文件 sha1（整理去重用）
 	IsAsset  bool   `json:"is_asset"` // 附属文件（图片/字幕/nfo 等，需实体落盘）
 }
 
@@ -228,12 +229,17 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 				if s, ok := d["s"].(float64); ok {
 					size = int64(s)
 				}
+				sha1 := fmt.Sprint(d["sha"])
+				if sha1 == "<nil>" {
+					sha1 = ""
+				}
 				rf := remoteFile{
 					Fid:      fmt.Sprint(d["fid"]),
 					Name:     name,
 					Path:     basePath,
 					Size:     size,
 					PickCode: fmt.Sprint(d["pc"]),
+					Sha1:     sha1,
 				}
 				switch {
 				case len(f.videoExts) > 0 && f.videoExts[ext]:
@@ -1407,10 +1413,10 @@ func upsertSyncedFile(db *gorm.DB, f remoteFile, relPath, kind string) {
 	if db == nil || f.Fid == "" {
 		return
 	}
-	sf := model.SyncedFile{FileID: f.Fid, PickCode: f.PickCode, RelPath: relPath, Kind: kind, Size: f.Size}
+	sf := model.SyncedFile{FileID: f.Fid, PickCode: f.PickCode, RelPath: relPath, Kind: kind, Size: f.Size, Sha1: f.Sha1}
 	db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "file_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "sha1", "updated_at"}),
 	}).Create(&sf)
 }
 
