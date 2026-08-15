@@ -1083,6 +1083,15 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	if totalNew > 0 {
 		h.notifyEmbyRefresh(req.LocalPath)
 	}
+	// 全量已覆盖一切：把事件窗口内的生活事件标记为已处理，
+	// 之后的增量同步只处理此后发生的新事件
+	if cookieOnly, err := h.get115Cookie(); err == nil {
+		if n, err := h.markEventsCoveredByFullSync(cookieOnly); err != nil {
+			log.Printf("[115同步] 标记生活事件已覆盖失败: %v", err)
+		} else if n > 0 {
+			log.Printf("[115同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
+		}
+	}
 	log.Printf("[115同步] 全量同步完成: 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
 		len(videos), strmCreated, len(assets), downloaded, skipped, failed)
 
@@ -1205,6 +1214,76 @@ func writeAssetBytes(f remoteFile, localRoot string, data []byte) (string, error
 	return "download", nil
 }
 
+// getSettingValue 读取配置：yaml 优先，数据库回退（兼容旧数据）
+// 前端 saveConfig 保存到 yaml，早期版本保存到 DB，两处都要能读到
+func (h *Handler) getSettingValue(key string) string {
+	if v := h.Config.GetSetting(key); v != "" {
+		return v
+	}
+	var s model.Setting
+	if err := h.DB.Where("key = ?", key).First(&s).Error; err == nil {
+		return s.Value
+	}
+	return ""
+}
+
+// markEventsCoveredByFullSync 全量同步完成后调用：
+// 把事件窗口内的生活事件直接落库并标记为已处理（全量已覆盖一切，无需增量再处理）
+func (h *Handler) markEventsCoveredByFullSync(cookie string) (int, error) {
+	count := 0
+	offset := 0
+	for {
+		events, err := fetch115LifeEvents(cookie, 30, offset, "")
+		if err != nil {
+			return count, err
+		}
+		fresh := 0
+		for _, ev := range events {
+			if ev.ID == "" {
+				continue
+			}
+			ts, _ := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64)
+			now := time.Now()
+			se := model.SyncEvent{
+				EventID: ev.ID, Type: ev.Type, FileID: ev.FileID,
+				FileName: ev.FileName, Cid: ev.Cid, Size: ev.Size,
+				EventTime: ts, Status: "applied", AppliedAt: &now,
+			}
+			res := h.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&se)
+			if res.Error == nil && res.RowsAffected > 0 {
+				fresh++
+				count++
+			}
+		}
+		if fresh == 0 || count >= 1000 {
+			break
+		}
+		offset += len(events)
+		if len(events) < 30 {
+			break
+		}
+	}
+	return count, nil
+}
+
+// rename115 重命名网盘文件（webapi files/batch_rename；字幕随视频新名对齐用）
+func rename115(cookie, fid, newName string) error {
+	form := url.Values{}
+	form.Set("files_new_name["+fid+"]", newName)
+	body, err := httpPostForm115("https://webapi.115.com/files/batch_rename", form, cookie, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		State bool   `json:"state"`
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &r) == nil && !r.State {
+		return fmt.Errorf("重命名被拒: %s", r.Error)
+	}
+	return nil
+}
+
 // getStrmConfig 读取 STRM 直链配置
 func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
 	domain = "http://172.17.0.1:6060"
@@ -1279,41 +1358,22 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 
 // ==================== 整理→同步闭环 ====================
 
-// RunOrganizePipeline 整理→同步闭环
-// POST /organize/pipeline  body: {"sync_after": true}
-// 1. 加载整理配置
-// 2. 整理引擎：TMDB识别→去重→重命名→分类
-// 3. 对已存在文件夹执行全量同步生成 STRM
-func (h *Handler) RunOrganizePipeline(c *gin.Context) {
-	var req struct {
-		SyncAfter bool `json:"sync_after"`
-	}
-	c.ShouldBindJSON(&req)
-
-	result := gin.H{"steps": []gin.H{}}
+// executeOrganize 整理核心（HTTP 与 cron 调度器共用）：
+// 加载配置 → 整理引擎 → 可选对影视库执行全量同步
+// 返回步骤摘要与错误（错误时 steps 里带原因）
+func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, error) {
 	steps := []gin.H{}
 
-	// Step 1: 加载整理配置
-	orgCfg, err := loadOrgConfig()
+	orgCfg, err := h.loadOrgConfig()
 	if err != nil {
-		steps = append(steps, gin.H{"step": "整理", "status": "跳过", "message": err.Error()})
-		result["steps"] = steps
-		result["message"] = err.Error()
-		c.JSON(http.StatusOK, result)
-		return
+		return append(steps, gin.H{"step": "整理", "status": "跳过", "message": err.Error()}), err
 	}
 
-	// Step 2: 构造统一操作通道（OpenAPI 优先，Cookie 回退）
 	ops, err := h.newPan115Ops()
 	if err != nil {
-		steps = append(steps, gin.H{"step": "整理", "status": "失败", "message": err.Error()})
-		result["steps"] = steps
-		result["message"] = err.Error()
-		c.JSON(http.StatusOK, result)
-		return
+		return append(steps, gin.H{"step": "整理", "status": "失败", "message": err.Error()}), err
 	}
 
-	// Step 3: 运行整理引擎
 	logFn := func(msg string) { log.Println(msg) }
 	orgResults, successCount := runOrganizeEngine(ops, orgCfg, logFn)
 
@@ -1330,21 +1390,18 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 	}
 
 	steps = append(steps, gin.H{"step": "整理", "status": "完成", "message": fmt.Sprintf("共 %d 个文件，成功 %d，已存在 %d，失败 %d", totalFiles, successCount, existsCount, failedCount)})
-	result["organize_results"] = orgResults
-	result["organize_total"] = totalFiles
-	result["organize_success"] = successCount
+	strmTotal, strmCreated := 0, 0
 
-	// Step 4: 对已存在文件夹执行全量同步生成 STRM
-	if req.SyncAfter {
-		// 读取全量同步配置
-		var syncSetting model.Setting
-		h.DB.Where("key = ?", "full").First(&syncSetting)
+	// 整理后对影视库执行全量同步生成 STRM
+	if syncAfter {
 		var syncCfg struct {
 			LocalPath string   `json:"local_path"`
 			VideoExt  []string `json:"video_ext"`
+			ImageExt  []string `json:"image_ext"`
+			DataExt   []string `json:"data_ext"`
 		}
-		if syncSetting.Value != "" {
-			json.Unmarshal([]byte(syncSetting.Value), &syncCfg)
+		if v := h.getSettingValue("full"); v != "" {
+			json.Unmarshal([]byte(v), &syncCfg)
 		}
 		if syncCfg.LocalPath == "" {
 			syncCfg.LocalPath = "/media"
@@ -1358,34 +1415,18 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 		if len(syncCfg.VideoExt) > 0 {
 			filter.videoExts = buildExtSet(syncCfg.VideoExt)
 		}
-		var files []remoteFile
-		if err := walk115Dir(ops, orgCfg.Library, "", &files, nil, filter); err != nil {
+		var videos, assets []remoteFile
+		if err := walk115Dir(ops, orgCfg.Library, "", &videos, &assets, filter); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
-			result["steps"] = steps
-			result["message"] = "整理完成，但同步失败"
-			c.JSON(http.StatusOK, result)
-			return
+			return steps, nil
 		}
-
-		count := 0
-		for _, f := range files {
-			if err := writeStrm(syncCfg.LocalPath, domain, format, keepExt, skipExist, f); err != nil {
-				continue
-			}
-			count++
-		}
-		steps = append(steps, gin.H{"step": "STRM 同步", "status": "完成", "message": fmt.Sprintf("共 %d 个视频，生成 %d 个 STRM", len(files), count)})
-		result["strm_total"] = len(files)
-		result["strm_created"] = count
-
-		// 通知 Emby 刷新
-		if count > 0 {
+		sc, dl, _, _ := applySyncResults(h.DB, ops, videos, assets, syncCfg.LocalPath, domain, format, keepExt, skipExist, "")
+		strmTotal, strmCreated = len(videos), sc
+		steps = append(steps, gin.H{"step": "STRM 同步", "status": "完成", "message": fmt.Sprintf("共 %d 个视频，生成 %d 个 STRM，附属下载 %d", len(videos), sc, dl)})
+		if sc+dl > 0 {
 			h.notifyEmbyRefresh(syncCfg.LocalPath)
 		}
 	}
-
-	result["steps"] = steps
-	result["message"] = "整理→同步闭环完成"
 
 	// 消息通知
 	if successCount > 0 {
@@ -1407,8 +1448,27 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 			strings.Join(titles, "\n"),
 		)
 	}
+	_ = strmTotal
+	_ = strmCreated
+	return steps, nil
+}
 
-	c.JSON(http.StatusOK, result)
+// RunOrganizePipeline 整理→同步闭环 HTTP 入口
+// POST /organize/pipeline  body: {"sync_after": true}
+func (h *Handler) RunOrganizePipeline(c *gin.Context) {
+	var req struct {
+		SyncAfter bool `json:"sync_after"`
+	}
+	c.ShouldBindJSON(&req)
+
+	if !fullSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "同步/整理任务正在进行中，请等待完成后再试"})
+		return
+	}
+	defer fullSyncMu.Unlock()
+
+	steps, _ := h.executeOrganize(req.SyncAfter)
+	c.JSON(http.StatusOK, gin.H{"steps": steps, "message": "整理执行完成"})
 }
 
 // ==================== EMBY 入库刷新通知 ====================

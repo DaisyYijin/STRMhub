@@ -299,6 +299,27 @@ function getTags(containerId) {
   return Array.from(document.querySelectorAll(`#${containerId} .tag`)).map(t => t.dataset.val);
 }
 
+// 全量同步确认气泡（全量重建耗时长且仅手动触发）
+function confirmFullSync(btn) {
+  closeConfirmBubble();
+  document.removeEventListener('click', closeConfirmBubbleOnOutside);
+  const bubble = document.createElement('div');
+  bubble.id = 'confirm-bubble';
+  bubble.className = 'confirm-bubble';
+  bubble.innerHTML = '<div class="cb-text">全量同步将重建整个媒体库的 STRM 与附属文件，耗时较长。确定执行？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
+  btn.appendChild(bubble);
+  bubble.classList.add('show');
+  bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
+  bubble.querySelector('.cb-ok').onclick = (e) => {
+    e.stopPropagation();
+    closeConfirmBubble();
+    startFullSync();
+  };
+  setTimeout(() => {
+    document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true });
+  }, 0);
+}
+
 // ==================== 增量同步 ====================
 async function startIncrementalSync() {
   const cid = resolveCID('full-cid') || '0';
@@ -994,11 +1015,10 @@ function collectConfig(key) {
     };
   }
   if (key === 'org-basic') {
+    // 影视库不再单独配置，直接使用全量同步的媒体库
     return {
       pending: resolveCID('org-pending'),
       pending_path: val('org-pending'),
-      library: resolveCID('org-library'),
-      library_path: val('org-library'),
       existing: resolveCID('org-existing'),
       existing_path: val('org-existing'),
       redundant: resolveCID('org-redundant'),
@@ -1082,7 +1102,7 @@ function applyConfig(key, v) {
     }
   } else if (key === 'org-basic') {
     // 输入框显示可读路径，cid 存 dataset（兼容旧数据：值本身是数字 cid）
-    const pairs = [['org-pending', 'pending'], ['org-library', 'library'], ['org-existing', 'existing'], ['org-redundant', 'redundant']];
+    const pairs = [['org-pending', 'pending'], ['org-existing', 'existing'], ['org-redundant', 'redundant']];
     pairs.forEach(([id, k]) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -1176,7 +1196,7 @@ const DEFAULT_CONFIGS = {
   'proxy': { url: '' },
   'emby-refresh': { url: '', api_key: '', path_replace: '', enabled: true },
   'emby-notify': { webhook: '' },
-  'org-basic': { pending: '', pending_path: '', library: '', library_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
+  'org-basic': { pending: '', pending_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
   'org-recognize': { replace_rules: '', release_groups: '', min_size: '0' },
   'org-gpt': { url: 'https://api.siliconflow.cn/v1', key: '', model: '' },
   'org-rename': { movie_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', movie_file: '{title} ({year}) [{tmdb_id}]{ext}', tv_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', tv_file: '{title} - S{season}E{episode}{ext}' },

@@ -43,18 +43,15 @@ type RenameConfig struct {
 }
 
 // loadOrgConfig 从数据库加载整理配置
-func loadOrgConfig() (*OrgConfig, error) {
-	var s model.Setting
-	if err := model.DB.Where("key = ?", "org-basic").First(&s).Error; err != nil {
-		return nil, fmt.Errorf("未配置整理基础配置")
-	}
+// loadOrgConfig 加载整理配置（yaml 优先 DB 回退）；
+// 影视库不再单独配置，直接使用全量同步配置的媒体库 cid
+func (h *Handler) loadOrgConfig() (*OrgConfig, error) {
 	var cfg OrgConfig
-	json.Unmarshal([]byte(s.Value), &cfg)
+	if v := h.getSettingValue("org-basic"); v != "" {
+		json.Unmarshal([]byte(v), &cfg)
+	}
 	if cfg.Pending == "" {
 		return nil, fmt.Errorf("未配置待整理文件夹")
-	}
-	if cfg.Library == "" {
-		return nil, fmt.Errorf("未配置我的影视库文件夹")
 	}
 	if cfg.Existing == "" {
 		return nil, fmt.Errorf("未配置已存在文件夹")
@@ -62,7 +59,75 @@ func loadOrgConfig() (*OrgConfig, error) {
 	if cfg.Redundant == "" {
 		return nil, fmt.Errorf("未配置冗余文件夹")
 	}
+	// 影视库 = 全量同步配置的媒体库 cid；全量未配置时兼容旧的 org-basic.library
+	var fullCfg struct {
+		Cid string `json:"cid"`
+	}
+	if v := h.getSettingValue("full"); v != "" {
+		json.Unmarshal([]byte(v), &fullCfg)
+	}
+	if fullCfg.Cid != "" {
+		cfg.Library = fullCfg.Cid
+	}
+	if cfg.Library == "" {
+		return nil, fmt.Errorf("未配置全量同步的媒体库目录（整理目标库取自全量同步配置）")
+	}
 	return &cfg, nil
+}
+
+// orgAttachmentExts 整理时随视频同行的附件后缀（字幕/元数据/图片）
+var orgAttachmentExts = map[string]bool{
+	".ass": true, ".srt": true, ".ssa": true, ".sub": true, ".vtt": true, ".smi": true,
+	".nfo": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+}
+
+// moveSiblingAttachments 把与视频同目录的附件（字幕/nfo/图片）随视频一起移动，
+// 并把与视频同名的字幕重命名为视频新名（播放器按视频名匹配外挂字幕）
+func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBase, targetCid string, rename bool, onLog func(string)) {
+	if pendingCid == "" {
+		return
+	}
+	entries, _, err := ops.listEntries(pendingCid, 0)
+	if err != nil {
+		onLog(fmt.Sprintf("✗ 收集随行附件失败: %v", err))
+		return
+	}
+	moved := 0
+	for _, e := range entries {
+		if fmt.Sprint(e["f"]) != "1" { // 只看文件
+			continue
+		}
+		name := fmt.Sprint(e["n"])
+		ext := strings.ToLower(pathExt(name))
+		if !orgAttachmentExts[ext] {
+			continue
+		}
+		fid := fmt.Sprint(e["fid"])
+		base := baseName(name)
+		// 与视频同名的附件才随行（前缀匹配），其余字幕在多个视频混放时无法归属
+		if !strings.HasPrefix(base, videoOldBase) {
+			continue
+		}
+		if err := ops.moveFiles(targetCid, []string{fid}); err != nil {
+			onLog(fmt.Sprintf("✗ 附件随行移动失败 %s: %v", name, err))
+			continue
+		}
+		moved++
+		// 重命名对齐视频新名（仅成功入库场景；冗余/已存在保持原名）
+		if rename && videoNewBase != "" && base != videoNewBase {
+			newName := videoNewBase + strings.TrimPrefix(base, videoOldBase) + ext
+			if err := ops.rename(fid, newName); err != nil {
+				onLog(fmt.Sprintf("○ 附件随行 %s（重命名失败保持原名: %v）", name, err))
+			} else {
+				onLog(fmt.Sprintf("✓ 附件随行 %s → %s", name, newName))
+			}
+		} else {
+			onLog(fmt.Sprintf("✓ 附件随行 %s", name))
+		}
+	}
+	if moved > 0 {
+		time.Sleep(300 * time.Millisecond)
+	}
 }
 
 // loadReplaceRules 加载替换规则
@@ -632,9 +697,11 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 		name = applyReplaceRules(name, replaceRules)
 	}
 	parsed := parseFileName(name)
+	oldBase := baseName(f.Name)
 	if parsed.Title == "" {
-		// 无法识别，移到冗余
+		// 无法识别，移到冗余（附件随行，避免字幕变孤儿）
 		ops.moveFiles(cfg.Redundant, []string{f.Fid})
+		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Redundant, false, onLog)
 		result.Status = "failed"
 		result.Message = "无法提取标题，已移到冗余"
 		onLog(fmt.Sprintf("✗ %s - 无法提取标题，已移到冗余", f.Name))
@@ -645,6 +712,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
 		ops.moveFiles(cfg.Redundant, []string{f.Fid})
+		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Redundant, false, onLog)
 		result.Status = "failed"
 		result.Message = "TMDB 识别失败，已移到冗余"
 		onLog(fmt.Sprintf("✗ %s - TMDB 识别失败，已移到冗余", f.Name))
@@ -659,6 +727,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	// 检查是否已存在
 	if checkExists(media) {
 		ops.moveFiles(cfg.Existing, []string{f.Fid})
+		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Existing, false, onLog)
 		result.Status = "exists"
 		result.Message = fmt.Sprintf("已存在: %s (%s)，已移到已存在目录", media.Title, media.Year)
 		onLog(fmt.Sprintf("○ %s → 已存在: %s (%s)", f.Name, media.Title, media.Year))
@@ -685,6 +754,10 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 		onLog(fmt.Sprintf("✗ %s - 移动失败: %v", f.Name, err))
 		return result
 	}
+
+	// 成功入库：附件随行并按视频新名重命名字幕（播放器按视频名匹配外挂字幕）
+	newBase := baseName(pathBase(newPath))
+	moveSiblingAttachments(ops, cfg.Pending, oldBase, newBase, targetCid, true, onLog)
 
 	recordMedia(media, category, targetDir+"/"+pathBase(newPath))
 	result.Category = category

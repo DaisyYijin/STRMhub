@@ -101,7 +101,8 @@ func (h *Handler) incrParamsFromConfig() incrParams {
 	return p
 }
 
-// StartIncrScheduler 启动分钟级调度器：incr 配置的 cron 命中时自动执行一次增量同步
+// StartIncrScheduler 启动分钟级调度器：incr 配置的 cron 命中时自动执行
+// 「自动整理 → 增量同步」流水线（CMS 主任务模式；全量同步仅供手动触发，不参与调度）
 func StartIncrScheduler(h *Handler) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -115,16 +116,33 @@ func StartIncrScheduler(h *Handler) {
 				continue
 			}
 			if !fullSyncMu.TryLock() {
-				log.Printf("[调度] 增量同步触发但已有任务运行，跳过本轮")
+				log.Printf("[调度] cron 触发但已有任务运行，跳过本轮")
 				continue
 			}
-			p := h.incrParamsFromConfig()
-			log.Printf("[调度] 增量同步开始（cron: %s, 媒体库 cid: %s）", cron, p.Cid)
+			log.Printf("[调度] 整理+增量 开始（cron: %s）", cron)
 			start := time.Now()
-			_, err := h.executeIncrementalSync(p)
-			log.Printf("[调度] 增量同步完成, time = %.2fs, err = %v", time.Since(start).Seconds(), err)
+			// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
+			orgSteps, orgErr := h.executeOrganize(false)
+			if orgErr != nil {
+				log.Printf("[调度] 自动整理跳过: %v", orgErr)
+			} else {
+				for _, st := range orgSteps {
+					msg, _ := st["message"].(string)
+					log.Printf("[调度] 整理: %v", msg)
+				}
+			}
+			// 2) 增量同步（整理产生的 move 事件会被精确应用）
+			p := h.incrParamsFromConfig()
+			sum, err := h.executeIncrementalSync(p)
+			if err != nil {
+				log.Printf("[调度] 增量同步失败: %v", err)
+			} else if sum != nil {
+				log.Printf("[调度] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",
+					sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
+			}
+			log.Printf("[调度] 整理+增量 完成, time = %.2fs", time.Since(start).Seconds())
 			fullSyncMu.Unlock()
 		}
 	}()
-	log.Println("[调度] 增量同步调度器已启动（每分钟检查 cron 配置）")
+	log.Println("[调度] 调度器已启动（cron 触发 自动整理+增量同步；全量同步仅手动）")
 }

@@ -913,6 +913,14 @@ func (o *pan115Ops) openEnsurePath(parent, dirPath string) (string, error) {
 	return current, nil
 }
 
+// rename 重命名网盘文件（字幕随视频新名对齐用；OpenAPI 通道暂不支持）
+func (o *pan115Ops) rename(fid, newName string) error {
+	if o.open != nil {
+		return fmt.Errorf("OpenAPI 通道暂不支持重命名")
+	}
+	return rename115(o.cookie, fid, newName)
+}
+
 // moveFiles 移动文件
 func (o *pan115Ops) moveFiles(targetCid string, fids []string) error {
 	if o.open != nil {

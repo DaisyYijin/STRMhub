@@ -119,7 +119,7 @@
               <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="data-ext" onkeydown="addTag(event)">
             </div>
           </div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" onclick="startFullSync()">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" onclick="confirmFullSync(this)" style="position:relative">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <div class="card">
@@ -184,8 +184,7 @@
       <div class="alert alert-warning">自动整理前必须创建好二级分类策略，并完成一次全量同步。</div>
       <div class="card">
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
-        <div class="form-row"><div class="label">我的影视库<i class="help-tip">?<span class="tip-bubble">整理后的最终归宿，也是全量/增量同步的目标目录。如 /影视库/我的影视库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-library" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-library')">选择目录</button></div></div></div>
-        <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
+                <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
       </div>
@@ -875,6 +874,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=29"></script>
+<script src="/js/app.js?v=30"></script>
 </body>
 </html>
