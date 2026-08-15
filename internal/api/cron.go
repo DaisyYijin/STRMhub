@@ -120,6 +120,7 @@ func StartIncrScheduler(h *Handler) {
 				continue
 			}
 			log.Printf("[调度] 整理+增量 开始（cron: %s）", cron)
+			beginTask("定时整理+增量")
 			start := time.Now()
 			// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
 			orgSteps, orgErr := h.executeOrganize(false)
@@ -141,6 +142,7 @@ func StartIncrScheduler(h *Handler) {
 					sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
 			}
 			log.Printf("[调度] 整理+增量 完成, time = %.2fs", time.Since(start).Seconds())
+			endTask()
 			fullSyncMu.Unlock()
 		}
 	}()

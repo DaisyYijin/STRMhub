@@ -314,6 +314,7 @@ function confirmFullSync(btn) {
   bubble.querySelector('.cb-ok').onclick = (e) => {
     e.stopPropagation();
     closeConfirmBubble();
+    pollTaskStatus();
     startFullSync();
   };
   setTimeout(() => {
@@ -335,6 +336,7 @@ function confirmIncrementalSync(btn) {
   bubble.querySelector('.cb-ok').onclick = (e) => {
     e.stopPropagation();
     closeConfirmBubble();
+    pollTaskStatus();
     startIncrementalSync();
   };
   setTimeout(() => {
@@ -363,6 +365,32 @@ async function startIncrementalSync() {
     appendLog('✗ 增量同步失败: ' + e.message);
     toast('增量同步失败：' + e.message);
   }
+}
+
+// ==================== 任务状态（同步/整理互斥提示） ====================
+let taskPollTimer = null;
+async function pollTaskStatus() {
+  const bar = document.getElementById('task-status-bar');
+  const btns = ['btn-fullsync', 'btn-incrsync', 'btn-organize'].map(id => document.getElementById(id)).filter(Boolean);
+  try {
+    const st = await api('/sync/status');
+    if (st.running) {
+      bar.style.display = 'block';
+      bar.innerHTML = '⏳ ' + (st.task || '任务') + ' 正在执行（已运行 ' + (st.elapsed || '-') + '，开始于 ' + (st.since || '-') + '），其他同步/整理操作已暂不可用';
+      btns.forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
+    } else {
+      bar.style.display = 'none';
+      btns.forEach(b => { b.disabled = false; b.style.opacity = ''; });
+    }
+  } catch (e) { /* 静默 */ }
+}
+function startTaskPoll() {
+  stopTaskPoll();
+  pollTaskStatus();
+  taskPollTimer = setInterval(pollTaskStatus, 5000);
+}
+function stopTaskPoll() {
+  if (taskPollTimer) { clearInterval(taskPollTimer); taskPollTimer = null; }
 }
 
 // ==================== 目录选择器 ====================
@@ -1392,5 +1420,6 @@ window.addEventListener('DOMContentLoaded', () => {
     autoResizeTextarea(ta);
   });
   updateRenameExample();
+  startTaskPoll();
   checkAuth();
 });

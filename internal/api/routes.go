@@ -81,6 +81,18 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/sync/full", h.RunFullSync)
 		protected.POST("/sync/incremental", h.RunIncrementalSync)
 
+		// 任务状态（前端轮询：任务进行中禁用同步/整理按钮）
+		protected.GET("/sync/status", func(c *gin.Context) {
+			running, name, start := TaskStatus()
+			g := gin.H{"running": running}
+			if running {
+				g["task"] = name
+				g["since"] = start.Format("15:04:05")
+				g["elapsed"] = time.Since(start).Truncate(time.Second).String()
+			}
+			c.JSON(http.StatusOK, g)
+		})
+
 		// STRM 管理
 		protected.GET("/strm", h.ListStrmFiles)
 		protected.DELETE("/strm/:id", h.DeleteStrmFile)

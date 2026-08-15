@@ -76,6 +76,7 @@
 
       <!-- 115 账号同步 -->
       <div class="tab-panel active" data-panel="acc115-sync">
+        <div class="alert alert-info" id="task-status-bar" style="display:none"></div>
       <!-- 全量 + 增量同步 -->
         <div class="card">
           <div class="form-row"><div class="label">115 媒体库 cid</div><div class="control">
@@ -119,13 +120,13 @@
               <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="data-ext" onkeydown="addTag(event)">
             </div>
           </div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" onclick="confirmFullSync(this)" style="position:relative">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" id="btn-fullsync" onclick="confirmFullSync(this)" style="position:relative">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <div class="card">
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
           <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <!-- 分享同步 -->
@@ -186,7 +187,7 @@
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
                 <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
       </div>
     </div>
 
@@ -893,6 +894,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=33"></script>
+<script src="/js/app.js?v=34"></script>
 </body>
 </html>

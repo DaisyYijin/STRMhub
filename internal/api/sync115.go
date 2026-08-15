@@ -735,10 +735,12 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	p := normalizeIncrParams(req.Cid, req.LocalPath, req.VideoExt, req.ImageExt, req.DataExt, req.Limit)
 
 	if !fullSyncMu.TryLock() {
-		c.JSON(http.StatusConflict, gin.H{"error": "同步任务正在进行中，请等待完成后再试"})
+		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，请等待完成后再试"})
 		return
 	}
 	defer fullSyncMu.Unlock()
+	beginTask("增量同步")
+	defer endTask()
 
 	sum, err := h.executeIncrementalSync(p)
 	if err != nil {
@@ -873,6 +875,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			sum.Structural++
 		default:
 			sum.Structural++
+			log.Printf("[115增量] 未处理事件类型: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
 		}
 	}
 
@@ -1098,6 +1101,33 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 // fullSyncMu 全量同步互斥：防止重复点击导致两个同步并发互相干扰
 var fullSyncMu sync.Mutex
 
+// taskState 当前任务状态（供前端展示与按钮禁用，含 cron 触发的任务）
+var (
+	taskStateMu sync.Mutex
+	taskRunning bool
+	taskName    string
+	taskStart   time.Time
+)
+
+func beginTask(name string) {
+	taskStateMu.Lock()
+	taskRunning, taskName, taskStart = true, name, time.Now()
+	taskStateMu.Unlock()
+}
+
+func endTask() {
+	taskStateMu.Lock()
+	taskRunning = false
+	taskStateMu.Unlock()
+}
+
+// TaskStatus 当前任务状态快照
+func TaskStatus() (bool, string, time.Time) {
+	taskStateMu.Lock()
+	defer taskStateMu.Unlock()
+	return taskRunning, taskName, taskStart
+}
+
 // RunFullSync 执行全量同步：递归遍历 cid 目录，视频生成 .strm，附属文件实体落盘
 // 附属文件 = 用户配置的图片后缀 + 数据文件后缀 + nfo（Emby/Jellyfin 标准元数据）；
 // 不在过滤集合内的文件一律不同步
@@ -1120,10 +1150,12 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 
 	// 同一时刻只允许一个全量同步
 	if !fullSyncMu.TryLock() {
-		c.JSON(http.StatusConflict, gin.H{"error": "全量同步正在进行中，请等待完成后再试"})
+		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，请等待完成后再试"})
 		return
 	}
 	defer fullSyncMu.Unlock()
+	beginTask("全量同步")
+	defer endTask()
 
 	// 读取 STRM 直链配置
 	domain, format, keepExt, skipExist := h.getStrmConfig()
@@ -1534,10 +1566,12 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 	c.ShouldBindJSON(&req)
 
 	if !fullSyncMu.TryLock() {
-		c.JSON(http.StatusConflict, gin.H{"error": "同步/整理任务正在进行中，请等待完成后再试"})
+		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，请等待完成后再试"})
 		return
 	}
 	defer fullSyncMu.Unlock()
+	beginTask("自动整理")
+	defer endTask()
 
 	steps, _ := h.executeOrganize(req.SyncAfter)
 	c.JSON(http.StatusOK, gin.H{"steps": steps, "message": "整理执行完成"})
