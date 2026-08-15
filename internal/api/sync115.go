@@ -512,7 +512,9 @@ const (
 	evMove        = "move_file"         // 6 移动文件/目录
 	evReceive     = "receive_files"     // 14 接收文件（转存）
 	evNewFolder   = "new_folder"        // 17 新增目录
+	evCopyFolder  = "copy_folder"       // 18 复制目录（目录转存/复制，按目录新增处理）
 	evFolderRename = "folder_rename"    // 20 目录改名
+	evMoveImage   = "move_image_file"   // 5 移动图片（同移动处理）
 	evDelete      = "delete_file"       // 22 删除文件/目录
 	evCopy        = "copy_file"         // 23 复制文件
 	evRename      = "file_rename"       // 24 文件改名
@@ -542,6 +544,10 @@ func normalizeEventType(v string) string {
 		return evReceive
 	case "17", "new_folder":
 		return evNewFolder
+	case "18", "copy_folder":
+		return evCopyFolder
+	case "5", "move_image_file":
+		return evMoveImage
 	case "20", "folder_rename":
 		return evFolderRename
 	case "22", "delete_file":
@@ -838,7 +844,8 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				dirSet[ev.FileID] = true
 				sum.Relevant++
 			}
-		case evNewFolder:
+		case evNewFolder, evCopyFolder:
+			// 目录新增/复制（含整目录转存）：按目录自身加入受影响集合
 			if ev.FileID != "" {
 				dirSet[ev.FileID] = true
 				sum.Relevant++
@@ -849,7 +856,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				sum.Deleted++
 			}
 			sum.Structural++
-		case evMove, evRename:
+		case evMove, evMoveImage, evRename:
 			// 移动/改名：清理旧位置（台账/路径推导），新位置由目录重遍历重建
 			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo) {
 				sum.Moved++
