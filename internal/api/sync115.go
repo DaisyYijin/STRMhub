@@ -10,6 +10,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strmhub/internal/model"
 	"strings"
 	"sync"
@@ -205,8 +207,11 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 		if err != nil {
 			return err
 		}
-		// 展示该次列表请求因 API 间隔设置的等待时长，让节流可见
-		log.Printf("[115同步] 同步%s，API等待%v", dirLabel, throttle115LastWait().Truncate(time.Millisecond))
+		// 同步与等待分行显示（等待为该次列表请求因 API 间隔的实际睡眠）
+		log.Printf("[115同步] 同步%s", dirLabel)
+		if w := throttle115LastWait(); w > 0 {
+			log.Printf("[115同步] API等待 %.1f 秒后继续", w.Seconds())
+		}
 		for _, d := range entries {
 			isDir := fmt.Sprint(d["f"]) == "0"
 			name := fmt.Sprint(d["n"])
@@ -753,6 +758,14 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		return
 	}
 
+	// 时间水位：只处理上次增量之后的新事件（首次运行处理整个窗口）
+	lastAt := int64(0)
+	if v := h.Config.GetSetting("incr-last"); v != "" {
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			lastAt = n
+		}
+	}
+
 	// 分类：受影响目录集合 + 结构性变更统计
 	filter := &syncFilter{
 		videoExts: buildExtSet(req.VideoExt),
@@ -768,6 +781,11 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	structural := 0
 	relevant := 0
 	for _, ev := range events {
+		if lastAt > 0 {
+			if ts, err := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64); err == nil && ts <= lastAt {
+				continue // 上次增量已处理过的事件
+			}
+		}
 		switch ev.Type {
 		case evUpload, evReceive, evCopy:
 			if isMedia(ev.FileName) {
@@ -788,11 +806,13 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 		}
 	}
 
-	// 逐个受影响目录定向同步：爬父目录链定位相对媒体库根的路径
-	domain, format, keepExt, skipExist := h.getStrmConfig()
+	// 解析全部受影响目录的相对路径，并做祖先去重：
+	// 同批事件常同时命中父目录与子目录（如"电影"和"电影/印度电影/xx"），
+	// 保留最上层目录即可，避免重复遍历
+	type targetDir struct{ cid, base string }
+	var targets []targetDir
 	memo := map[string]dirInfo{}
-	var allVideos, allAssets []remoteFile
-	processed, skippedDirs := 0, 0
+	skippedDirs := 0
 	for cid := range dirSet {
 		base, ok, err := get115RelPath(cookie, cid, req.Cid, memo)
 		if err != nil {
@@ -801,27 +821,57 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 			continue
 		}
 		if !ok {
-			// 不在媒体库路径下，跳过
-			skippedDirs++
+			skippedDirs++ // 不在媒体库路径下
 			continue
 		}
-		var videos, assets []remoteFile
-		if err := walk115Dir(ops, cid, base, &videos, &assets, filter); err != nil {
-			log.Printf("[115增量] 遍历目录失败 %s: %v", base, err)
-			skippedDirs++
-			continue
+		targets = append(targets, targetDir{cid: cid, base: base})
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].base < targets[j].base })
+	var uniqTargets []targetDir
+	for _, t := range targets {
+		covered := false
+		for _, u := range uniqTargets {
+			if u.base == "" || t.base == u.base || strings.HasPrefix(t.base, u.base+"/") {
+				covered = true // 已被上层目录的遍历覆盖
+				break
+			}
 		}
-		allVideos = append(allVideos, videos...)
-		allAssets = append(allAssets, assets...)
-		processed++
+		if !covered {
+			uniqTargets = append(uniqTargets, t)
+		}
 	}
 
-	strmCreated, downloaded, assetSkipped, assetFailed := applySyncResults(ops, allVideos, allAssets, req.LocalPath, domain, format, keepExt, skipExist)
+	// 逐目录遍历并【立即】落盘（不等全部遍历完，同步过程文件即时可见）
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+	var allVideos, allAssets []remoteFile
+	strmCreated, downloaded, assetSkipped, assetFailed := 0, 0, 0, 0
+	processed := 0
+	for _, t := range uniqTargets {
+		var videos, assets []remoteFile
+		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+			log.Printf("[115增量] 遍历目录失败 %s: %v", t.base, err)
+			skippedDirs++
+			continue
+		}
+		sc, dl, sk, fl := applySyncResults(ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist)
+		allVideos = append(allVideos, videos...)
+		allAssets = append(allAssets, assets...)
+		strmCreated += sc
+		downloaded += dl
+		assetSkipped += sk
+		assetFailed += fl
+		processed++
+		log.Printf("[115增量] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
+	}
+
+	// 更新时间水位（仅在有事件被处理时）
+	h.Config.SaveSetting("incr-last", fmt.Sprint(time.Now().Unix()))
+
 	if strmCreated+downloaded > 0 {
 		h.notifyEmbyRefresh(req.LocalPath)
 	}
-	log.Printf("[115增量] 完成: 事件 %d（媒体相关 %d，结构性 %d），受影响目录 %d（处理 %d，跳过 %d），视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d，失败 %d）",
-		len(events), relevant, structural, len(dirSet), processed, skippedDirs, len(allVideos), strmCreated, len(allAssets), downloaded, assetSkipped, assetFailed)
+	log.Printf("[115增量] 完成: 事件 %d（媒体相关 %d，结构性 %d，水位前 %d），受影响目录 %d（处理 %d，跳过 %d），视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d，失败 %d）",
+		len(events), relevant, structural, len(dirSet)-len(uniqTargets), len(dirSet), processed, skippedDirs, len(allVideos), strmCreated, len(allAssets), downloaded, assetSkipped, assetFailed)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":          "增量同步完成",
@@ -920,6 +970,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 func applySyncResults(ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool) (strmCreated, downloaded, skipped, failed int) {
 	for _, f := range videos {
 		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
+			log.Printf("[115同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
 			continue
 		}
 		strmCreated++

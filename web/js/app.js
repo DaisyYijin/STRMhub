@@ -44,6 +44,9 @@ const PAGE_TITLES = {
 };
 
 function showPage(id) {
+  // 切换页面时收起日志面板（避免遮挡其他页面）
+  const logOverlay = document.getElementById('log-overlay');
+  if (logOverlay) logOverlay.style.display = 'none';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById('page-' + id);
