@@ -124,7 +124,7 @@
         <div class="card">
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
           <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" onclick="startIncrementalSync()">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <!-- 分享同步 -->
@@ -670,7 +670,7 @@ av:
       <!-- 115 账号 -->
       <div class="tab-panel active" data-panel="acc-115">
       <div class="card">
-        <div class="form-row"><div class="label">Cookie文件路径<i class="help-tip">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button><button class="btn btn-warning" onclick="diagnose115()">诊断连接</button></div><div class="form-row"><div class="label">手动导入 Cookie<i class="help-tip">?<span class="tip-bubble">扫码被 IP 风控时可从浏览器或其他项目导出 Cookie 直接导入：需包含 UID=..;CID=..;SEID=.. 字段（KID 可选）。检测通过后自动保存并启用。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-paste" placeholder="粘贴 UID=xxx;CID=xxx;SEID=xxx;KID=xxx" class="inline-input"><button class="btn btn-success" onclick="importCookie()">导入并检测</button></div></div></div>
+        <div class="form-row"><div class="label">Cookie文件路径<i class="help-tip">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button></div>
         <div class="alert alert-success" id="acc-status-box" style="display:none;margin-top:8px"><span class="icon">✓</span> 账号：<span id="acc-username">-</span>，容量：<span id="acc-capacity">-</span></div></div></div>
         <div class="form-row"><div class="label">Cookie设备类型<i class="help-tip">?<span class="tip-bubble">网页端 Cookie 与 115Browser UA 配套，兼容性最好（默认推荐）。App 端 Cookie 有设备槽位校验，与桌面 UA 不匹配会报"服务器开小差"。避免选常用设备导致被挤下线。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="web" selected>115浏览器_网页端(推荐)</option><option value="115ios">115生活_iOS端</option><option value="115android">115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option><option value="tv">115生活_TV端</option><option value="qandroid">115浏览器_Android端</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
         <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip">?<span class="tip-bubble">强烈推荐！使用 115 官方开放平台接口（同 LitePan/QMediaSync 方案），无 UA 风控、无"服务器开小差"，token 自动续期。Cookie 通道作为回退保留。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用(推荐)</div></div></div></div>
@@ -873,6 +873,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=23"></script>
+<script src="/js/app.js?v=24"></script>
 </body>
 </html>

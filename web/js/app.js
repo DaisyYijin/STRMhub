@@ -298,6 +298,25 @@ function getTags(containerId) {
   return Array.from(document.querySelectorAll(`#${containerId} .tag`)).map(t => t.dataset.val);
 }
 
+// ==================== 增量同步 ====================
+async function startIncrementalSync() {
+  const cid = resolveCID('full-cid') || '0';
+  if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
+  try {
+    appendLog('开始增量同步（拉取 115 生活事件）...');
+    const data = await api('/sync/incremental', { method: 'POST', body: JSON.stringify({
+      cid: cid,
+      local_path: document.getElementById('full-local').value,
+      video_ext: getTags('video-ext'),
+    }) });
+    toast(data.message || '增量同步完成');
+    appendLog(`增量同步完成：共拉取 ${data.total} 个事件，其中 ${data.relevant} 个与媒体文件相关`);
+  } catch (e) {
+    appendLog('✗ 增量同步失败: ' + e.message);
+    toast('增量同步失败：' + e.message);
+  }
+}
+
 // ==================== 目录选择器 ====================
 let dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [] }; // trail: 115 逐级目录名
 let dirPickerTarget = 'full-cid'; // 选择后回填的输入框 id
@@ -613,42 +632,7 @@ function checkCookie() {
     .catch(e => toast('Cookie 检测失败：' + (e.message || '无效')));
 }
 
-// 手动导入 Cookie（绕过被 IP 风控的扫码登录），检测通过后后端自动保存
-function importCookie() {
-  const ck = document.getElementById('acc-cookie-paste').value.trim();
-  if (!ck) { toast('请先粘贴 Cookie'); return; }
-  if (!ck.includes('UID=') || !ck.includes('SEID=')) { toast('Cookie 格式不正确，缺少 UID/SEID 字段'); return; }
-  toast('正在验证并导入 Cookie...');
-  api('/storage/check', { method: 'POST', body: JSON.stringify({ type: '115', cookie: ck }) })
-    .then(data => {
-      if (!data.valid) { toast('导入失败：' + (data.message || 'Cookie 无效')); return; }
-      const box = document.getElementById('acc-status-box');
-      box.style.display = 'block';
-      document.getElementById('acc-username').textContent = data.username || '-';
-      document.getElementById('acc-capacity').textContent = data.capacity || '-';
-      toast('Cookie 导入成功，可直接使用目录选择与同步功能');
-    })
-    .catch(e => toast('导入失败：' + (e.message || '无效')));
-}
 
-// 诊断 115 连接：会话/域名风控/UA 配对全矩阵
-async function diagnose115() {
-  toast('正在诊断 115 连接（约 15-30 秒）...');
-  try {
-    const data = await api('/storage/115/diagnose');
-    let report = '诊断结果 (Cookie长度=' + data.cookie_len + '):\n\n';
-    let anyOk = false;
-    Object.entries(data.results || {}).forEach(([name, r]) => {
-      report += (r.ok ? '✓' : '✗') + ' ' + name + ': ' + (r.info || '失败') + '\n';
-      if (r.ok) anyOk = true;
-    });
-    report += '\n' + (data.hint || '');
-    alert(report);
-    console.log('[115诊断]', data);
-  } catch (e) {
-    alert('诊断失败: ' + (e.message || ''));
-  }
-}
 
 async function loadAccount() {
   try {
@@ -656,7 +640,9 @@ async function loadAccount() {
     const acc = (data.data || []).find(s => s.type === '115');
     if (!acc) return;
     document.getElementById('acc-cookie-path').value = acc.cookie_path || '/config/115-cookies.txt';
-    // 设备下拉保持默认"网页端"（App 槽位 Cookie 与 webapi 不配套），不恢复历史保存值
+    // 回显用户保存的设备选择（值不在选项中时保持默认网页端）
+    const devSel = document.getElementById('acc-device');
+    if (devSel && acc.device && [...devSel.options].some(o => o.value === acc.device)) devSel.value = acc.device;
     document.getElementById('acc-interval').value = acc.interval || 3.0;
     document.getElementById('acc-appid').value = acc.app_id || '';
     setOpenapi(!!acc.openapi_enabled);
