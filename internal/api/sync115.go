@@ -825,6 +825,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		return filter.videoExts[ext] || filter.assetExts[ext]
 	}
 
+	memo := map[string]dirInfo{}
 	dirSet := map[string]bool{}
 	for _, ev := range pending {
 		switch ev.Type {
@@ -842,14 +843,14 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				sum.Relevant++
 			}
 		case evDelete:
-			// 精确删除：只删台账中记录的、本工具生成的本地文件
-			if h.removeSyncedFile(ev.FileID, p.LocalPath) {
+			// 精确删除：台账 → 路径推导（支持整目录删除与无台账的旧文件）
+			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo) {
 				sum.Deleted++
 			}
 			sum.Structural++
 		case evMove, evRename:
-			// 移动/改名：删除旧位置本地文件，新位置由目录重遍历重建
-			if h.removeSyncedFile(ev.FileID, p.LocalPath) {
+			// 移动/改名：清理旧位置（台账/路径推导），新位置由目录重遍历重建
+			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo) {
 				sum.Moved++
 			}
 			if ev.Cid != "" {
@@ -870,7 +871,6 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	// 受影响目录：定位相对路径 + 祖先去重
 	type targetDir struct{ cid, base string }
 	var targets []targetDir
-	memo := map[string]dirInfo{}
 	for cid := range dirSet {
 		base, ok, err := get115RelPath(cookie, cid, p.Cid, memo)
 		if err != nil {
@@ -886,6 +886,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].base < targets[j].base })
 	var uniqTargets []targetDir
+	dirsMerged := 0
 	for _, t := range targets {
 		covered := false
 		for _, u := range uniqTargets {
@@ -894,9 +895,11 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				break
 			}
 		}
-		if !covered {
-			uniqTargets = append(uniqTargets, t)
+		if covered {
+			dirsMerged++ // 子目录被上层目录的遍历覆盖，无需单独处理
+			continue
 		}
+		uniqTargets = append(uniqTargets, t)
 	}
 
 	// 逐目录遍历并立即落盘
@@ -934,8 +937,8 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	if sum.StrmCreated+sum.AssetsDownloaded+sum.Deleted+sum.Moved > 0 {
 		h.notifyEmbyRefresh(p.LocalPath)
 	}
-	log.Printf("[115增量] 完成: 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录 %d（跳过 %d），视频 %d（STRM %d），附属下载 %d",
-		sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Dirs, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	log.Printf("[115增量] 完成: 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
+		sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
 	return sum, nil
 }
 
@@ -956,6 +959,66 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 	h.DB.Delete(&sf)
 	log.Printf("[115增量] 文件删除-执行成功: %s", sf.RelPath)
 	return true
+}
+
+// removeSyncedItem 清理 move/rename/delete 事件的旧位置，三级定位：
+// 1) 台账按 file_id 精确匹配（本工具生成且已登记的文件）
+// 2) 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
+//    （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
+// 3) 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
+func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo) bool {
+	// 1) 台账精确匹配
+	if ev.FileID != "" && h.removeSyncedFile(ev.FileID, localRoot) {
+		return true
+	}
+	// 2) 路径推导
+	if ev.Cid != "" && ev.FileName != "" {
+		if base, ok, err := get115RelPath(cookie, ev.Cid, rootCid, memo); err == nil && ok {
+			rel := path.Join(base, ev.FileName)
+			local := filepath.Join(localRoot, filepath.FromSlash(rel))
+			// 目录：整树删除（strm/附属全在树内），并清理台账
+			if st, err := os.Stat(local); err == nil && st.IsDir() {
+				if err := os.RemoveAll(local); err != nil {
+					log.Printf("[115增量] 删除本地目录失败 %s: %v", rel, err)
+					return false
+				}
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", rel, rel+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[115增量] 目录删除-执行成功: %s", rel)
+				return true
+			}
+			// 文件：strm 与附属实体两种形态
+			for _, cand := range []struct{ rel, suffix string }{{rel, ".strm"}, {rel, ""}} {
+				full := filepath.Join(localRoot, filepath.FromSlash(cand.rel)) + cand.suffix
+				if _, err := os.Stat(full); err == nil {
+					if err := os.Remove(full); err != nil {
+						log.Printf("[115增量] 删除本地文件失败 %s: %v", cand.rel+cand.suffix, err)
+						return false
+					}
+					h.DB.Where("rel_path = ?", cand.rel+cand.suffix).Delete(&model.SyncedFile{})
+					log.Printf("[115增量] 文件删除-执行成功: %s", cand.rel+cand.suffix)
+					return true
+				}
+			}
+		}
+	}
+	// 3) 台账按文件名模糊兜底
+	if ev.FileName != "" {
+		var sfs []model.SyncedFile
+		h.DB.Where("rel_path = ? OR rel_path = ?", ev.FileName+".strm", ev.FileName).Find(&sfs)
+		// 进一步按文件名后缀精确过滤（rel_path 最后一段必须完全等于）
+		for _, sf := range sfs {
+			if path.Base(sf.RelPath) == ev.FileName+".strm" || path.Base(sf.RelPath) == ev.FileName {
+				full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
+				if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+					continue
+				}
+				h.DB.Delete(&sf)
+				log.Printf("[115增量] 文件删除-执行成功(名称匹配): %s", sf.RelPath)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ==================== 全量同步 ====================

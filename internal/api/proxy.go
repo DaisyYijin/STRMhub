@@ -165,7 +165,6 @@ func get115DownloadURL(pickcode, cookie string) (string, map[string]string, erro
 					if len(parts) > 0 {
 						headers["Cookie"] = strings.Join(parts, "; ")
 					}
-					log.Printf("[115下载] 获取直链成功: %s", truncateStr(u, 160))
 					return u, headers, nil
 				}
 				appErr = "解密后无链接: " + truncateStr(string(plain), 150)
