@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net/http"
 	"net/url"
@@ -144,8 +145,22 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
+		log.Printf("[TMDB] 搜索 %q（年份=%s）无结果", query, year)
 		return nil, nil
 	}
+	// 候选列表（CMS 同款：识别错片时可从候选看出原因）
+	cands := make([]string, 0, 3)
+	for _, c := range result.Results {
+		if len(cands) >= 3 {
+			break
+		}
+		cy := ""
+		if len(c.ReleaseDate) >= 4 {
+			cy = c.ReleaseDate[:4]
+		}
+		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Title, cy, c.ID, c.VoteAverage))
+	}
+	log.Printf("[TMDB] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	yr := ""
 	if len(r.ReleaseDate) >= 4 {
@@ -208,8 +223,21 @@ func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
+		log.Printf("[TMDB] 搜索 %q（TV）无结果", query)
 		return nil, nil
 	}
+	cands := make([]string, 0, 3)
+	for _, c := range result.Results {
+		if len(cands) >= 3 {
+			break
+		}
+		cy := ""
+		if len(c.FirstAirDate) >= 4 {
+			cy = c.FirstAirDate[:4]
+		}
+		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Name, cy, c.ID, c.VoteAverage))
+	}
+	log.Printf("[TMDB] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	year := ""
 	if len(r.FirstAirDate) >= 4 {
