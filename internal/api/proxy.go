@@ -128,28 +128,31 @@ func get115DownloadURL(pickcode, cookie string) (string, error) {
 			URL string `json:"url"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		// 尝试用正则提取 url
-		re := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
-		m := re.FindSubmatch(body)
-		if m != nil {
-			return string(m[1]), nil
+	if err := json.Unmarshal(body, &result); err == nil {
+		if !result.State {
+			var e struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(body, &e)
+			msg := e.Error
+			if msg == "" {
+				msg = "未知错误"
+			}
+			return "", fmt.Errorf("115 下载接口拒绝: %s", msg)
 		}
-		return "", fmt.Errorf("解析下载链接失败")
+		if result.URL.URL != "" {
+			return result.URL.URL, nil
+		}
+		if result.Data.URL != "" {
+			return result.Data.URL, nil
+		}
 	}
-
-	if !result.State {
-		return "", fmt.Errorf("115 接口返回失败状态")
+	// 常规字段为空时用正则兜底提取任意位置的下载链接
+	re := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
+	if m := re.FindSubmatch(body); m != nil {
+		return string(m[1]), nil
 	}
-
-	if result.URL.URL != "" {
-		return result.URL.URL, nil
-	}
-	if result.Data.URL != "" {
-		return result.Data.URL, nil
-	}
-
-	return "", nil
+	return "", fmt.Errorf("115 下载响应中未找到链接: %s", truncateStr(string(body), 200))
 }
 
 // 清理过期缓存（定期调用）

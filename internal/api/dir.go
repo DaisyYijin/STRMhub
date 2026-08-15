@@ -2,18 +2,34 @@ package api
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 // ==================== 目录浏览 ====================
+
+// dirCacheEntry 目录列表缓存（避免选择器反复点开同一路径时重复请求 115）
+type dirCacheEntry struct {
+	dirs    []gin.H
+	count   int
+	origin  string
+	expires time.Time
+}
+
+var (
+	dirCacheMu sync.Mutex
+	dirCache   = map[string]dirCacheEntry{}
+)
+
+const dirCacheTTL = 5 * time.Minute
 
 // List115Dirs 浏览 115 网盘目录（只返回文件夹）
 // GET /storage/115/dirs?cid=0
@@ -22,6 +38,16 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	if cid == "" {
 		cid = "0"
 	}
+
+	// 命中缓存直接返回（5 分钟）
+	dirCacheMu.Lock()
+	if e, ok := dirCache[cid]; ok && time.Now().Before(e.expires) {
+		dirs, count, origin := e.dirs, e.count, e.origin
+		dirCacheMu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "count": count, "origin": origin, "channel": "cache"})
+		return
+	}
+	dirCacheMu.Unlock()
 
 	// 统一操作通道：OpenAPI 优先，Cookie 回退
 	ops, err := h.newPan115Ops()
@@ -35,6 +61,15 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 写入缓存（超过 500 项时清空防止膨胀）
+	dirCacheMu.Lock()
+	if len(dirCache) > 500 {
+		dirCache = map[string]dirCacheEntry{}
+	}
+	dirCache[cid] = dirCacheEntry{dirs: dirs, count: count, origin: origin, expires: time.Now().Add(dirCacheTTL)}
+	dirCacheMu.Unlock()
+
 	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName(), "count": count, "origin": origin})
 }
 
@@ -44,7 +79,6 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, int, string, error) {
 	if cookie == "" {
 		return nil, 0, "", fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
-	log.Printf("[115目录] 请求 cid=%s, cookie长度=%d, UA=%s", cid, len(cookie), ua)
 
 	entries, count, origin, err := fetch115FilesPage(cookie, ua, cid, 0)
 	if err != nil {

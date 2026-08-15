@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strmhub/internal/model"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -631,6 +632,9 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 
 // ==================== 全量同步 ====================
 
+// fullSyncMu 全量同步互斥：防止重复点击导致两个同步并发互相干扰
+var fullSyncMu sync.Mutex
+
 // RunFullSync 执行全量同步：递归遍历 cid 目录，视频生成 .strm，附属文件实体落盘
 // 附属文件 = 用户配置的图片后缀 + 数据文件后缀 + nfo（Emby/Jellyfin 标准元数据）；
 // 不在过滤集合内的文件一律不同步
@@ -650,6 +654,13 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	if req.LocalPath == "" {
 		req.LocalPath = "/media"
 	}
+
+	// 同一时刻只允许一个全量同步
+	if !fullSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "全量同步正在进行中，请等待完成后再试"})
+		return
+	}
+	defer fullSyncMu.Unlock()
 
 	// 读取 STRM 直链配置
 	domain, format, keepExt, skipExist := h.getStrmConfig()

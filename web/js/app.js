@@ -299,7 +299,7 @@ function getTags(containerId) {
 }
 
 // ==================== 目录选择器 ====================
-let dirPicker = { mode: '115', cid: '0', path: '', history: [] };
+let dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [] }; // trail: 115 逐级目录名
 let dirPickerTarget = 'full-cid'; // 选择后回填的输入框 id
 
 function showDirPicker(title) {
@@ -312,7 +312,7 @@ function closeDirPicker() {
 
 function open115DirPicker(targetId) {
   dirPickerTarget = targetId || 'full-cid';
-  dirPicker = { mode: '115', cid: '0', path: '', history: [] };
+  dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [] };
   showDirPicker('选择 115 目录');
   load115Dirs('0');
 }
@@ -323,14 +323,22 @@ function openLocalDirPicker(targetId) {
   loadLocalDirs('');
 }
 
-async function load115Dirs(cid, pushHistory) {
+// load115Dirs 加载 115 目录；opts.enter = 进入的目录名，opts.restore = 上级恢复的 {cid, trail}
+async function load115Dirs(cid, opts) {
   const list = document.getElementById('dir-picker-list');
   list.innerHTML = '<div class="dir-empty">加载中...</div>';
   try {
-    if (pushHistory && dirPicker.cid !== cid) dirPicker.history.push(dirPicker.cid);
+    if (opts && opts.enter) {
+      dirPicker.history.push({ cid: dirPicker.cid, trail: [...dirPicker.trail] });
+      dirPicker.trail.push(opts.enter);
+    } else if (opts && opts.restore) {
+      dirPicker.trail = opts.restore;
+    } else {
+      dirPicker.trail = []; // 根目录 / 手动跳转
+    }
     const data = await api('/storage/115/dirs?cid=' + encodeURIComponent(cid));
     dirPicker.cid = cid;
-    document.getElementById('dir-picker-path').textContent = (cid === '0' || cid === '') ? '根目录' : 'cid: ' + cid;
+    document.getElementById('dir-picker-path').textContent = dirPicker.trail.length ? '/' + dirPicker.trail.join('/') : '根目录';
     const items = data.data || [];
     let note = '';
     if (!items.length && data.count > 0) {
@@ -362,7 +370,7 @@ function dirPickerJump() {
   if (!v) return;
   if (dirPicker.mode === '115') {
     const cid = v.replace(/\D/g, '');
-    load115Dirs(cid || '0', true);
+    load115Dirs(cid || '0', {});
   } else {
     loadLocalDirs(v);
   }
@@ -383,7 +391,7 @@ function renderDirList(items, current, note) {
     el.addEventListener('click', () => {
       const it = items[parseInt(el.dataset.index)];
       if (dirPicker.mode === '115') {
-        load115Dirs(it.cid, true);
+        load115Dirs(it.cid, { enter: it.name });
       } else {
         loadLocalDirs(it.path);
       }
@@ -394,7 +402,8 @@ function renderDirList(items, current, note) {
 function dirPickerUp() {
   if (dirPicker.mode === '115') {
     const prev = dirPicker.history.pop();
-    load115Dirs(prev !== undefined ? prev : '0');
+    if (!prev) return; // 已在根目录
+    load115Dirs(prev.cid, { restore: prev.trail });
   } else {
     loadLocalDirs(parentPath(dirPicker.path || ''));
   }
@@ -410,17 +419,32 @@ function parentPath(p) {
 function confirmDirPicker() {
   const target = document.getElementById(dirPickerTarget);
   if (dirPicker.mode === '115') {
-    if (target) target.value = (dirPicker.cid === '0' || dirPicker.cid === '') ? '' : dirPicker.cid;
+    if (target) {
+      // 输入框显示可读路径，真实 cid 存 dataset 供同步/保存使用
+      target.dataset.cid = dirPicker.cid;
+      target.value = dirPicker.trail.length ? '/' + dirPicker.trail.join('/') : '';
+      target.placeholder = '根目录';
+    }
   } else {
     if (target) target.value = dirPicker.path || '/media';
   }
   closeDirPicker();
 }
 
+// resolveCID 取输入框对应的 115 cid：优先 dataset（目录选择器写入），
+// 兼容用户手填纯数字 cid 的情况
+function resolveCID(inputId) {
+  const el = document.getElementById(inputId);
+  const v = (el.value || '').trim();
+  if (el.dataset && el.dataset.cid && el.dataset.cid !== '0') return el.dataset.cid;
+  if (/^\d+$/.test(v)) return v;
+  return '';
+}
+
 // ==================== 全量同步 ====================
 async function startFullSync() {
-  const cid = document.getElementById('full-cid').value;
-  if (!cid) { toast('请先选择或填写 115 媒体库 cid'); return; }
+  const cid = resolveCID('full-cid') || '0';
+  if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
   const videoExt = getTags('video-ext');
   if (!videoExt.length) { toast('请至少保留一个视频文件后缀'); return; }
   try {
@@ -979,10 +1003,14 @@ function collectConfig(key) {
   }
   if (key === 'org-basic') {
     return {
-      pending: val('org-pending'),
-      library: val('org-library'),
-      existing: val('org-existing'),
-      redundant: val('org-redundant'),
+      pending: resolveCID('org-pending'),
+      pending_path: val('org-pending'),
+      library: resolveCID('org-library'),
+      library_path: val('org-library'),
+      existing: resolveCID('org-existing'),
+      existing_path: val('org-existing'),
+      redundant: resolveCID('org-redundant'),
+      redundant_path: val('org-redundant'),
     };
   }
   if (key === 'org-recognize') {
@@ -1011,7 +1039,8 @@ function collectConfig(key) {
   }
   if (key === 'full') {
     return {
-      cid: val('full-cid'),
+      cid: resolveCID('full-cid'),
+      path: val('full-cid'),
       local_path: val('full-local'),
       video_ext: getTags('video-ext'),
       image_ext: getTags('image-ext'),
@@ -1060,10 +1089,14 @@ function applyConfig(key, v) {
       setMsgEnabled('tg', v.tg.enabled === true || v.tg.enabled === 'true');
     }
   } else if (key === 'org-basic') {
-    setVal('org-pending', v.pending);
-    setVal('org-library', v.library);
-    setVal('org-existing', v.existing);
-    setVal('org-redundant', v.redundant);
+    // 输入框显示可读路径，cid 存 dataset（兼容旧数据：值本身是数字 cid）
+    const pairs = [['org-pending', 'pending'], ['org-library', 'library'], ['org-existing', 'existing'], ['org-redundant', 'redundant']];
+    pairs.forEach(([id, k]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.dataset.cid = v[k] || '';
+      setVal(id, v[k + '_path'] !== undefined ? v[k + '_path'] : (v[k] || ''));
+    });
   } else if (key === 'org-recognize') {
     setVal('org-replace-rules', v.replace_rules);
     setVal('org-min-size', v.min_size);
@@ -1081,7 +1114,9 @@ function applyConfig(key, v) {
     setVal('rename-av-file', v.av_file);
     updateRenameExample();
   } else if (key === 'full') {
-    setVal('full-cid', v.cid);
+    const cidEl = document.getElementById('full-cid');
+    if (cidEl) { cidEl.dataset.cid = v.cid || ''; }
+    setVal('full-cid', v.path !== undefined ? v.path : (v.cid || ''));
     setVal('full-local', v.local_path);
     if (v.video_ext) setTags('video-ext', v.video_ext);
     if (v.image_ext) setTags('image-ext', v.image_ext);
@@ -1149,7 +1184,7 @@ const DEFAULT_CONFIGS = {
   'proxy': { url: '' },
   'emby-refresh': { url: '', api_key: '', path_replace: '', enabled: true },
   'emby-notify': { webhook: '' },
-  'org-basic': { pending: '', library: '', existing: '', redundant: '' },
+  'org-basic': { pending: '', pending_path: '', library: '', library_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
   'org-recognize': { replace_rules: '', release_groups: '', min_size: '0' },
   'org-gpt': { url: 'https://api.siliconflow.cn/v1', key: '', model: '' },
   'org-rename': { movie_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', movie_file: '{title} ({year}) [{tmdb_id}]{ext}', tv_folder: '{first_letter}/{title} ({year}) [{tmdb_id}]', tv_file: '{title} - S{season}E{episode}{ext}' },
@@ -1205,14 +1240,15 @@ function closeConfirmBubbleOnOutside(e) {
 }
 
 async function loadConfigs() {
-  const keys = ['strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'full', 'incr', 'share', 'monitor'];
-  for (const key of keys) {
+  const keys = ['full', 'strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
+  // 并行拉取，避免逐个等待导致 cid 等字段迟迟不回填
+  await Promise.all(keys.map(async (key) => {
     try {
       const data = await api('/config/setting?key=' + key);
-      if (!data.value) continue;
+      if (!data.value) return;
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
-  }
+  }));
 }
 
 // ==================== 日志 ====================
@@ -1222,15 +1258,18 @@ function appendLog(line) {
   viewer.textContent = (viewer.textContent === '暂无日志...' ? '' : viewer.textContent) + `[${time}] ${line}\n`;
   viewer.scrollTop = viewer.scrollHeight;
 }
+function clearLogViewer() {
+  document.getElementById('log-viewer').textContent = '';
+}
 function openLog() {
-  document.getElementById('log-modal').style.display = 'flex';
+  document.getElementById('log-overlay').style.display = 'flex';
   loadSystemLogs();
 }
 function closeLog() {
-  document.getElementById('log-modal').style.display = 'none';
+  document.getElementById('log-overlay').style.display = 'none';
 }
 async function loadSystemLogs() {
-  const viewer = document.getElementById('server-log-viewer');
+  const viewer = document.getElementById('log-viewer');
   viewer.textContent = '加载中...';
   try {
     const data = await api('/system/logs');
