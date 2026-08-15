@@ -1048,6 +1048,10 @@ async function startOrganize() {
         appendLog(`${icon} ${s.step}: ${s.message}`);
       });
     }
+    // 按部汇总：一行一部
+    (data.shows || []).forEach(sh => {
+      appendLog(`★ 入库: ${sh.title} (${sh.year || '-'}) → ${sh.target}`);
+    });
     // 逐项详情：识别出的标题/年份/分类/目标路径
     (data.details || []).forEach(d => {
       const icon = d.status === 'success' ? '✓' : d.status === 'exists' ? '○' : '✗';

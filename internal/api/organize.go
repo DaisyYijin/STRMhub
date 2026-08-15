@@ -624,43 +624,83 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	onLog(fmt.Sprintf("发现 %d 个条目，开始整理...", len(topEntries)))
 
 	for _, entry := range topEntries {
-		if entry.IsDir {
-			// 子目录：收集所有文件，找到视频进行识别
-			subFiles, err := collectDirFiles(ops, entry.Cid, entry.Name)
-			if err != nil {
-				onLog(fmt.Sprintf("✗ %s/ - 遍历失败: %v", entry.Name, err))
-				continue
-			}
-			if len(subFiles) == 0 {
-				continue
-			}
-			result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, libAbs, onLog)
-			results = append(results, result...)
-			for _, r := range result {
-				if r.Status == "success" {
-					successCount++
-				}
-			}
-		} else {
-			// 顶层直接是文件
-			if classifyFile(entry.Name) != FileTypeVideo {
-				continue // 跳过非视频文件
-			}
-			// 过滤小文件
-			if cfg.MinSize > 0 && entry.Size > 0 && entry.Size < cfg.MinSize*1024*1024 {
-				continue
-			}
-			f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size, Sha1: entry.Sha1}
-			result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
-			results = append(results, result)
-			if result.Status == "success" {
-				successCount++
-			}
-		}
+		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
 
 	return results, successCount
+}
+
+// processEntry 处理一个顶层条目：
+//   - 目录不含直接视频文件但含子目录 → 容器目录（如用户把多部剧放进同一文件夹），
+//     递归处理每个子目录（每部剧独立识别入库），容器自身最后移到冗余
+//   - 其余目录 → 单部影视目录
+//   - 文件 → 散视频
+func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, entry dirEntry, libAbs string, onLog func(string), depth int, successCount *int) []OrganizeResult {
+	results := []OrganizeResult{}
+	if !entry.IsDir {
+		if classifyFile(entry.Name) != FileTypeVideo {
+			return results
+		}
+		if cfg.MinSize > 0 && entry.Size > 0 && entry.Size < cfg.MinSize*1024*1024 {
+			return results
+		}
+		f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size, Sha1: entry.Sha1}
+		result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
+		results = append(results, result)
+		if result.Status == "success" {
+			*successCount++
+		}
+		return results
+	}
+
+	// 列直接子条目判断是否为容器目录
+	direct, err := listPendingTopLevel(ops, entry.Cid)
+	if err == nil && depth < 3 {
+		excluded := map[string]bool{cfg.Library: true, cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+		hasDirectVideo := false
+		var subDirs []dirEntry
+		for _, c := range direct {
+			if c.IsDir {
+				if !excluded[c.Cid] {
+					subDirs = append(subDirs, c)
+				}
+			} else if classifyFile(c.Name) == FileTypeVideo {
+				hasDirectVideo = true
+			}
+		}
+		if !hasDirectVideo && len(subDirs) > 0 {
+			onLog(fmt.Sprintf("▣ %s/ 为容器目录（无直接视频，含 %d 个子目录），逐个处理", entry.Name, len(subDirs)))
+			for _, child := range subDirs {
+				results = append(results, processEntry(ops, cfg, tc, replaceRules, child, libAbs, onLog, depth+1, successCount)...)
+			}
+			// 容器自身（已只剩空目录）移到冗余
+			if err := ops.moveFiles(cfg.Redundant, []string{entry.Fid}); err != nil {
+				onLog(fmt.Sprintf("○ %s/ - 空容器目录移到冗余失败: %v", entry.Name, err))
+			} else {
+				onLog(fmt.Sprintf("○ %s/ - 空容器目录已移到冗余", entry.Name))
+			}
+			return results
+		}
+	}
+
+	// 单部影视目录：收集所有文件识别入库
+	subFiles, err := collectDirFiles(ops, entry.Cid, entry.Name)
+	if err != nil {
+		onLog(fmt.Sprintf("✗ %s/ - 遍历失败: %v", entry.Name, err))
+		return results
+	}
+	if len(subFiles) == 0 {
+		return results
+	}
+	result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, libAbs, onLog)
+	results = append(results, result...)
+	for _, r := range result {
+		if r.Status == "success" {
+			*successCount++
+		}
+	}
+	return results
 }
 
 // processDir 处理一个子目录（包含多个文件的影视目录）
@@ -833,7 +873,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 
 	// 整理完毕：已移空的源目录移到冗余（避免待整理目录残留空壳）
 	if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {
-		onLog(fmt.Sprintf("○ %s/ - 空源目录移到冗余失败（可忽略）: %v", dir.Name, err))
+		onLog(fmt.Sprintf("○ %s/ - 空源目录移到冗余失败: %v", dir.Name, err))
+	} else {
+		onLog(fmt.Sprintf("○ %s/ - 空源目录已移到冗余", dir.Name))
 	}
 
 	// 记录到数据库

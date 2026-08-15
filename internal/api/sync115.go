@@ -1673,6 +1673,25 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 			strings.Join(titles, "\n"),
 		)
 	}
+	// 按部汇总（一部剧的 52 个文件归并为一行）
+	showSet := map[string]bool{}
+	var showLines []string
+	for _, r := range orgResults {
+		if r.TmdbID == 0 || r.Status != "success" {
+			continue
+		}
+		key := fmt.Sprintf("%d-%s", r.TmdbID, r.TargetDir)
+		if showSet[key] {
+			continue
+		}
+		showSet[key] = true
+		line := fmt.Sprintf("%s (%s) → %s", r.Title, r.Year, r.TargetDir)
+		showLines = append(showLines, line)
+	}
+	if len(showLines) > 0 {
+		log.Printf("[整理] 本次入库 %d 部:\n  %s", len(showLines), strings.Join(showLines, "\n  "))
+	}
+
 	log.Printf("[整理] 任务完成: 自动整理, 耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
 		time.Since(orgStart).Truncate(time.Second), totalFiles, successCount, existsCount, failedCount,
 		map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
@@ -1698,7 +1717,21 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 	defer endTask()
 
 	steps, details, _ := h.executeOrganize(req.SyncAfter)
-	c.JSON(http.StatusOK, gin.H{"steps": steps, "details": details, "message": "整理执行完成"})
+	// 按部归并（前端一行一部）
+	showSet := map[string]bool{}
+	var shows []gin.H
+	for _, r := range details {
+		if r.TmdbID == 0 || r.Status != "success" {
+			continue
+		}
+		key := fmt.Sprintf("%d-%s", r.TmdbID, r.TargetDir)
+		if showSet[key] {
+			continue
+		}
+		showSet[key] = true
+		shows = append(shows, gin.H{"title": r.Title, "year": r.Year, "category": r.Category, "target": r.TargetDir})
+	}
+	c.JSON(http.StatusOK, gin.H{"steps": steps, "details": details, "shows": shows, "message": "整理执行完成"})
 }
 
 // ==================== EMBY 入库刷新通知 ====================
