@@ -45,10 +45,18 @@ var webapiFileOrigins = []string{
 
 // remoteFile 115 网盘上的一个文件
 type remoteFile struct {
-	Fid   string `json:"fid"`
-	Name  string `json:"name"`
-	Path  string `json:"path"` // 相对媒体库根目录的路径
-	Size  int64  `json:"size"`
+	Fid      string `json:"fid"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`     // 相对媒体库根目录的路径
+	Size     int64  `json:"size"`
+	PickCode string `json:"pickcode"` // 下载直链用
+	IsAsset  bool   `json:"is_asset"` // 附属文件（图片/字幕/nfo 等，需实体落盘）
+}
+
+// syncFilter 全量同步的文件分类过滤器
+type syncFilter struct {
+	videoExts map[string]bool // 视频：生成 .strm
+	assetExts map[string]bool // 附属（图片/字幕/元数据）：下载为真实文件
 }
 
 // httpGet115 带 Cookie 的 GET 请求（使用默认 UA）
@@ -133,7 +141,10 @@ func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interfa
 			}
 			continue // 风控类错误，尝试下一个镜像
 		}
-		log.Printf("[115目录] %s 成功: count=%d, 条目数=%d", origin, result.Count, len(result.Data))
+		// 成功日志仅在走了镜像回退时记录（主域名成功是常态，不刷屏）
+		if origin != webapiFileOrigins[0] {
+			log.Printf("[115目录] %s 镜像接管: count=%d, 条目数=%d", origin, result.Count, len(result.Data))
+		}
 		// state=true 但 count>0 而 data 为空：响应异常，换镜像
 		if result.Count > 0 && len(result.Data) == 0 {
 			lastErr = fmt.Errorf("响应异常：count=%d 但未返回数据", result.Count)
@@ -179,9 +190,10 @@ func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, i
 	return entries, count, err
 }
 
-// walk115Dir 递归遍历目录，收集所有文件（路径为相对根目录的相对路径）
-// ops 统一操作通道：OpenAPI 优先，Cookie 回退
-func walk115Dir(ops *pan115Ops, cid, basePath string, out *[]remoteFile, exts map[string]bool, onLog func(string)) error {
+// walk115Dir 递归遍历目录，按过滤器分别收集视频（生成 strm）和附属文件（实体落盘）
+// assets 为 nil 时只收集视频（整理管线等场景）
+func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFile, f *syncFilter) error {
+	log.Printf("[115同步] 遍历目录: %s", map[bool]string{true: basePath, false: "(根目录)"}[basePath != ""])
 	offset := 0
 	for {
 		entries, count, err := ops.listEntries(cid, offset)
@@ -192,27 +204,34 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, out *[]remoteFile, exts ma
 			isDir := fmt.Sprint(d["f"]) == "0"
 			name := fmt.Sprint(d["n"])
 			if isDir {
-				// 递归进入子目录
 				subPath := path.Join(basePath, name)
-				if err := walk115Dir(ops, fmt.Sprint(d["cid"]), subPath, out, exts, onLog); err != nil {
+				if err := walk115Dir(ops, fmt.Sprint(d["cid"]), subPath, videos, assets, f); err != nil {
 					return err
 				}
 			} else {
-				// 按后缀过滤视频文件
 				ext := strings.ToLower(path.Ext(name))
-				if len(exts) > 0 && !exts[ext] {
-					continue
-				}
 				size := int64(0)
 				if s, ok := d["s"].(float64); ok {
 					size = int64(s)
 				}
-				*out = append(*out, remoteFile{
-					Fid:  fmt.Sprint(d["fid"]),
-					Name: name,
-					Path: basePath,
-					Size: size,
-				})
+				rf := remoteFile{
+					Fid:      fmt.Sprint(d["fid"]),
+					Name:     name,
+					Path:     basePath,
+					Size:     size,
+					PickCode: fmt.Sprint(d["pc"]),
+				}
+				switch {
+				case len(f.videoExts) > 0 && f.videoExts[ext]:
+					if videos != nil {
+						*videos = append(*videos, rf)
+					}
+				case len(f.assetExts) > 0 && f.assetExts[ext]:
+					rf.IsAsset = true
+					if assets != nil {
+						*assets = append(*assets, rf)
+					}
+				}
 			}
 		}
 		if len(entries) == 0 || offset+len(entries) >= count {
@@ -221,6 +240,56 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, out *[]remoteFile, exts ma
 		offset += len(entries)
 	}
 	return nil
+}
+
+// syncAssetFile 下载媒体附属文件（图片/字幕/nfo）为本地真实文件，保持目录结构
+// Emby/Jellyfin 无法通过 .strm 读取海报和字幕，附属文件必须实体存在；已存在则跳过
+func syncAssetFile(ops *pan115Ops, f remoteFile, localRoot string) (string, error) {
+	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
+	dst := filepath.Join(dir, f.Name)
+	if _, err := os.Stat(dst); err == nil {
+		return "skip", nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if f.PickCode == "" || f.PickCode == "<nil>" {
+		return "", fmt.Errorf("缺少 pickcode")
+	}
+	dlURL, err := ops.downloadURL(f.PickCode)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodGet, dlURL, nil)
+	if err != nil {
+		return "", err
+	}
+	// 115 下载直链与请求时的 UA 绑定，必须用统一 UA 拉取
+	req.Header.Set("User-Agent", ua115Unified())
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("下载返回 HTTP %d", resp.StatusCode)
+	}
+	tmp := dst + ".part"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", err
+	}
+	_, werr := io.Copy(out, resp.Body)
+	cerr := out.Close()
+	if werr != nil || cerr != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("写入本地失败")
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", err
+	}
+	return "download", nil
 }
 
 // ==================== 115 文件操作（创建目录 / 移动文件） ====================
@@ -562,13 +631,17 @@ func (h *Handler) RunIncrementalSync(c *gin.Context) {
 
 // ==================== 全量同步 ====================
 
-// RunFullSync 执行全量同步：递归遍历 cid 目录，生成 .strm 文件
-// POST /sync/full  body: {"cid":"...","local_path":"...","video_ext":["mp4","mkv"]}
+// RunFullSync 执行全量同步：递归遍历 cid 目录，视频生成 .strm，附属文件实体落盘
+// 附属文件 = 用户配置的图片后缀 + 数据文件后缀 + nfo（Emby/Jellyfin 标准元数据）；
+// 不在过滤集合内的文件一律不同步
+// POST /sync/full  body: {"cid":"...","local_path":"...","video_ext":["mp4"],"image_ext":["jpg"],"data_ext":["ass"]}
 func (h *Handler) RunFullSync(c *gin.Context) {
 	var req struct {
-		Cid       string   `json:"cid"`
-		LocalPath string   `json:"local_path"`
-		VideoExt  []string `json:"video_ext"`
+		Cid        string   `json:"cid"`
+		LocalPath  string   `json:"local_path"`
+		VideoExt   []string `json:"video_ext"`
+		ImageExt   []string `json:"image_ext"`
+		DataExt    []string `json:"data_ext"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Cid == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误：请填写 115 媒体库 cid"})
@@ -588,29 +661,63 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		return
 	}
 
-	// 递归遍历，收集视频文件
-	exts := buildExtSet(req.VideoExt)
-	var files []remoteFile
-	if err := walk115Dir(ops, req.Cid, "", &files, exts, nil); err != nil {
+	// 过滤器：视频组生成 strm；附属组 = 图片后缀 ∪ 数据后缀 ∪ .nfo（始终包含）
+	filter := &syncFilter{
+		videoExts: buildExtSet(req.VideoExt),
+		assetExts: buildExtSet(append(append([]string{}, req.ImageExt...), req.DataExt...)),
+	}
+	filter.assetExts[".nfo"] = true
+
+	// 递归遍历，分类收集
+	var videos, assets []remoteFile
+	if err := walk115Dir(ops, req.Cid, "", &videos, &assets, filter); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}
 
-	// 生成 STRM
-	count := 0
-	for _, f := range files {
+	// 视频 → 生成 STRM
+	strmCreated := 0
+	for _, f := range videos {
 		if err := writeStrm(req.LocalPath, domain, format, keepExt, skipExist, f); err != nil {
 			continue
 		}
-		count++
+		strmCreated++
 	}
 
-	// 通知 Emby 刷新
-	if count > 0 {
+	// 附属文件 → 下载实体文件（已存在跳过）
+	downloaded, skipped, failed := 0, 0, 0
+	for i, f := range assets {
+		if i%20 == 0 {
+			log.Printf("[115同步] 附属文件进度: %d/%d", i, len(assets))
+		}
+		st, err := syncAssetFile(ops, f, req.LocalPath)
+		switch {
+		case err != nil:
+			failed++
+			log.Printf("[115同步] 附属文件失败: %s/%s: %v", f.Path, f.Name, err)
+		case st == "skip":
+			skipped++
+		default:
+			downloaded++
+		}
+	}
+
+	totalNew := strmCreated + downloaded
+	if totalNew > 0 {
 		h.notifyEmbyRefresh(req.LocalPath)
 	}
+	log.Printf("[115同步] 全量同步完成: 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
+		len(videos), strmCreated, len(assets), downloaded, skipped, failed)
 
-	c.JSON(http.StatusOK, gin.H{"message": "全量同步完成", "total": len(files), "created": count})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "全量同步完成",
+		"total":   len(videos),
+		"created": strmCreated,
+		"assets_total":      len(assets),
+		"assets_downloaded": downloaded,
+		"assets_skipped":    skipped,
+		"assets_failed":     failed,
+	})
 }
 
 // getStrmConfig 读取 STRM 直链配置
@@ -759,12 +866,15 @@ func (h *Handler) RunOrganizePipeline(c *gin.Context) {
 		}
 
 		domain, format, keepExt, skipExist := h.getStrmConfig()
-		exts := buildExtSet([]string{"mp4", "mkv", "ts", "avi", "mov", "rmvb", "webm", "flv", "m2ts", "wmv", "mpg", "iso"})
+		filter := &syncFilter{
+			videoExts: buildExtSet([]string{"mp4", "mkv", "ts", "avi", "mov", "rmvb", "webm", "flv", "m2ts", "wmv", "mpg", "iso"}),
+			assetExts: map[string]bool{},
+		}
 		if len(syncCfg.VideoExt) > 0 {
-			exts = buildExtSet(syncCfg.VideoExt)
+			filter.videoExts = buildExtSet(syncCfg.VideoExt)
 		}
 		var files []remoteFile
-		if err := walk115Dir(ops, orgCfg.Library, "", &files, exts, nil); err != nil {
+		if err := walk115Dir(ops, orgCfg.Library, "", &files, nil, filter); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
 			result["steps"] = steps
 			result["message"] = "整理完成，但同步失败"

@@ -53,7 +53,10 @@ func throttle115(api string) {
 	defer throttleMu.Unlock()
 	if elapsed := time.Since(throttleLast); elapsed < throttleMinGap {
 		sleep := throttleMinGap - elapsed
-		log.Printf("[115节流] 等待 %v 后再请求 %s", sleep.Truncate(time.Millisecond), api)
+		// 正常 1 秒内的等待不记录；只有明显拥堵（排队超过 3 个间隔）才提示
+		if sleep > 3*throttleMinGap {
+			log.Printf("[115节流] 等待 %v 后再请求 %s", sleep.Truncate(time.Millisecond), api)
+		}
 		time.Sleep(sleep)
 	}
 	throttleLast = time.Now()

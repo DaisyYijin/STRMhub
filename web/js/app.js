@@ -424,14 +424,16 @@ async function startFullSync() {
   const videoExt = getTags('video-ext');
   if (!videoExt.length) { toast('请至少保留一个视频文件后缀'); return; }
   try {
-    toast('全量同步进行中，请稍候...');
+    appendLog('开始全量同步（视频生成 STRM，图片/字幕/NFO 落盘）...');
     const data = await api('/sync/full', { method: 'POST', body: JSON.stringify({
       cid: cid,
       local_path: document.getElementById('full-local').value,
       video_ext: videoExt,
+      image_ext: getTags('image-ext'),
+      data_ext: getTags('data-ext'),
     }) });
     toast(data.message || '全量同步完成');
-    appendLog(`全量同步完成：共 ${data.total} 个视频，生成 ${data.created} 个 STRM`);
+    appendLog(`全量同步完成：视频 ${data.total} 个（生成 STRM ${data.created}），附属文件 ${data.assets_total} 个（下载 ${data.assets_downloaded}，跳过 ${data.assets_skipped}，失败 ${data.assets_failed}）`);
   } catch (e) { toast(e.message); }
 }
 
@@ -1228,7 +1230,7 @@ function closeLog() {
   document.getElementById('log-modal').style.display = 'none';
 }
 async function loadSystemLogs() {
-  const viewer = document.getElementById('log-viewer');
+  const viewer = document.getElementById('server-log-viewer');
   viewer.textContent = '加载中...';
   try {
     const data = await api('/system/logs');

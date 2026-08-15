@@ -75,9 +75,10 @@ func main() {
 		log.Printf("初始化默认洗版策略失败: %v", err)
 	}
 
-	// 启动 Gin
+	// 启动 Gin（不用 gin.Default：其自带的请求访问日志每个 HTTP 请求一行，噪音大）
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
 
 	// CORS
 	r.Use(cors.New(cors.Config{

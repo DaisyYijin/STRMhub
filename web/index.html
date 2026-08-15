@@ -58,7 +58,7 @@
     <div class="topbar">
       <div><div class="page-title" id="page-title">全量同步</div><div class="page-desc" id="page-desc">115 媒体库目录 → 本地 STRM 文件</div></div>
       <div class="right">
-        <button class="btn btn-outline" id="btn-log">实时日志</button>
+        <button class="btn btn-outline" id="btn-log">系统日志</button>
         <button class="btn btn-outline" id="btn-logout">退出</button>
       </div>
     </div>
@@ -131,6 +131,13 @@
         <div class="card">
           <div class="form-row"><div class="label">我的接收文件夹</div><div class="control"><input type="text" id="share-folder" placeholder="115 接收分享的文件夹"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('share', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+
+        <!-- 实时日志（页面内嵌，同步/整理操作直接显示在这里） -->
+        <div class="card">
+          <div class="form-row"><div class="label">实时日志</div><div class="control">
+            <div class="log-viewer" id="log-viewer" style="height:220px">暂无日志...</div>
+          </div></div>
         </div>
       </div>
 
@@ -840,11 +847,11 @@ av:
   </div>
 </div>
 
-<!-- 实时日志弹窗 -->
+<!-- 系统日志弹窗（服务端日志，实时操作日志在账号同步页内嵌显示） -->
 <div class="modal-mask" id="log-modal" style="display:none">
   <div class="modal" style="max-width:720px">
-    <h3>实时日志</h3>
-    <div class="log-viewer" id="log-viewer">暂无日志...</div>
+    <h3>系统日志</h3>
+    <div class="log-viewer" id="server-log-viewer">暂无日志...</div>
     <div class="actions"><button class="btn btn-outline" onclick="closeLog()">关闭</button></div>
   </div>
 </div>
@@ -868,6 +875,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=21"></script>
+<script src="/js/app.js?v=22"></script>
 </body>
 </html>
