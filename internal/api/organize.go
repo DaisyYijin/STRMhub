@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -329,17 +331,44 @@ func titleFirstLetter(title string) string {
 	return "0"
 }
 
-// checkExists 检查是否已存在（通过 TMDB ID 在数据库中比对，命中时输出记录详情）
-// 注意：这是本地整理记录，不代表网盘媒体库当前实际内容；记录有误可
-// 用"重置整理记录"清空后重新整理
-func checkExists(media *TmdbMedia) bool {
+// checkExistsVerified 去重判定：本地记录命中后到网盘验证目标路径仍存在，
+// 记录失效（库被清空/内容被移走）则自动删除记录并视为不存在——
+// 空库误判"已存在"的根治方案；网盘查询失败时保守按存在处理
+func checkExistsVerified(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs string) bool {
 	var rec model.MediaLibrary
 	if err := model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).First(&rec).Error; err != nil {
 		return false
 	}
+	// 网盘验证：记录的目录部分在库根下是否仍存在（OpenAPI 通道/未取得库路径时跳过验证）
+	if ops.cookie != "" && libAbs != "" && rec.TargetPath != "" {
+		dirPart := path.Dir(rec.TargetPath)
+		if !cloudPathExistsCk(ops.cookie, path.Join(libAbs, dirPart)) {
+			log.Printf("[整理] 去重记录已失效（网盘目标不存在），自动清除: %s (%s) tmdb=%d 旧目标=%s",
+				rec.Title, rec.Year, rec.TmdbID, rec.TargetPath)
+			model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
+			return false
+		}
+	}
 	log.Printf("[整理] 已存在判定命中: %s (%s) tmdb=%d 记录于 %s 目标=%s",
 		rec.Title, rec.Year, rec.TmdbID, rec.CreatedAt.Format("2006-01-02 15:04"), rec.TargetPath)
 	return true
+}
+
+// cloudPathExistsCk 校验网盘绝对路径是否存在（webapi files/getid）
+func cloudPathExistsCk(cookie, absPath string) bool {
+	body, err := httpGet115UA("https://webapi.115.com/files/getid",
+		url.Values{"path": {absPath}}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return true // 查询失败保守按存在
+	}
+	var r struct {
+		State bool                      `json:"state"`
+		Data  []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return true
+	}
+	return r.State && len(r.Data) > 0
 }
 
 // recordMedia 记录已整理的媒体到数据库
@@ -536,6 +565,12 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	// 加载替换规则
 	replaceRules := loadReplaceRules()
 
+	// 库根绝对路径（去重记录的网盘验证用；OpenAPI 通道取不到则跳过验证）
+	libAbs := ""
+	if ops.cookie != "" {
+		libAbs = absPathOf(ops.cookie, cfg.Library, map[string]dirInfo{})
+	}
+
 	// 获取待整理目录下的顶层条目
 	topEntries, err := listPendingTopLevel(ops, cfg.Pending)
 	if err != nil {
@@ -579,7 +614,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 			if len(subFiles) == 0 {
 				continue
 			}
-			result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, onLog)
+			result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, libAbs, onLog)
 			results = append(results, result...)
 			for _, r := range result {
 				if r.Status == "success" {
@@ -596,7 +631,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 				continue
 			}
 			f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size}
-			result := processSingleFile(ops, cfg, tc, replaceRules, f, onLog)
+			result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
 			results = append(results, result)
 			if result.Status == "success" {
 				successCount++
@@ -609,7 +644,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 }
 
 // processDir 处理一个子目录（包含多个文件的影视目录）
-func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, dir dirEntry, files []remoteFile, onLog func(string)) []OrganizeResult {
+func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, dir dirEntry, files []remoteFile, libAbs string, onLog func(string)) []OrganizeResult {
 	var results []OrganizeResult
 
 	// 找出视频文件
@@ -668,7 +703,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	// 检查是否已存在
-	if checkExists(media) {
+	if checkExistsVerified(ops, media, cfg, libAbs) {
 		// 已存在 → 移到"已经存在"目录
 		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
@@ -755,7 +790,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 }
 
 // processSingleFile 处理待整理目录下的顶层单独视频文件
-func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, onLog func(string)) OrganizeResult {
+func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, libAbs string, onLog func(string)) OrganizeResult {
 	result := OrganizeResult{FileName: f.Name}
 
 	// 应用替换规则
@@ -791,8 +826,8 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	result.Year = media.Year
 	result.MediaType = media.MediaType
 
-	// 检查是否已存在
-	if checkExists(media) {
+	// 检查是否已存在（带网盘验证，失效记录自动清除）
+	if checkExistsVerified(ops, media, cfg, libAbs) {
 		ops.moveFiles(cfg.Existing, []string{f.Fid})
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Existing, false, onLog)
 		result.Status = "exists"
