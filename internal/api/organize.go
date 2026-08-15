@@ -130,6 +130,13 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 	}
 }
 
+// moveQuietly 移动并记录失败（失败不再被吞掉）
+func moveQuietly(ops *pan115Ops, targetCid string, fids []string, label string, onLog func(string)) {
+	if err := ops.moveFiles(targetCid, fids); err != nil {
+		onLog(fmt.Sprintf("✗ %s - 移动失败: %v", label, err))
+	}
+}
+
 // loadReplaceRules 加载替换规则
 func loadReplaceRules() []ReplaceRule {
 	var s model.Setting
@@ -592,20 +599,20 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	parsed := parseFileName(name)
 	if parsed.Title == "" {
 		// 无法识别，整个目录移到冗余
-		ops.moveFiles(cfg.Redundant, []string{dir.Fid})
-		onLog(fmt.Sprintf("✗ %s/ - 无法提取标题，已移到冗余", dir.Name))
+		moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
+		onLog(fmt.Sprintf("○ %s/ - 无法提取标题，已移到冗余", dir.Name))
 		return results
 	}
 
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
-		ops.moveFiles(cfg.Redundant, []string{dir.Fid})
 		msg := "TMDB 未找到匹配"
 		if err != nil {
 			msg = "TMDB 识别失败: " + err.Error()
 		}
-		onLog(fmt.Sprintf("✗ %s/ - %s，已移到冗余", dir.Name, msg))
+		moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
+		onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
 		return results
 	}
 
@@ -709,7 +716,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	oldBase := baseName(f.Name)
 	if parsed.Title == "" {
 		// 无法识别，移到冗余（附件随行，避免字幕变孤儿）
-		ops.moveFiles(cfg.Redundant, []string{f.Fid})
+		moveQuietly(ops, cfg.Redundant, []string{f.Fid}, f.Name, onLog)
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Redundant, false, onLog)
 		result.Status = "failed"
 		result.Message = "无法提取标题，已移到冗余"
@@ -720,7 +727,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
-		ops.moveFiles(cfg.Redundant, []string{f.Fid})
+		moveQuietly(ops, cfg.Redundant, []string{f.Fid}, f.Name, onLog)
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Redundant, false, onLog)
 		result.Status = "failed"
 		result.Message = "TMDB 识别失败，已移到冗余"
