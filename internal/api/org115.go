@@ -61,7 +61,7 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 			json.Unmarshal([]byte(v), &syncCfg)
 		}
 		if syncCfg.LocalPath == "" {
-			syncCfg.LocalPath = "/media"
+			syncCfg.LocalPath = defaultLocalPath
 		}
 
 		domain, format, keepExt, skipExist := h.getStrmConfig()

@@ -39,8 +39,13 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			cleanExpiredCache()
+		for {
+			select {
+			case <-ticker.C:
+				cleanExpiredCache()
+			case <-stopCh:
+				return
+			}
 		}
 	}()
 

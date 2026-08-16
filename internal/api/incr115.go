@@ -279,7 +279,7 @@ func normalizeIncrParams(cid, localPath string, videoExt, imageExt, dataExt []st
 		limit = 1000
 	}
 	if localPath == "" {
-		localPath = "/media"
+		localPath = defaultLocalPath
 	}
 	if cid == "" {
 		cid = "0"
@@ -384,7 +384,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		Existing  string `json:"existing"`
 		Redundant string `json:"redundant"`
 	}
-	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw)
+	if err := json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw); err != nil {
+		log.Printf("[同步] ○ 整理配置解析失败（使用默认值）: %v", err)
+	}
 	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant} {
 		if cid != "" {
 			if a := absPathOf(cookie, cid, memo); a != "" {

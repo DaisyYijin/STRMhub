@@ -117,9 +117,11 @@ func (h *Handler) CleanupInvalidEnhanced(c *gin.Context) {
 	var fullCfg struct {
 		LocalPath string `json:"local_path"`
 	}
-	_ = json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg)
+	if err := json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg); err != nil {
+		return
+	}
 	if fullCfg.LocalPath == "" {
-		fullCfg.LocalPath = "/media"
+		fullCfg.LocalPath = defaultLocalPath
 	}
 
 	for _, f := range files {

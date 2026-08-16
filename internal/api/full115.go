@@ -21,6 +21,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// stopCh 进程退出信号（关闭后所有后台协程停止）
+var stopCh = make(chan struct{})
+
+// defaultLocalPath 本地媒体库默认根目录
+const defaultLocalPath = "/media"
+
 // ==================== 全量同步 ====================
 
 // fullSyncMu 全量同步互斥：防止重复点击导致两个同步并发互相干扰
@@ -70,7 +76,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		return
 	}
 	if req.LocalPath == "" {
-		req.LocalPath = "/media"
+		req.LocalPath = defaultLocalPath
 	}
 
 	// 同一时刻只允许一个全量同步

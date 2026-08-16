@@ -78,7 +78,7 @@ func (h *Handler) loadIncrCron() string {
 // incrParamsFromConfig 从已保存的 full 配置组装增量参数
 func (h *Handler) incrParamsFromConfig() incrParams {
 	v := h.Config.GetSetting("full")
-	p := incrParams{Cid: "0", LocalPath: "/media", Limit: 1000}
+	p := incrParams{Cid: "0", LocalPath: defaultLocalPath, Limit: 1000}
 	if v != "" {
 		var cfg struct {
 			Cid       string   `json:"cid"`
@@ -107,7 +107,12 @@ func StartIncrScheduler(h *Handler) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			select {
+			case <-ticker.C:
+			case <-stopCh:
+				return
+			}
 			cron := h.loadIncrCron()
 			if cron == "" {
 				continue // 未配置调度

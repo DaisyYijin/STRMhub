@@ -157,8 +157,13 @@ func StartMonitorUploader(h *Handler) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			monitorOnce(h)
+		for {
+			select {
+			case <-ticker.C:
+				monitorOnce(h)
+			case <-stopCh:
+				return
+			}
 		}
 	}()
 	log.Println("[监控上传] 引擎已启动（每分钟扫描一次监控目录）")
@@ -171,7 +176,9 @@ func monitorOnce(h *Handler) {
 		Dir    string `json:"dir"`
 		Target string `json:"target"`
 	}
-	_ = json.Unmarshal([]byte(h.getSettingValue("monitor")), &cfg)
+	if err := json.Unmarshal([]byte(h.getSettingValue("monitor")), &cfg); err != nil {
+		return // 配置解析失败视为未启用
+	}
 	if cfg.Dir == "" {
 		return // 未启用
 	}
@@ -188,7 +195,9 @@ func monitorOnce(h *Handler) {
 		Cid        string `json:"cid"`
 		LocalPath  string `json:"local_path"`
 	}
-	_ = json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg)
+	if err := json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg); err != nil {
+		return
+	}
 	if rootCid == "" {
 		rootCid = fullCfg.Cid
 	}

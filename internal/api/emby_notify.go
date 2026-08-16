@@ -81,7 +81,9 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 	var refreshCfg struct {
 		ApiKey string `json:"api_key"`
 	}
-	_ = json.Unmarshal([]byte(s.Value), &refreshCfg)
+	if err := json.Unmarshal([]byte(s.Value), &refreshCfg); err != nil {
+		return
+	}
 	apiKey = strings.TrimSpace(refreshCfg.ApiKey)
 	q := ""
 	if apiKey != "" {

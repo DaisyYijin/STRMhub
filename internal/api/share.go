@@ -49,7 +49,9 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		var cfg struct {
 			Folder string `json:"folder"`
 		}
-		_ = json.Unmarshal([]byte(h.getSettingValue("share")), &cfg)
+		if err := json.Unmarshal([]byte(h.getSettingValue("share")), &cfg); err != nil {
+			log.Printf("[上传] ○ 分享配置解析失败: %v", err)
+		}
 		req.Target = cfg.Folder
 	}
 	if req.Target == "" {
