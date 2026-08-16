@@ -59,7 +59,6 @@ const PAGE_TITLES = {
 function showPage(id) {
   if (id === 'logs') startLogPoll(); else stopLogPoll();
   if (id === 'dashboard') loadDashboard();
-  if (id === 'config-system') loadStrmList();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
   const page = document.getElementById('page-' + id);
@@ -419,6 +418,34 @@ async function receiveShare() {
   } catch (e) { toast('转存失败: ' + e.message); }
 }
 
+let embyAutoRefreshVal = true;
+function setEmbyAutoRefresh(v) {
+  embyAutoRefreshVal = v;
+  document.querySelectorAll('#emby-auto-refresh-switch .seg-item').forEach(el => {
+    el.classList.toggle('active', String(el.dataset.value) === String(v));
+  });
+}
+async function testEmbyConnection() {
+  const url = val('emby-server-url').trim();
+  const key = val('emby-api-key').trim();
+  const el = document.getElementById('emby-test-result');
+  if (!url) { toast('请填写 Emby 服务器地址'); return; }
+  el.textContent = '测试中...'; el.style.color = '';
+  try {
+    const d = await api('/config/test-emby', { method: 'POST', body: JSON.stringify({ server_url: url, api_key: key }) });
+    if (d.ok) {
+      el.textContent = '✓ 已连接（' + (d.server_name || 'Emby') + '，' + (d.library_count || 0) + ' 个媒体库）';
+      el.style.color = 'var(--primary)';
+    } else {
+      el.textContent = '✗ ' + (d.error || '连接失败');
+      el.style.color = '#e74c3c';
+    }
+  } catch (e) {
+    el.textContent = '✗ ' + e.message;
+    el.style.color = '#e74c3c';
+  }
+}
+
 // ==================== 仪表盘 ====================
 async function loadDashboard() {
   try {
@@ -451,59 +478,7 @@ async function loadDashboard() {
 }
 
 // ==================== STRM 管理 ====================
-async function strmFastScan() {
-  toast('快速扫描进行中（可能需要几分钟）...');
-  try {
-    const d = await api('/strm/scan/fast', { method: 'POST' });
-    toast(d.message || '扫描完成');
-    document.getElementById('strm-scan-result').textContent = d.message || '';
-    appendLog('STRM 快扫: ' + (d.message || ''));
-  } catch (e) { toast('快扫失败: ' + e.message); }
-}
-async function strmSlowScan() {
-  toast('深度扫描进行中（可能需要较长时间）...');
-  try {
-    const d = await api('/strm/scan/slow', { method: 'POST' });
-    toast(d.message || '扫描完成');
-    document.getElementById('strm-scan-result').textContent = d.message || '';
-    appendLog('STRM 慢扫: ' + (d.message || ''));
-  } catch (e) { toast('慢扫失败: ' + e.message); }
-}
-function strmCleanupConfirm(btn) {
-  closeConfirmBubble(); document.removeEventListener('click', closeConfirmBubbleOnOutside);
-  const b = document.createElement('div'); b.id = 'confirm-bubble'; b.className = 'confirm-bubble';
-  b.innerHTML = '<div class="cb-text">确定清理失效 STRM？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">清理</button></div>';
-  btn.appendChild(b); b.classList.add('show');
-  b.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
-  b.querySelector('.cb-ok').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); strmCleanup(); };
-  setTimeout(() => document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true }), 0);
-}
 
-async function strmCleanup() {
-  toast('清理进行中...');
-  try {
-    const d = await api('/strm/cleanup', { method: 'POST' });
-    toast(d.message || '清理完成');
-    document.getElementById('strm-scan-result').textContent = d.message || '';
-    appendLog('STRM 清理: ' + (d.message || ''));
-  } catch (e) { toast('清理失败: ' + e.message); }
-}
-async function loadStrmList() {
-  try {
-    const d = await api('/strm');
-    const tbody = document.getElementById('strm-table-body');
-    if (!tbody) return;
-    const items = (d.data || []).slice(0, 50);
-    if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-3)">暂无记录</td></tr>'; return; }
-    tbody.innerHTML = items.map(f =>
-      `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.local_path || f.remote_path || '-')}</td><td>${f.status === 'active' ? '✓' : '✗ ' + esc(f.status)}</td><td><button class="btn btn-outline btn-sm" onclick="strmDelete(${f.ID || f.id || 0})">删</button></td></tr>`
-    ).join('');
-  } catch (e) {}
-}
-async function strmDelete(id) {
-  try { await api('/strm/' + id, { method: 'DELETE' }); toast('已删除'); loadStrmList(); }
-  catch (e) { toast('删除失败: ' + e.message); }
-}
 
 // ==================== 任务状态（同步/整理互斥提示） ====================
 let taskPollTimer = null;
@@ -1296,6 +1271,14 @@ function collectConfig(key) {
       av_file: val('rename-av-file'),
     };
   }
+  if (key === 'emby') {
+    return {
+      server_url: val('emby-server-url'),
+      api_key: val('emby-api-key'),
+      path_mapping: val('emby-path-mapping'),
+      auto_refresh: embyAutoRefreshVal,
+    };
+  }
   if (key === 'full') {
     return {
       cid: resolveCID('full-cid'),
@@ -1372,6 +1355,11 @@ function applyConfig(key, v) {
     setVal('rename-av-folder', v.av_folder);
     setVal('rename-av-file', v.av_file);
     updateRenameExample();
+  } else if (key === 'emby') {
+    setVal('emby-server-url', v.server_url);
+    setVal('emby-api-key', v.api_key);
+    setVal('emby-path-mapping', v.path_mapping);
+    if (v.auto_refresh !== undefined) setEmbyAutoRefresh(v.auto_refresh === true || v.auto_refresh === 'true');
   } else if (key === 'full') {
     const cidEl = document.getElementById('full-cid');
     if (cidEl) { cidEl.dataset.cid = v.cid || ''; }
@@ -1441,6 +1429,7 @@ function resetConfig(key, btn) {
 
 // 各配置的默认值
 const DEFAULT_CONFIGS = {
+  'emby': { server_url: '', api_key: '', path_mapping: '', auto_refresh: true },
   'strm': { domain: '', format: 'p', keep_ext: 'true', skip_exist: 'overwrite' },
   'proxy': { url: '' },
   'emby-refresh': { url: '', api_key: '', path_replace: '', enabled: true },
@@ -1501,7 +1490,7 @@ function closeConfirmBubbleOnOutside(e) {
 }
 
 async function loadConfigs() {
-  const keys = ['full', 'strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
+  const keys = ['emby', 'full', 'strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
   // 并行拉取，避免逐个等待导致 cid 等字段迟迟不回填
   await Promise.all(keys.map(async (key) => {
     try {

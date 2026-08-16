@@ -76,6 +76,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/config/test-gpt", h.TestGPTConnection)
 		protected.POST("/config/test-tmdb", h.TestTMDBConnection)
 
+		// Emby 连接测试
+		protected.POST("/config/test-emby", h.TestEmbyConnection)
+
 		// 消息通知
 		protected.POST("/message/test", h.TestMessage)
 
@@ -102,10 +105,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// STRM 管理
 		protected.GET("/strm", h.ListStrmFiles)
 		protected.DELETE("/strm/:id", h.DeleteStrmFile)
-		protected.POST("/strm/scan/fast", h.FastScan)
-		protected.POST("/strm/scan/slow", h.SlowScan)
-		protected.POST("/strm/cleanup", h.CleanupInvalidEnhanced)
-
+						
 		// 刮削整理
 		protected.GET("/scrape/rules", h.ListScrapeRules)
 		protected.POST("/scrape/rules", h.SaveScrapeRules)
@@ -693,7 +693,6 @@ func (h *Handler) DeleteStrmFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
-// FastScan / SlowScan / CleanupInvalidEnhanced 实现在 strm_mgmt.go
 
 // ==================== 刮削整理（占位） ====================
 

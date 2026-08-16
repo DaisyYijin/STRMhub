@@ -758,6 +758,7 @@ av:
         <div class="tab active" data-tab="strm">STRM配置</div>
         <div class="tab" data-tab="tmdb">TMDB配置</div>
         <div class="tab" data-tab="proxy">代理配置</div>
+        <div class="tab active" data-tab="emby-manage">EMBY管理</div>
         <div class="tab" data-tab="emby-refresh">EMBY入库刷新</div>
         <div class="tab" data-tab="emby-notify">EMBY入库通知</div>
       </div>
@@ -771,21 +772,6 @@ av:
           <div class="form-row"><div class="label">STRM 文件本地存在时</div><div class="control"><div class="segmented-control" id="strm-exist-switch"><div class="seg-item active" data-value="overwrite" onclick="setStrmExist('overwrite')">覆盖</div><div class="seg-item" data-value="skip" onclick="setStrmExist('skip')">跳过</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('strm')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('strm', this)" style="position:relative">重置配置</button></div></div>
           <div class="form-row"><div class="label">STRM 直链示例</div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);word-break:break-all;display:block;line-height:38px"></code></div></div>
-        </div>
-      </div>
-
-      <!-- STRM 管理 -->
-      <div class="card">
-        <div style="font-weight:600;margin-bottom:10px">STRM 生命周期管理</div>
-        <div class="form-inline-group" style="gap:10px;flex-wrap:wrap">
-          <button class="btn btn-outline" onclick="strmFastScan()">快速扫描</button>
-          <button class="btn btn-outline" onclick="strmSlowScan()">深度扫描</button>
-          <button class="btn btn-danger" onclick="strmCleanupConfirm(this)" style="position:relative">清理失效</button>
-          <span id="strm-scan-result" style="font-size:13px;color:var(--text-2)"></span>
-        </div>
-        <div class="alert alert-info" style="margin-top:10px">快速扫描：校验 115 文件是否仍存在。深度扫描：完整验证下载直链。清理失效：删除失效记录和本地文件。</div>
-        <div id="strm-list-wrap" style="margin-top:12px;max-height:300px;overflow-y:auto">
-          <table style="width:100%;font-size:13px"><thead><tr><th>本地路径</th><th>状态</th><th style="width:60px">操作</th></tr></thead><tbody id="strm-table-body"></tbody></table>
         </div>
       </div>
 
@@ -809,6 +795,17 @@ av:
       </div>
 
       <!-- EMBY 入库刷新 -->
+      <div class="tab-panel active" data-panel="emby-manage">
+        <div class="card">
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> Emby 服务器地址</div><div class="control"><input type="text" id="emby-server-url" placeholder="如 http://192.168.1.100:8096"></div></div>
+          <div class="form-row"><div class="label">API 密钥</div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" style="font-size:13px;margin-left:8px"></span></div></div>
+          <div class="form-row"><div class="label">本地路径映射</div><div class="control"><input type="text" id="emby-path-mapping" placeholder="/media#/media（本地路径#Emby路径，#分隔）"></div></div>
+          <div class="form-row"><div class="label"><div class="label">入库时刷新</div><div class="control"><div class="segmented-control" id="emby-auto-refresh-switch"><div class="seg-item active" data-value="true" onclick="setEmbyAutoRefresh(true)">开启</div><div class="seg-item" data-value="false" onclick="setEmbyAutoRefresh(false)">关闭</div></div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+        <div class="alert alert-info">配置 Emby 连接后，整理入库时可自动刷新对应媒体库。路径映射用于将 StrmHub 的本地路径转换为 Emby 能识别的路径。</div>
+      </div>
+
       <div class="tab-panel" data-panel="emby-refresh">
         <div class="alert alert-info">用于 STRM 生成时通知 Emby 刷新入库；非必须，开启 Emby 实时监控也一样，此通知只是能更快入库。</div>
         <div class="card">
@@ -925,6 +922,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=43"></script>
+<script src="/js/app.js?v=44"></script>
 </body>
 </html>

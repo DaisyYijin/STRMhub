@@ -2,13 +2,17 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"strmhub/internal/model"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ==================== EMBY 入库刷新通知 ====================
@@ -144,4 +148,68 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 	}
 	resp.Body.Close()
 	log.Printf("Emby 刷新通知已发送: %s", embyPath)
+}
+
+// TestEmbyConnection 测试 Emby 服务器连接
+// POST /config/test-emby  body: {"server_url":"...", "api_key":"..."}
+func (h *Handler) TestEmbyConnection(c *gin.Context) {
+	var req struct {
+		ServerURL string `json:"server_url"`
+		APIKey    string `json:"api_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ServerURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写 Emby 服务器地址"})
+		return
+	}
+
+	base := strings.TrimRight(req.ServerURL, "/")
+	q := ""
+	if req.APIKey != "" {
+		q = "?api_key=" + url.QueryEscape(req.APIKey)
+	}
+
+	// 获取服务器信息
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(base + "/System/Info" + q)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "无法连接: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 401 {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "API 密钥无效或未填写"})
+		return
+	}
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": fmt.Sprintf("HTTP %d", resp.StatusCode)})
+		return
+	}
+	var info struct {
+		ServerName string `json:"ServerName"`
+		Version    string `json:"Version"`
+	}
+	_ = json.Unmarshal(body, &info)
+
+	// 获取媒体库数量
+	libraryCount := 0
+	if resp2, err := client.Get(base + "/Library/MediaFolders" + q); err == nil {
+		defer resp2.Body.Close()
+		var libs struct {
+			Items []struct {
+				ID string `json:"Id"`
+			} `json:"Items"`
+		}
+		body2, _ := io.ReadAll(resp2.Body)
+		if json.Unmarshal(body2, &libs) == nil {
+			libraryCount = len(libs.Items)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":            true,
+		"server_name":   info.ServerName,
+		"version":       info.Version,
+		"library_count": libraryCount,
+	})
 }
