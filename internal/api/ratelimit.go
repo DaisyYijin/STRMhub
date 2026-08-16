@@ -64,7 +64,6 @@ func throttle115(api string) {
 		waited = throttleMinGap - elapsed
 		// 明显拥堵（排队超过 3 个间隔）才提示
 		if waited > 3*throttleMinGap {
-			log.Printf("[115节流] 等待 %v 后再请求 %s", waited.Truncate(time.Millisecond), api)
 		}
 		time.Sleep(waited)
 	}
@@ -110,5 +109,5 @@ func Apply115Interval(db *gorm.DB) {
 		return
 	}
 	Set115Interval(time.Duration(storage.Interval * float64(time.Second)))
-	log.Printf("[115节流] 已应用用户设置的 API 请求间隔: %v", time.Duration(storage.Interval*float64(time.Second)))
+	log.Printf("[系统] API 请求间隔已设置: %v", time.Duration(storage.Interval*float64(time.Second)))
 }

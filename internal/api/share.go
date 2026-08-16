@@ -176,7 +176,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 	}
 
 	msg := fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
-	log.Printf("[分享转存] %s", msg)
+	log.Printf("[上传] %s", msg)
 	c.JSON(http.StatusOK, gin.H{"message": msg, "count": success, "failed": fail,
 		"note": "转存内容若在待整理目录，将由下一轮自动整理+增量同步接管"})
 }

@@ -220,7 +220,7 @@ func monitorOnce(h *Handler) {
 		return
 	}
 	sort.Strings(imgs)
-	log.Printf("[监控上传] 发现 %d 张新图片，开始上传", len(imgs))
+	log.Printf("[上传] 发现 %d 张新图片", len(imgs))
 
 	for _, img := range imgs {
 		rel, err := filepath.Rel(cfg.Dir, img)
@@ -232,7 +232,7 @@ func monitorOnce(h *Handler) {
 		targetAbs := strings.TrimSuffix(libAbs, "/") + "/" + strings.TrimPrefix(relDir, "./")
 		cid, ok := cloudPathCid(cookie, targetAbs)
 		if !ok {
-			log.Printf("[监控上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
+			log.Printf("[上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
 			continue
 		}
 		data, err := os.ReadFile(img)
@@ -240,11 +240,11 @@ func monitorOnce(h *Handler) {
 			continue
 		}
 		if err := upload115File(cookie, parseI64(cid), userid, filepath.Base(img), data); err != nil {
-			log.Printf("[监控上传] 上传失败 %s: %v", rel, err)
+			log.Printf("[上传] ✗ 上传失败 %s: %v", rel, err)
 			continue
 		}
 		uploadedMark[img] = true
-		log.Printf("[监控上传] 上传成功: %s → %s", rel, targetAbs)
+		log.Printf("[上传] ✓ 上传成功: %s → %s", rel, targetAbs)
 	}
 }
 

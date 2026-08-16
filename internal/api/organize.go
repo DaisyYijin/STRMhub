@@ -413,13 +413,13 @@ func checkExistsVerified(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAb
 	if ops.cookie != "" && libAbs != "" && rec.TargetPath != "" {
 		dirPart := path.Dir(rec.TargetPath)
 		if !cloudPathExistsCk(ops.cookie, path.Join(libAbs, dirPart)) {
-			log.Printf("[整理] 去重记录已失效（网盘目标不存在），自动清除: %s (%s) tmdb=%d 旧目标=%s",
+			log.Printf("[整理] ✦ 去重记录已过期，自动清除: %s (%s) tmdb=%d 旧目标=%s",
 				rec.Title, rec.Year, rec.TmdbID, rec.TargetPath)
 			model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
 			return false
 		}
 	}
-	log.Printf("[整理] 已存在判定命中: %s (%s) tmdb=%d 记录于 %s 目标=%s",
+	log.Printf("[整理] ○ 已存在: %s (%s) tmdb=%d 记录于 %s 目标=%s",
 		rec.Title, rec.Year, rec.TmdbID, rec.CreatedAt.Format("2006-01-02 15:04"), rec.TargetPath)
 	return true
 }

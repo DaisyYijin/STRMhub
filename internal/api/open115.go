@@ -164,7 +164,7 @@ func (o *open115Client) saveToken(t *config.OpenToken) {
 	o.tokenAt = time.Now()
 	o.mu.Unlock()
 	if err := o.cfg.SaveOpenToken(t); err != nil {
-		log.Printf("[115Open] 保存 token 失败: %v", err)
+		log.Printf("[系统] 保存 token 失败: %v", err)
 	}
 }
 
@@ -245,7 +245,7 @@ func (o *open115Client) doRefresh(refreshToken string) (*config.OpenToken, error
 		nt.RefreshToken = refreshToken
 	}
 	o.saveToken(nt)
-	log.Printf("[115Open] token 已刷新，有效期至 %s", time.Unix(nt.ExpiresAt, 0).Format("15:04:05"))
+	log.Printf("[系统] 授权已自动续期，有效期至 %s", time.Unix(nt.ExpiresAt, 0).Format("15:04:05"))
 	return nt, nil
 }
 
@@ -439,7 +439,7 @@ func (h *Handler) CreateOpenQrCode(c *gin.Context) {
 		Sign string `json:"sign"`
 	}
 	if err := openPost(openAuthCode, form, &data); err != nil {
-		log.Printf("[115Open] 获取授权二维码失败: %v", err)
+		log.Printf("[系统] 获取授权二维码失败: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "获取授权二维码失败: " + err.Error()})
 		return
 	}
@@ -513,7 +513,7 @@ func (h *Handler) OpenQrCodeStatus(c *gin.Context) {
 			ExpiresIn    int64  `json:"expires_in"`
 		}
 		if err := openPost(openDevToken, form, &data); err != nil {
-			log.Printf("[115Open] 换取 token 失败: %v", err)
+			log.Printf("[系统] 换取 token 失败: %v", err)
 			c.JSON(http.StatusBadGateway, gin.H{"error": "换取访问凭证失败: " + err.Error()})
 			return
 		}
@@ -529,7 +529,7 @@ func (h *Handler) OpenQrCodeStatus(c *gin.Context) {
 			ExpiresAt:    time.Now().Add(time.Duration(data.ExpiresIn) * time.Second).Unix(),
 		})
 		openQrSessions.Delete(req.Uid)
-		log.Printf("[115Open] 扫码授权成功，token 有效期 %d 秒", data.ExpiresIn)
+		log.Printf("[系统] 开放平台授权成功 %d 秒", data.ExpiresIn)
 
 		// 同步更新 Storage 表（标记 OpenAPI 已授权）
 		h.upsertOpenStorage(sess.AppID)

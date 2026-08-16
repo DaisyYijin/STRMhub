@@ -125,7 +125,7 @@ func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interfa
 		body, err := httpGet115UA(origin+"/files", query, cookie, ua, 20*time.Second)
 		if err != nil {
 			lastErr = err
-			log.Printf("[115目录] %s 请求失败: %v", origin, err)
+			log.Printf("[诊断] %s 请求失败: %v", origin, err)
 			continue
 		}
 		var result struct {
@@ -136,12 +136,12 @@ func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interfa
 		}
 		if err := json.Unmarshal(body, &result); err != nil {
 			lastErr = fmt.Errorf("解析 115 目录失败: %v", err)
-			log.Printf("[115目录] %s 响应无法解析: %s", origin, truncateStr(string(body), 200))
+			log.Printf("[诊断] %s 响应无法解析: %s", origin, truncateStr(string(body), 200))
 			continue
 		}
 		if !result.State {
 			lastErr = fmt.Errorf("115 返回错误: %s", result.Error)
-			log.Printf("[115目录] %s 拒绝: %s", origin, result.Error)
+			log.Printf("[诊断] %s 拒绝: %s", origin, result.Error)
 			// Cookie 失效类错误换镜像也没用，直接返回
 			if strings.Contains(result.Error, "登录") || strings.Contains(result.Error, "acc") {
 				return nil, 0, "", lastErr
@@ -150,7 +150,7 @@ func fetch115FilesPage(cookie, ua, cid string, offset int) ([]map[string]interfa
 		}
 		// 成功日志仅在走了镜像回退时记录（主域名成功是常态，不刷屏）
 		if origin != webapiFileOrigins[0] {
-			log.Printf("[115目录] %s 镜像接管: count=%d, 条目数=%d", origin, result.Count, len(result.Data))
+			log.Printf("[诊断] %s 镜像接管: count=%d, 条目数=%d", origin, result.Count, len(result.Data))
 		}
 		// state=true 但 count>0 而 data 为空：响应异常，换镜像
 		if result.Count > 0 && len(result.Data) == 0 {
@@ -211,9 +211,9 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 			return err
 		}
 		// 同步与等待分行显示（等待为该次列表请求因 API 间隔的实际睡眠）
-		log.Printf("[115同步] 同步%s", dirLabel)
+		log.Printf("[同步] 同步%s", dirLabel)
 		if w := throttle115LastWait(); w > 0 {
-			log.Printf("[115同步] API等待 %.1f 秒后继续", w.Seconds())
+			log.Printf("[同步]   ⏳ API 等待 %.1f 秒", w.Seconds())
 		}
 		for _, d := range entries {
 			isDir := fmt.Sprint(d["f"]) == "0"
@@ -815,7 +815,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 
 	incrStart := time.Now()
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
-	log.Printf("[115增量] 开始: 媒体库 cid=%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
+	log.Printf("[同步] ▶ 增量同步开始，等待 3 秒后拉取事件...%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
@@ -828,7 +828,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				return evs, nil
 			}
 			lastErr = err
-			log.Printf("[115增量] 事件拉取失败（第 %d/3 次）: %v", attempt, err)
+			log.Printf("[同步] 事件拉取失败（第 %d/3 次）: %v", attempt, err)
 			if attempt < 3 {
 				time.Sleep(30 * time.Second)
 			}
@@ -860,7 +860,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 		}
 		sum.EventsFresh += fresh
-		log.Printf("[115增量] 事件拉取: 本页 %d 条，新事件 %d 条（offset=%d）", len(events), fresh, offset)
+		log.Printf("[同步] 拉取事件: 本页 %d 条，新 %d 条", len(events), fresh)
 		if fresh == 0 || sum.EventsFresh >= p.Limit {
 			break // 已追平或达到单次上限
 		}
@@ -976,7 +976,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			sum.Structural++
 		default:
 			sum.Structural++
-			log.Printf("[115增量] 未处理事件类型: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
+			log.Printf("[同步] ○ 未处理的事件: 类型=%s 文件=%s", ev.Type, ev.FileName)
 		}
 	}
 
@@ -986,7 +986,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	for cid := range dirSet {
 		base, ok, err := get115RelPath(cookie, cid, p.Cid, memo)
 		if err != nil {
-			log.Printf("[115增量] 定位目录路径失败 cid=%s: %v", cid, err)
+			log.Printf("[同步] 定位目录路径失败 cid=%s: %v", cid, err)
 			sum.DirsSkipped++
 			continue
 		}
@@ -1019,10 +1019,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	for _, t := range uniqTargets {
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
-			log.Printf("[115增量] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
+			log.Printf("[同步] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
 			time.Sleep(30 * time.Second)
 			if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
-				log.Printf("[115增量] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
+				log.Printf("[同步] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
 				sum.DirsSkipped++
 				continue
 			}
@@ -1035,7 +1035,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		sum.AssetsDownloaded += dl
 		sum.AssetsSkipped += sk
 		sum.AssetsFailed += fl
-		log.Printf("[115增量] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
+		log.Printf("[同步] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
 	}
 
 	// 标记事件已应用 + 更新水位
@@ -1054,7 +1054,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		h.notifyEmbyRefresh(p.LocalPath)
 	}
 	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
-	log.Printf("[115增量] 任务完成: 增量同步, 耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
+	log.Printf("[同步] ✅ 增量同步完成（耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
 		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Ignored, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
 	return sum, nil
 }
@@ -1099,11 +1099,11 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 	}
 	full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
 	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
-		log.Printf("[115增量] 删除本地文件失败 %s: %v", full, err)
+		log.Printf("[同步] 删除本地文件失败 %s: %v", full, err)
 		return false
 	}
 	h.DB.Delete(&sf)
-	log.Printf("[115增量] 文件删除-执行成功: %s", sf.RelPath)
+	log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
 	return true
 }
 
@@ -1125,11 +1125,11 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 			// 目录：整树删除（strm/附属全在树内），并清理台账
 			if st, err := os.Stat(local); err == nil && st.IsDir() {
 				if err := os.RemoveAll(local); err != nil {
-					log.Printf("[115增量] 删除本地目录失败 %s: %v", rel, err)
+					log.Printf("[同步] 删除本地目录失败 %s: %v", rel, err)
 					return false
 				}
 				h.DB.Where("rel_path = ? OR rel_path LIKE ?", rel, rel+"/%").Delete(&model.SyncedFile{})
-				log.Printf("[115增量] 目录删除-执行成功: %s", rel)
+				log.Printf("[同步] 目录删除-执行成功: %s", rel)
 				return true
 			}
 			// 文件：strm 与附属实体两种形态
@@ -1137,11 +1137,11 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 				full := filepath.Join(localRoot, filepath.FromSlash(cand.rel)) + cand.suffix
 				if _, err := os.Stat(full); err == nil {
 					if err := os.Remove(full); err != nil {
-						log.Printf("[115增量] 删除本地文件失败 %s: %v", cand.rel+cand.suffix, err)
+						log.Printf("[同步] 删除本地文件失败 %s: %v", cand.rel+cand.suffix, err)
 						return false
 					}
 					h.DB.Where("rel_path = ?", cand.rel+cand.suffix).Delete(&model.SyncedFile{})
-					log.Printf("[115增量] 文件删除-执行成功: %s", cand.rel+cand.suffix)
+					log.Printf("[同步] ✓ 本地文件已清理: %s", cand.rel+cand.suffix)
 					return true
 				}
 			}
@@ -1159,7 +1159,7 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 					continue
 				}
 				h.DB.Delete(&sf)
-				log.Printf("[115增量] 文件删除-执行成功(名称匹配): %s", sf.RelPath)
+				log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
 				return true
 			}
 		}
@@ -1183,7 +1183,7 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 			full := filepath.Join(localRoot, filepath.FromSlash(bestPrefix))
 			if err := os.RemoveAll(full); err == nil {
 				h.DB.Where("rel_path = ? OR rel_path LIKE ?", bestPrefix, bestPrefix+"/%").Delete(&model.SyncedFile{})
-				log.Printf("[115增量] 目录删除-执行成功(台账前缀): %s", bestPrefix)
+				log.Printf("[同步] ✓ 本地目录已清理: %s", bestPrefix)
 				return true
 			}
 		}
@@ -1214,7 +1214,7 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 			if err := os.RemoveAll(hitDir); err == nil {
 				rel, _ := filepath.Rel(localRoot, hitDir)
 				h.DB.Where("rel_path = ? OR rel_path LIKE ?", filepath.ToSlash(rel), filepath.ToSlash(rel)+"/%").Delete(&model.SyncedFile{})
-				log.Printf("[115增量] 目录删除-执行成功(本地搜索): %s", rel)
+				log.Printf("[同步] ✓ 本地目录已清理: %s", rel)
 				return true
 			}
 		}
@@ -1222,13 +1222,13 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 			if err := os.Remove(hitFile); err == nil {
 				rel, _ := filepath.Rel(localRoot, hitFile)
 				h.DB.Where("rel_path = ?", filepath.ToSlash(rel)).Delete(&model.SyncedFile{})
-				log.Printf("[115增量] 文件删除-执行成功(本地搜索): %s", rel)
+				log.Printf("[同步] ✓ 本地文件已清理: %s", rel)
 				return true
 			}
 		}
 	}
 	if !quiet {
-		log.Printf("[115增量] 删除事件未命中本地: type=%s name=%q cid=%s file_id=%s", ev.Type, ev.FileName, ev.Cid, ev.FileID)
+		log.Printf("[同步] ○ 本地未找到对应文件: %s", ev.FileName)
 	}
 	return false
 }
@@ -1329,12 +1329,12 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	// 之后的增量同步只处理此后发生的新事件
 	if cookieOnly, err := h.get115Cookie(); err == nil {
 		if n, err := h.markEventsCoveredByFullSync(cookieOnly); err != nil {
-			log.Printf("[115同步] 标记生活事件已覆盖失败: %v", err)
+			log.Printf("[同步] 标记生活事件已覆盖失败: %v", err)
 		} else if n > 0 {
-			log.Printf("[115同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
+			log.Printf("[同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
 		}
 	}
-	log.Printf("[115同步] 任务完成: 全量同步, 耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
+	log.Printf("[同步] ✅ 全量同步完成（耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
 		time.Since(fullStart).Truncate(time.Second), len(videos), strmCreated, len(assets), downloaded, skipped, failed)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1357,7 +1357,7 @@ const assetDLWorkers = 5
 func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool, dirLabel string) (strmCreated, downloaded, skipped, failed int) {
 	for _, f := range videos {
 		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
-			log.Printf("[115同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
+			log.Printf("[同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
 			continue
 		}
 		strmCreated++
@@ -1395,7 +1395,7 @@ func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, 
 	}
 	for i, f := range assets {
 		if i%20 == 0 && i > 0 {
-			log.Printf("[115同步] 附属文件进度: %d/%d", i, len(assets))
+			log.Printf("[同步] 附属文件进度: %d/%d", i, len(assets))
 		}
 		dst := filepath.Join(localPath, filepath.FromSlash(f.Path), f.Name)
 		if _, err := os.Stat(dst); err == nil {
@@ -1417,7 +1417,7 @@ func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, 
 		switch {
 		case r.err != nil:
 			failed++
-			log.Printf("[115同步] 附属文件失败: %s/%s: %v", r.f.Path, r.f.Name, r.err)
+			log.Printf("[同步] 附属文件失败: %s/%s: %v", r.f.Path, r.f.Name, r.err)
 		case r.status == "skip":
 			skipped++
 		default:
@@ -1606,7 +1606,7 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 // 返回步骤摘要与错误（错误时 steps 里带原因）
 func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, error) {
 	orgStart := time.Now()
-	log.Printf("[整理] 开始: 待整理归位 %s", time.Now().Format("15:04:05"))
+	log.Printf("[整理] ▶ 开始整理 %s", time.Now().Format("15:04:05"))
 	steps := []gin.H{}
 
 	orgCfg, err := h.loadOrgConfig()
@@ -1712,7 +1712,7 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 		log.Printf("[整理] 本次入库 %d 部:\n  %s", len(showLines), strings.Join(showLines, "\n  "))
 	}
 
-	log.Printf("[整理] 任务完成: 自动整理, 耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
+	log.Printf("[整理] ✅ 整理完成（耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
 		time.Since(orgStart).Truncate(time.Second), totalFiles, successCount, existsCount, failedCount,
 		map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
 	_ = strmTotal

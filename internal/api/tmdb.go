@@ -146,7 +146,7 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
-		log.Printf("[TMDB] 搜索 %q（年份=%s）无结果", query, year)
+		log.Printf("[整理] 搜索 %q（年份=%s）无结果", query, year)
 		return nil, nil
 	}
 	// 候选列表（CMS 同款：识别错片时可从候选看出原因）
@@ -161,7 +161,7 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 		}
 		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Title, cy, c.ID, c.VoteAverage))
 	}
-	log.Printf("[TMDB] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
+	log.Printf("[整理] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	yr := ""
 	if len(r.ReleaseDate) >= 4 {
@@ -224,7 +224,7 @@ func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
-		log.Printf("[TMDB] 搜索 %q（TV）无结果", query)
+		log.Printf("[整理] 搜索 %q（TV）无结果", query)
 		return nil, nil
 	}
 	cands := make([]string, 0, 3)
@@ -238,7 +238,7 @@ func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
 		}
 		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Name, cy, c.ID, c.VoteAverage))
 	}
-	log.Printf("[TMDB] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
+	log.Printf("[整理] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	year := ""
 	if len(r.FirstAirDate) >= 4 {
@@ -402,7 +402,7 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	// 第二轮：清洗后的标题重试（去掉特殊字符/残留标记，压紧空白）
 	cleaned := cleanSearchTitle(parsed.Title)
 	if cleaned != "" && cleaned != parsed.Title {
-		log.Printf("[TMDB] 首次搜索无结果，用清洗标题重试: %q → %q", parsed.Title, cleaned)
+		log.Printf("[整理] 首次搜索无结果，用清洗标题重试: %q → %q", parsed.Title, cleaned)
 		if parsed.IsTV {
 			media, err = tc.SearchTV(cleaned)
 		} else {
@@ -416,7 +416,7 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	// 第三轮：GPT 兜底（配置了 GPT 识别时）——从原始文件名提取标题/年份再搜
 	if gptCfg := loadGPTFallback(); gptCfg != nil {
 		if ext := gptExtract(gptCfg, parsed.Title); ext != nil && ext.Title != "" && ext.Title != parsed.Title {
-			log.Printf("[TMDB] GPT 兜底提取: %q → %q (%s)", parsed.Title, ext.Title, ext.Year)
+			log.Printf("[整理] GPT 兜底提取: %q → %q (%s)", parsed.Title, ext.Title, ext.Year)
 			p2 := *parsed
 			p2.Title = ext.Title
 			p2.Year = ext.Year
@@ -497,13 +497,13 @@ func gptExtract(cfg *gptFallbackCfg, filename string) *gptExtractResult {
 	req.Header.Set("Authorization", "Bearer "+cfg.Key)
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		log.Printf("[GPT] 调用失败: %v", err)
+		log.Printf("[整理] 调用失败: %v", err)
 		return nil
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		log.Printf("[GPT] HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
+		log.Printf("[整理] HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
 		return nil
 	}
 	var r struct {

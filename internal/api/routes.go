@@ -358,7 +358,7 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 	// ===== OpenAPI 通道 =====
 	if oc := h.getOpen115(); oc != nil && oc.authorized() {
 		if err := oc.ping(); err != nil {
-			log.Printf("[115检查] OpenAPI 校验失败: %v", err)
+			log.Printf("[系统] OpenAPI 校验失败: %v", err)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"valid":   false,
 				"message": "OpenAPI 校验失败：" + err.Error(),
@@ -396,14 +396,14 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[115检查] Cookie长度=%d, UA=%s", len(cookie), ua115Unified())
+	log.Printf("[系统] 检测 Cookie（长度=%d）", len(cookie))
 
 	// 用 web 端用户信息接口校验 Cookie（my.115.com nav，115driver ApiUserInfo 同款）
 	// 注意：不能用 proapi.115.com/android/* 的 App 专用接口，那些接口要求对应 App 的 UA
 	const navAPI = "https://my.115.com/?ct=ajax&ac=nav"
 	body, err := httpGet115UA(navAPI, nil, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
-		log.Printf("[115检查] 调用失败: %v", err)
+		log.Printf("[系统] 调用失败: %v", err)
 		c.JSON(http.StatusOK, gin.H{
 			"valid":   false,
 			"message": "调用 115 接口失败：" + err.Error(),
@@ -531,7 +531,7 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		h.Config.SaveCookie(cookie)
 		h.Config.Save115Device("web")
 		h.upsert115Storage(cookie, "web", userName)
-		log.Printf("[115] 已导入并保存手动提供的 Cookie，账号=%s", userName)
+		log.Printf("[系统] 已导入并保存手动提供的 Cookie，账号=%s", userName)
 	}
 }
 

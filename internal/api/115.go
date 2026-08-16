@@ -116,7 +116,6 @@ func fetchAppVer() string {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(api)
 	if err != nil {
-		log.Printf("[115] 获取版本号失败: %v，使用默认 %s", err, appVerVal)
 		return appVerVal
 	}
 	defer resp.Body.Close()
@@ -136,7 +135,6 @@ func fetchAppVer() string {
 	for _, key := range []string{"web", "win", "chrome"} {
 		if v, ok := result.Data[key]["version_code"]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				log.Printf("[115] 获取到最新版本号: %s", s)
 				return s
 			}
 		}
@@ -285,10 +283,10 @@ func (h *Handler) QrCodeStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 	case 2:
 		// 已确认，获取 Cookie 并保存
-		log.Printf("[115] 二维码已确认登录, uid=%s", req.Uid)
+		log.Printf("[系统] 手机已确认登录")
 		cookie, username, warning, err := h.fetchAndSaveCookie(req.Uid)
 		if err != nil {
-			log.Printf("[115] 获取 Cookie 失败: %v", err)
+			log.Printf("[系统] 获取 Cookie 失败: %v", err)
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
 		}
@@ -337,11 +335,11 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 
 	var result qrResultResp
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[115] 解析登录结果失败: %v, 响应: %s", err, string(body))
+		log.Printf("[系统] 解析登录结果失败: %v, 响应: %s", err, string(body))
 		return "", "", "", fmt.Errorf("解析登录结果失败")
 	}
 	if len(result.Data.Cookie) == 0 {
-		log.Printf("[115] 登录结果未包含 Cookie, 响应: %s", string(body))
+		log.Printf("[系统] 登录结果未包含 Cookie, 响应: %s", string(body))
 		// 透传 115 的真实错误（如 40101004 IP登录异常），前端据此停止重试
 		var e struct {
 			Error string `json:"error"`
@@ -397,7 +395,7 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	}
 	cookie := strings.Join(cookieParts, "; ")
 
-	log.Printf("[115] 扫码登录成功，app=%s, Cookie长度=%d 字段数=%d, 账号=%s, 统一UA=%s", sess.app, len(cookie), len(cookieParts), username, ua115Unified())
+	log.Printf("[系统] 115 登录成功，账号=%s", username)
 
 	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
 	h.Config.SaveCookie(cookie)
