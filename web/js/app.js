@@ -1,5 +1,16 @@
 const API = '';
 
+// HTML 转义（防 XSS）
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 // ==================== 工具 ====================
 async function api(path, options = {}) {
   const token = localStorage.getItem('token');
@@ -431,7 +442,7 @@ async function loadDashboard() {
     const recent = d.recent_media || [];
     if (recent.length > 0) {
       document.getElementById('dash-recent').innerHTML = recent.map(m =>
-        `<div>★ ${m.title} (${m.year || '?'}) [${m.category || m.type || '-'}] <span style="color:var(--text-3);font-size:12px">${m.at}</span></div>`
+        `<div>★ ${esc(m.title)} (${esc(m.year || '?')}) [${esc(m.category || m.type || '-')}] <span style="color:var(--text-3);font-size:12px">${esc(m.at)}</span></div>`
       ).join('');
     } else {
       document.getElementById('dash-recent').textContent = '暂无整理记录';
@@ -476,7 +487,7 @@ async function loadStrmList() {
     const items = (d.data || []).slice(0, 50);
     if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-3)">暂无记录</td></tr>'; return; }
     tbody.innerHTML = items.map(f =>
-      `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.local_path || f.remote_path || '-'}</td><td>${f.status === 'active' ? '✓' : '✗ ' + f.status}</td><td><button class="btn btn-outline btn-sm" onclick="strmDelete(${f.ID || f.id || 0})">删</button></td></tr>`
+      `<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.local_path || f.remote_path || '-')}</td><td>${f.status === 'active' ? '✓' : '✗ ' + esc(f.status)}</td><td><button class="btn btn-outline btn-sm" onclick="strmDelete(${f.ID || f.id || 0})">删</button></td></tr>`
     ).join('');
   } catch (e) {}
 }
@@ -494,7 +505,7 @@ async function pollTaskStatus() {
     const st = await api('/sync/status');
     if (st.running) {
       bar.style.display = 'block';
-      bar.innerHTML = '⏳ ' + (st.task || '任务') + ' 正在执行（已运行 ' + (st.elapsed || '-') + '，开始于 ' + (st.since || '-') + '），其他同步/整理操作已暂不可用';
+      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '，开始于 ' + esc(st.since || '-') + '），其他同步/整理操作已暂不可用';
       btns.forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
     } else {
       bar.style.display = 'none';
@@ -559,7 +570,7 @@ async function load115Dirs(cid, opts) {
     }
     renderDirList(items, cid, note);
   } catch (e) {
-    list.innerHTML = '<div class="dir-empty">' + (e.message || '加载失败') + '</div>';
+    list.innerHTML = '<div class="dir-empty">' + esc(e.message || '加载失败') + '</div>';
   }
 }
 async function loadLocalDirs(path) {
@@ -572,7 +583,7 @@ async function loadLocalDirs(path) {
     const note = data.truncated ? '目录较大，仅显示前 1000 个文件夹，可直接在上方输入路径' : '';
     renderDirList(data.data || [], path, note);
   } catch (e) {
-    list.innerHTML = '<div class="dir-empty">' + (e.message || '加载失败') + '</div>';
+    list.innerHTML = '<div class="dir-empty">' + esc(e.message || '加载失败') + '</div>';
   }
 }
 
@@ -598,7 +609,7 @@ function renderDirList(items, current, note) {
   const noteHtml = note ? '<div class="dir-empty" style="opacity:.7">' + note + '</div>' : '';
   list.innerHTML = noteHtml + items.map((it, i) => {
     const name = it.name || it.path;
-    return `<div class="dir-item" data-index="${i}"><span class="dir-icon">▸</span><span>${name}</span></div>`;
+    return `<div class="dir-item" data-index="${i}"><span class="dir-icon">▸</span><span>${esc(name)}</span></div>`;
   }).join('');
   list.querySelectorAll('.dir-item').forEach(el => {
     el.addEventListener('click', () => {
@@ -1148,17 +1159,17 @@ async function startOrganize() {
     if (data.steps) {
       data.steps.forEach(s => {
         const icon = s.status === '完成' ? '✓' : s.status === '失败' ? '✗' : '○';
-        appendLog(`${icon} ${s.step}: ${s.message}`);
+        appendLog(`${icon} ${esc(s.step)}: ${esc(s.message)}`);
       });
     }
     // 按部汇总：一行一部
     (data.shows || []).forEach(sh => {
-      appendLog(`★ 入库: ${sh.title} (${sh.year || '-'}) → ${sh.target}`);
+      appendLog(`★ 入库: ${esc(sh.title)} (${esc(sh.year || '-')} → ${esc(sh.target)}`);
     });
     // 逐项详情：识别出的标题/年份/分类/目标路径
     (data.details || []).forEach(d => {
       const icon = d.status === 'success' ? '✓' : d.status === 'exists' ? '○' : '✗';
-      appendLog(`${icon} ${d.file_name} ${d.message}`);
+      appendLog(`${icon} ${esc(d.file_name)} ${esc(d.message)}`);
     });
     appendLog(`任务完成: 自动整理, 耗时 ${((Date.now() - t0) / 1000).toFixed(1)} 秒`);
   } catch (e) {

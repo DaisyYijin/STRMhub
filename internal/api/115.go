@@ -335,11 +335,11 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 
 	var result qrResultResp
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[系统] 解析登录结果失败: %v, 响应: %s", err, string(body))
+		log.Printf("[系统] 解析登录结果失败: %v, 响应摘要: %s", err, sanitizeLog(string(body)))
 		return "", "", "", fmt.Errorf("解析登录结果失败")
 	}
 	if len(result.Data.Cookie) == 0 {
-		log.Printf("[系统] 登录结果未包含 Cookie, 响应: %s", string(body))
+		log.Printf("[系统] 登录结果未包含 Cookie, 响应摘要: %s", sanitizeLog(string(body)))
 		// 透传 115 的真实错误（如 40101004 IP登录异常），前端据此停止重试
 		var e struct {
 			Error string `json:"error"`
@@ -442,4 +442,21 @@ func (h *Handler) dropQrSession(uid string) {
 	qrMu.Lock()
 	delete(qrSessions, uid)
 	qrMu.Unlock()
+}
+
+// sanitizeLog 清理日志中的敏感信息：截断长度、脱敏 Cookie/Token 值
+func sanitizeLog(s string) string {
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	for _, key := range []string{"UID=", "CID=", "SEID=", "KID=", "access_token=", "refresh_token="} {
+		if i := strings.Index(s, key); i >= 0 {
+			j := i + len(key)
+			for j < len(s) && s[j] != '"' && s[j] != ';' && s[j] != '&' && s[j] != ' ' {
+				j++
+			}
+			s = s[:i] + key + "***" + s[j:]
+		}
+	}
+	return s
 }
