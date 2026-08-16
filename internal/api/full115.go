@@ -1,0 +1,389 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"strmhub/internal/model"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// ==================== 全量同步 ====================
+
+// fullSyncMu 全量同步互斥：防止重复点击导致两个同步并发互相干扰
+var fullSyncMu sync.Mutex
+
+// taskState 当前任务状态（供前端展示与按钮禁用，含 cron 触发的任务）
+var (
+	taskStateMu sync.Mutex
+	taskRunning bool
+	taskName    string
+	taskStart   time.Time
+)
+
+func beginTask(name string) {
+	taskStateMu.Lock()
+	taskRunning, taskName, taskStart = true, name, time.Now()
+	taskStateMu.Unlock()
+}
+
+func endTask() {
+	taskStateMu.Lock()
+	taskRunning = false
+	taskStateMu.Unlock()
+}
+
+// TaskStatus 当前任务状态快照
+func TaskStatus() (bool, string, time.Time) {
+	taskStateMu.Lock()
+	defer taskStateMu.Unlock()
+	return taskRunning, taskName, taskStart
+}
+
+// RunFullSync 执行全量同步：递归遍历 cid 目录，视频生成 .strm，附属文件实体落盘
+// 附属文件 = 用户配置的图片后缀 + 数据文件后缀 + nfo（Emby/Jellyfin 标准元数据）；
+// 不在过滤集合内的文件一律不同步
+// POST /sync/full  body: {"cid":"...","local_path":"...","video_ext":["mp4"],"image_ext":["jpg"],"data_ext":["ass"]}
+func (h *Handler) RunFullSync(c *gin.Context) {
+	var req struct {
+		Cid        string   `json:"cid"`
+		LocalPath  string   `json:"local_path"`
+		VideoExt   []string `json:"video_ext"`
+		ImageExt   []string `json:"image_ext"`
+		DataExt    []string `json:"data_ext"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Cid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误：请填写 115 媒体库 cid"})
+		return
+	}
+	if req.LocalPath == "" {
+		req.LocalPath = "/media"
+	}
+
+	// 同一时刻只允许一个全量同步
+	if !fullSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，请等待完成后再试"})
+		return
+	}
+	defer fullSyncMu.Unlock()
+	beginTask("全量同步")
+	defer endTask()
+	fullStart := time.Now()
+
+	// 读取 STRM 直链配置
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+
+	// 构造统一操作通道（OpenAPI 优先，Cookie 回退）
+	ops, err := h.newPan115Ops()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 过滤器：视频组生成 strm；附属组 = 图片后缀 ∪ 数据后缀 ∪ .nfo（始终包含）
+	filter := &syncFilter{
+		videoExts: buildExtSet(req.VideoExt),
+		assetExts: buildExtSet(append(append([]string{}, req.ImageExt...), req.DataExt...)),
+	}
+	filter.assetExts[".nfo"] = true
+
+	// 递归遍历，分类收集
+	var videos, assets []remoteFile
+	if err := walk115Dir(ops, req.Cid, "", &videos, &assets, filter); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
+		return
+	}
+
+	strmCreated, downloaded, skipped, failed := applySyncResults(h.DB, ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist, "")
+
+	totalNew := strmCreated + downloaded
+	if totalNew > 0 {
+		h.notifyEmbyRefresh(req.LocalPath)
+	}
+	// 全量已覆盖一切：把事件窗口内的生活事件标记为已处理，
+	// 之后的增量同步只处理此后发生的新事件
+	if cookieOnly, err := h.get115Cookie(); err == nil {
+		if n, err := h.markEventsCoveredByFullSync(cookieOnly); err != nil {
+			log.Printf("[同步] 标记生活事件已覆盖失败: %v", err)
+		} else if n > 0 {
+			log.Printf("[同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
+		}
+	}
+	log.Printf("[同步] ✅ 全量同步完成（耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
+		time.Since(fullStart).Truncate(time.Second), len(videos), strmCreated, len(assets), downloaded, skipped, failed)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "全量同步完成",
+		"elapsed": time.Since(fullStart).Truncate(time.Second).String(),
+		"total":   len(videos),
+		"created": strmCreated,
+		"assets_total":      len(assets),
+		"assets_downloaded": downloaded,
+		"assets_skipped":    skipped,
+		"assets_failed":     failed,
+	})
+}
+
+// assetDLWorkers 附属文件并发下载线程数（CDN 下载不占 API 限额，CMS 同款思路）
+const assetDLWorkers = 5
+
+// applySyncResults 对遍历结果执行落盘：视频生成 strm，附属文件下载（已存在跳过），
+// 全部登记到 SyncedFile 台账（move/delete 事件精确执行的依据）
+func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool, dirLabel string) (strmCreated, downloaded, skipped, failed int) {
+	for _, f := range videos {
+		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
+			log.Printf("[同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
+			continue
+		}
+		strmCreated++
+		upsertSyncedFile(db, f, path.Join(f.Path, f.Name+".strm"), "video")
+	}
+
+	// 附属文件：生产者串行取直链（守 API 间隔），worker 池并发下载
+	type assetJob struct {
+		f    remoteFile
+		url  string
+		hdrs map[string]string
+	}
+	type assetRes struct {
+		f      remoteFile
+		status string
+		err    error
+	}
+	jobs := make(chan assetJob)
+	resCh := make(chan assetRes, len(assets))
+	var wg sync.WaitGroup
+	for i := 0; i < assetDLWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				data, err := downloadAssetBytes(j.url, j.hdrs, ops.cookieForDL())
+				if err != nil {
+					resCh <- assetRes{f: j.f, err: err}
+					continue
+				}
+				st, err := writeAssetBytes(j.f, localPath, data)
+				resCh <- assetRes{f: j.f, status: st, err: err}
+			}
+		}()
+	}
+	for i, f := range assets {
+		if i%20 == 0 && i > 0 {
+			log.Printf("[同步] 附属文件进度: %d/%d", i, len(assets))
+		}
+		dst := filepath.Join(localPath, filepath.FromSlash(f.Path), f.Name)
+		if _, err := os.Stat(dst); err == nil {
+			resCh <- assetRes{f: f, status: "skip"}
+			upsertSyncedFile(db, f, path.Join(f.Path, f.Name), "asset")
+			continue
+		}
+		u, hdrs, err := ops.downloadURLFull(f.PickCode, "")
+		if err != nil {
+			resCh <- assetRes{f: f, err: err}
+			continue
+		}
+		jobs <- assetJob{f: f, url: u, hdrs: hdrs}
+	}
+	close(jobs)
+	wg.Wait()
+	close(resCh)
+	for r := range resCh {
+		switch {
+		case r.err != nil:
+			failed++
+			log.Printf("[同步] 附属文件失败: %s/%s: %v", r.f.Path, r.f.Name, r.err)
+		case r.status == "skip":
+			skipped++
+		default:
+			downloaded++
+			upsertSyncedFile(db, r.f, path.Join(r.f.Path, r.f.Name), "asset")
+		}
+	}
+	return
+}
+
+// upsertSyncedFile 登记本地文件台账（file_id 唯一）
+func upsertSyncedFile(db *gorm.DB, f remoteFile, relPath, kind string) {
+	if db == nil || f.Fid == "" {
+		return
+	}
+	sf := model.SyncedFile{FileID: f.Fid, PickCode: f.PickCode, RelPath: relPath, Kind: kind, Size: f.Size, Sha1: f.Sha1}
+	db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "file_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "sha1", "updated_at"}),
+	}).Create(&sf)
+}
+
+// writeAssetBytes 把附属文件内容写到本地（.part 临时文件原子改名）
+func writeAssetBytes(f remoteFile, localRoot string, data []byte) (string, error) {
+	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
+	dst := filepath.Join(dir, f.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	tmp := dst + ".part"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", err
+	}
+	return "download", nil
+}
+
+// getSettingValue 读取配置：yaml 优先，数据库回退（兼容旧数据）
+// 前端 saveConfig 保存到 yaml，早期版本保存到 DB，两处都要能读到
+func (h *Handler) getSettingValue(key string) string {
+	if v := h.Config.GetSetting(key); v != "" {
+		return v
+	}
+	var s model.Setting
+	if err := h.DB.Where("key = ?", key).First(&s).Error; err == nil {
+		return s.Value
+	}
+	return ""
+}
+
+// markEventsCoveredByFullSync 全量同步完成后调用：
+// 把事件窗口内的生活事件直接落库并标记为已处理（全量已覆盖一切，无需增量再处理）
+func (h *Handler) markEventsCoveredByFullSync(cookie string) (int, error) {
+	count := 0
+	offset := 0
+	for {
+		events, err := fetch115LifeEvents(cookie, 30, offset, "")
+		if err != nil {
+			return count, err
+		}
+		fresh := 0
+		for _, ev := range events {
+			if ev.ID == "" {
+				continue
+			}
+			ts, _ := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64)
+			now := time.Now()
+			se := model.SyncEvent{
+				EventID: ev.ID, Type: ev.Type, FileID: ev.FileID,
+				FileName: ev.FileName, Cid: ev.Cid, Size: ev.Size,
+				EventTime: ts, Status: "applied", AppliedAt: &now,
+			}
+			res := h.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&se)
+			if res.Error == nil && res.RowsAffected > 0 {
+				fresh++
+				count++
+			}
+		}
+		if fresh == 0 || count >= 1000 {
+			break
+		}
+		offset += len(events)
+		if len(events) < 30 {
+			break
+		}
+	}
+	return count, nil
+}
+
+// rename115 重命名网盘文件（webapi files/batch_rename；字幕随视频新名对齐用）
+func rename115(cookie, fid, newName string) error {
+	form := url.Values{}
+	form.Set("files_new_name["+fid+"]", newName)
+	body, err := httpPostForm115("https://webapi.115.com/files/batch_rename", form, cookie, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		State bool   `json:"state"`
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &r) == nil && !r.State {
+		return fmt.Errorf("重命名被拒: %s", r.Error)
+	}
+	return nil
+}
+
+// getStrmConfig 读取 STRM 直链配置
+func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
+	domain = "http://172.17.0.1:6060"
+	format = "pick_code_name"
+	keepExt = true
+	exist = false // false=覆盖
+	var s model.Setting
+	if err := h.DB.Where("key = ?", "strm").First(&s).Error; err != nil {
+		return
+	}
+	var cfg struct {
+		Domain  string `json:"domain"`
+		Format  string `json:"format"`
+		KeepExt any    `json:"keep_ext"`
+		Exist   string `json:"exist"`
+	}
+	if json.Unmarshal([]byte(s.Value), &cfg) == nil {
+		if cfg.Domain != "" {
+			domain = cfg.Domain
+		}
+		if cfg.Format != "" {
+			format = cfg.Format
+		}
+		switch v := cfg.KeepExt.(type) {
+		case bool:
+			keepExt = v
+		case string:
+			keepExt = v == "true"
+		}
+		if cfg.Exist == "skip" {
+			exist = true // skip=true 表示跳过已存在
+		}
+	}
+	return
+}
+
+// writeStrm 生成单个 .strm 文件
+func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remoteFile) error {
+	var streamURL string
+	if format == "pick_code" {
+		streamURL = fmt.Sprintf("%s/d/%s", strings.TrimRight(domain, "/"), f.Fid)
+	} else {
+		if keepExt {
+			streamURL = fmt.Sprintf("%s/d/%s/%s", strings.TrimRight(domain, "/"), f.Fid, f.Name)
+		} else {
+			name := f.Name
+			if ext := path.Ext(name); ext != "" {
+				name = strings.TrimSuffix(name, ext)
+			}
+			streamURL = fmt.Sprintf("%s/d/%s/%s", strings.TrimRight(domain, "/"), f.Fid, name)
+		}
+	}
+
+	// 本地目录：保持网盘目录结构
+	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	strmName := f.Name + ".strm"
+	strmPath := filepath.Join(dir, strmName)
+
+	// 如果配置为跳过已存在，且文件已存在则跳过
+	if skipExist {
+		if _, err := os.Stat(strmPath); err == nil {
+			return nil
+		}
+	}
+
+	return os.WriteFile(strmPath, []byte(streamURL), 0o644)
+}
+

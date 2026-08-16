@@ -281,17 +281,6 @@ func cookieUserID(cookie string) int64 {
 	return 0
 }
 
-func pathDirSlash(p string) string {
-	i := strings.LastIndexByte(p, '/')
-	if i < 0 {
-		return "."
-	}
-	if i == 0 {
-		return "/"
-	}
-	return p[:i]
-}
-
 func parseI64(s string) int64 {
 	var n int64
 	fmt.Sscanf(s, "%d", &n)

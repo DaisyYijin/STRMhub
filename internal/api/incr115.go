@@ -1,0 +1,724 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"strmhub/internal/model"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm/clause"
+)
+
+// ==================== 生活事件增量 ====================
+//
+// 接口：P115Client.life_behavior_detail_app
+//   GET https://proapi.115.com/{app}/behavior/detail  （app 默认 android，Cookie 认证）
+//   参数：type（省略=全部）、limit（≤1000）、offset、date（可选 'YYYY-MM-DD'）
+//   注意：有风控风险，两次调用间隔 ≥5 秒；缺少「回收站还原」事件
+
+// 关键操作类型（type 字段，数字或字符串均可能返回）
+const (
+	evUploadImage = "upload_image_file" // 1 上传图片
+	evUpload      = "upload_file"       // 2 上传文件/目录
+	evMove        = "move_file"         // 6 移动文件/目录
+	evReceive     = "receive_files"     // 14 接收文件（转存）
+	evNewFolder   = "new_folder"        // 17 新增目录
+	evCopyFolder  = "copy_folder"       // 18 复制目录（目录转存/复制，按目录新增处理）
+	evFolderRename = "folder_rename"    // 20 目录改名
+	evMoveImage   = "move_image_file"   // 5 移动图片（同移动处理）
+	evDelete      = "delete_file"       // 22 删除文件/目录
+	evCopy        = "copy_file"         // 23 复制文件
+	evRename      = "file_rename"       // 24 文件改名
+)
+
+// lifeEvent 一条生活事件
+type lifeEvent struct {
+	ID       string `json:"id"`        // 115 事件 id（单调递增，增量游标/去重用）
+	Type     string `json:"type"`      // 归一化后的操作类型
+	FileID   string `json:"file_id"`   // 文件 id
+	FileName string `json:"file_name"` // 文件名
+	Cid      string `json:"cid"`       // 父目录 cid
+	Size     int64  `json:"size"`      // 文件大小
+	Time     string `json:"time"`      // 发生时间
+}
+
+// normalizeEventType 把数字或字符串类型归一化为字符串
+func normalizeEventType(v string) string {
+	switch v {
+	case "1", "upload_image_file":
+		return evUploadImage
+	case "2", "upload_file":
+		return evUpload
+	case "6", "move_file":
+		return evMove
+	case "14", "receive_files":
+		return evReceive
+	case "17", "new_folder":
+		return evNewFolder
+	case "18", "copy_folder":
+		return evCopyFolder
+	case "5", "move_image_file":
+		return evMoveImage
+	case "20", "folder_rename":
+		return evFolderRename
+	case "22", "delete_file":
+		return evDelete
+	case "23", "copy_file":
+		return evCopy
+	case "24", "file_rename":
+		return evRename
+	default:
+		return v
+	}
+}
+
+// firstStr 从多个候选字段名取第一个非空值
+func firstStr(d map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v := fmt.Sprint(d[k]); v != "" && v != "<nil>" {
+			return v
+		}
+	}
+	return ""
+}
+
+// fetch115LifeEvents 拉取 115 生活事件（type 为空则拉全部类型）
+// 响应结构：{state, data: {count, list: [...]}}，事件字段 type/file_id/file_name/cid/file_size/update_time
+func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEvent, error) {
+	query := url.Values{
+		"limit":  {fmt.Sprint(limit)},
+		"offset": {fmt.Sprint(offset)},
+	}
+	if typ != "" {
+		query.Set("type", typ)
+	}
+	body, err := httpGet115(behaviorAPI, query, cookie, 20*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		State bool `json:"state"`
+		Error string `json:"error"`
+		Data  struct {
+			// 注意：count 在响应中是字符串（"118262"），声明为 int 会导致整体解析失败；
+			// 当前不需要该值，故意不解析
+			List []map[string]interface{} `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析生活事件失败: %s", truncateStr(string(body), 150))
+	}
+	if !result.State {
+		msg := result.Error
+		if msg == "" {
+			msg = "state=false"
+		}
+		return nil, fmt.Errorf("拉取生活事件被拒: %s", msg)
+	}
+	events := make([]lifeEvent, 0, len(result.Data.List))
+	for _, d := range result.Data.List {
+		ev := lifeEvent{
+			ID:       firstStr(d, "id"),
+			Type:     normalizeEventType(fmt.Sprint(d["type"])),
+			FileID:   firstStr(d, "file_id", "fid"),
+			FileName: firstStr(d, "file_name", "n", "name"),
+			Cid:      firstStr(d, "cid", "pid", "parent_id"),
+			Time:     firstStr(d, "update_time", "time", "create_time"),
+		}
+		if s, ok := d["file_size"].(float64); ok {
+			ev.Size = int64(s)
+		}
+		events = append(events, ev)
+	}
+	return events, nil
+}
+
+// get115DirInfo 查询目录自身的 cid/pid/名称（webapi files/get_info，data 为数组取首项）
+type dirInfo struct {
+	cid, pid, n string
+}
+
+// get115DirInfo 查询目录自身的 cid/pid/名称
+func get115DirInfo(cookie, cid string) (dirInfo, error) {
+	body, err := httpGet115UA("https://webapi.115.com/files/get_info",
+		url.Values{"file_id": {cid}}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return dirInfo{}, err
+	}
+	var r struct {
+		State bool `json:"state"`
+		Data  []struct {
+			Cid string `json:"cid"`
+			Pid string `json:"pid"`
+			N   string `json:"n"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil || !r.State || len(r.Data) == 0 {
+		return dirInfo{}, fmt.Errorf("获取目录信息失败: %s", truncateStr(string(body), 120))
+	}
+	d := r.Data[0]
+	return dirInfo{cid: d.Cid, pid: d.Pid, n: d.N}, nil
+}
+
+// get115RelPath 从 cid 逐级向上爬父目录链至 rootCid，返回相对路径（如 电影/香港动画/xxx）
+// 爬到网盘根仍未遇到 rootCid 说明不在媒体库内，返回 ok=false；memo 缓存减少重复查询
+func get115RelPath(cookie, cid, rootCid string, memo map[string]dirInfo) (string, bool, error) {
+	if cid == rootCid {
+		return "", true, nil
+	}
+	var parts []string
+	cur := cid
+	for i := 0; i < 64; i++ { // 深度保险
+		info, ok := memo[cur]
+		if !ok {
+			var err error
+			info, err = get115DirInfo(cookie, cur)
+			if err != nil {
+				return "", false, err
+			}
+			memo[cur] = info
+		}
+		if cur == rootCid {
+			// 逆序拼接：parts 是从受影响目录向上收集的
+			for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+				parts[l], parts[r] = parts[r], parts[l]
+			}
+			return path.Join(parts...), true, nil
+		}
+		parts = append(parts, info.n)
+		if info.pid == "" || info.pid == "0" {
+			return "", false, nil // 到达网盘根，不在媒体库内
+		}
+		if info.pid == rootCid {
+			for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+				parts[l], parts[r] = parts[r], parts[l]
+			}
+			return path.Join(parts...), true, nil
+		}
+		cur = info.pid
+	}
+	return "", false, nil
+}
+
+// incrParams 增量同步参数（HTTP 与 cron 调度器共用）
+type incrParams struct {
+	Cid        string
+	LocalPath  string
+	VideoExt   []string
+	ImageExt   []string
+	DataExt    []string
+	Limit      int
+}
+
+// incrSummary 增量同步结果摘要
+type incrSummary struct {
+	EventsTotal      int `json:"events_total"`
+	EventsFresh      int `json:"events_fresh"`
+	Relevant         int `json:"relevant"`
+	Structural       int `json:"structural"`
+	Deleted          int `json:"deleted"`
+	Moved            int `json:"moved"`
+	Dirs             int `json:"dirs"`
+	DirsSkipped      int `json:"dirs_skipped"`
+	Videos           int `json:"videos"`
+	StrmCreated      int `json:"strm_created"`
+	AssetsTotal      int `json:"assets_total"`
+	AssetsDownloaded int `json:"assets_downloaded"`
+	AssetsSkipped    int `json:"assets_skipped"`
+	AssetsFailed     int `json:"assets_failed"`
+	Ignored          int `json:"ignored"` // 非媒体库区域（待整理/已存在/冗余等）的事件
+	Elapsed          string `json:"elapsed"`
+}
+
+// RunIncrementalSync 增量同步 HTTP 入口
+// POST /sync/incremental  body: {"cid":"...","local_path":"...","video_ext":[],"image_ext":[],"data_ext":[],"limit":1000}
+func (h *Handler) RunIncrementalSync(c *gin.Context) {
+	var req struct {
+		Cid        string   `json:"cid"`
+		LocalPath  string   `json:"local_path"`
+		VideoExt   []string `json:"video_ext"`
+		ImageExt   []string `json:"image_ext"`
+		DataExt    []string `json:"data_ext"`
+		Limit      int      `json:"limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	p := normalizeIncrParams(req.Cid, req.LocalPath, req.VideoExt, req.ImageExt, req.DataExt, req.Limit)
+
+	if !fullSyncMu.TryLock() {
+		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中，请等待完成后再试"})
+		return
+	}
+	defer fullSyncMu.Unlock()
+	beginTask("增量同步")
+	defer endTask()
+
+	sum, err := h.executeIncrementalSync(p)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "增量同步完成", "summary": sum})
+}
+
+func normalizeIncrParams(cid, localPath string, videoExt, imageExt, dataExt []string, limit int) incrParams {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	if localPath == "" {
+		localPath = "/media"
+	}
+	if cid == "" {
+		cid = "0"
+	}
+	return incrParams{Cid: cid, LocalPath: localPath, VideoExt: videoExt, ImageExt: imageExt, DataExt: dataExt, Limit: limit}
+}
+
+// executeIncrementalSync 增量同步核心（CMS 两阶段模式）：
+// 阶段一：小批量分页拉取生活事件并落库去重（SyncEvent 表，事件 id 唯一，永不丢失）
+// 阶段二：按时间正序应用事件——新增类定向重遍历受影响目录；
+//         move/rename/delete 基于本地文件台账（SyncedFile）精确执行
+func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
+	sum := &incrSummary{}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return sum, err
+	}
+	ops, err := h.newPan115Ops()
+	if err != nil {
+		return sum, err
+	}
+
+	incrStart := time.Now()
+	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
+	log.Printf("[同步] ▶ 增量同步开始，等待 3 秒后拉取事件...%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
+	time.Sleep(3 * time.Second)
+
+	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
+	// 拉取失败重试：30 秒 × 3 次（网络抖动/瞬时风控不应让整轮作废，QMediaSync 同款）
+	fetchWithRetry := func(offset int) ([]lifeEvent, error) {
+		var lastErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			evs, err := fetch115LifeEvents(cookie, 30, offset, "")
+			if err == nil {
+				return evs, nil
+			}
+			lastErr = err
+			log.Printf("[同步] 事件拉取失败（第 %d/3 次）: %v", attempt, err)
+			if attempt < 3 {
+				time.Sleep(30 * time.Second)
+			}
+		}
+		return nil, lastErr
+	}
+	var pending []model.SyncEvent
+	offset := 0
+	for {
+		events, err := fetchWithRetry(offset)
+		if err != nil {
+			return sum, fmt.Errorf("拉取生活事件失败（已重试 3 次）: %w", err)
+		}
+		sum.EventsTotal += len(events)
+		fresh := 0
+		for _, ev := range events {
+			if ev.ID == "" {
+				continue
+			}
+			ts, _ := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64)
+			se := model.SyncEvent{
+				EventID: ev.ID, Type: ev.Type, FileID: ev.FileID,
+				FileName: ev.FileName, Cid: ev.Cid, Size: ev.Size, EventTime: ts,
+			}
+			res := h.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&se)
+			if res.Error == nil && res.RowsAffected > 0 {
+				fresh++
+				pending = append(pending, se)
+			}
+		}
+		sum.EventsFresh += fresh
+		log.Printf("[同步] 拉取事件: 本页 %d 条，新 %d 条", len(events), fresh)
+		if fresh == 0 || sum.EventsFresh >= p.Limit {
+			break // 已追平或达到单次上限
+		}
+		offset += len(events)
+		if len(events) < 30 {
+			break
+		}
+	}
+
+	// 事件按时间正序应用（接口返回最新在前）
+	for i, j := 0, len(pending)-1; i < j; i, j = i+1, j-1 {
+		pending[i], pending[j] = pending[j], pending[i]
+	}
+
+	// ---- 阶段二：应用事件 ----
+	filter := &syncFilter{
+		videoExts: buildExtSet(p.VideoExt),
+		assetExts: buildExtSet(append(append([]string{}, p.ImageExt...), p.DataExt...)),
+	}
+	filter.assetExts[".nfo"] = true
+	isMedia := func(name string) bool {
+		ext := strings.ToLower(path.Ext(name))
+		return filter.videoExts[ext] || filter.assetExts[ext]
+	}
+
+	memo := map[string]dirInfo{}
+	// 作用域：只监控媒体库子树；待整理/已存在/冗余等整理工作区的事件静默忽略
+	libAbs := absPathOf(cookie, p.Cid, memo)
+	var excludedAbs []string
+	var orgCfgRaw struct {
+		Pending   string `json:"pending"`
+		Existing  string `json:"existing"`
+		Redundant string `json:"redundant"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw)
+	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant} {
+		if cid != "" {
+			if a := absPathOf(cookie, cid, memo); a != "" {
+				excludedAbs = append(excludedAbs, strings.TrimSuffix(a, "/"))
+			}
+		}
+	}
+	scopeOf := func(cid string) string {
+		if cid == "" || cid == "0" {
+			return "unknown"
+		}
+		abs := absPathOf(cookie, cid, memo)
+		if abs == "" {
+			return "unknown"
+		}
+		abs = strings.TrimSuffix(abs, "/")
+		if libAbs != "" && strings.HasPrefix(abs+"/", strings.TrimSuffix(libAbs, "/")+"/") {
+			return "library"
+		}
+		for _, ex := range excludedAbs {
+			if strings.HasPrefix(abs+"/", ex+"/") {
+				return "excluded"
+			}
+		}
+		return "other"
+	}
+
+	dirSet := map[string]bool{}
+	for _, ev := range pending {
+		switch ev.Type {
+		case evUpload, evReceive, evCopy:
+			if isMedia(ev.FileName) {
+				dirSet[ev.Cid] = true
+				sum.Relevant++
+			} else if ev.FileID != "" && ev.Cid == "" {
+				dirSet[ev.FileID] = true
+				sum.Relevant++
+			}
+		case evNewFolder, evCopyFolder:
+			// 目录新增/复制（含整目录转存）：按目录自身加入受影响集合
+			if ev.FileID != "" {
+				dirSet[ev.FileID] = true
+				sum.Relevant++
+			}
+		case evDelete:
+			// 作用域过滤：待整理/已存在/冗余等非媒体库区域的删除不监控
+			switch scopeOf(ev.Cid) {
+			case "excluded", "other":
+				sum.Ignored++
+				continue
+			case "library":
+				// 精确删除：台账 → 路径推导（支持整目录删除与无台账的旧文件）
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, false) {
+					sum.Deleted++
+				}
+			default: // unknown（cid=0 等）：仅按台账名称匹配，静默处理
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
+					sum.Deleted++
+				} else {
+					sum.Ignored++
+				}
+			}
+			sum.Structural++
+		case evMove, evMoveImage, evRename:
+			// 移动/改名：清理旧位置（台账/路径推导），新位置由目录重遍历重建
+			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
+				sum.Moved++
+			}
+			if ev.Cid != "" && scopeOf(ev.Cid) == "library" {
+				dirSet[ev.Cid] = true // 移入媒体库才重建；移入已存在/冗余只清理本地
+			}
+			sum.Structural++
+		case evFolderRename:
+			// 目录改名：重遍历父目录重建；旧名子树可能残留，交由后续清理功能
+			if ev.Cid != "" {
+				dirSet[ev.Cid] = true
+			}
+			sum.Structural++
+		default:
+			sum.Structural++
+			log.Printf("[同步] ○ 未处理的事件: 类型=%s 文件=%s", ev.Type, ev.FileName)
+		}
+	}
+
+	// 受影响目录：定位相对路径 + 祖先去重
+	type targetDir struct{ cid, base string }
+	var targets []targetDir
+	for cid := range dirSet {
+		base, ok, err := get115RelPath(cookie, cid, p.Cid, memo)
+		if err != nil {
+			log.Printf("[同步] 定位目录路径失败 cid=%s: %v", cid, err)
+			sum.DirsSkipped++
+			continue
+		}
+		if !ok {
+			sum.DirsSkipped++ // 不在媒体库路径下
+			continue
+		}
+		targets = append(targets, targetDir{cid: cid, base: base})
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].base < targets[j].base })
+	var uniqTargets []targetDir
+	dirsMerged := 0
+	for _, t := range targets {
+		covered := false
+		for _, u := range uniqTargets {
+			if u.base == "" || t.base == u.base || strings.HasPrefix(t.base, u.base+"/") {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			dirsMerged++ // 子目录被上层目录的遍历覆盖，无需单独处理
+			continue
+		}
+		uniqTargets = append(uniqTargets, t)
+	}
+
+	// 逐目录遍历并立即落盘
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+	for _, t := range uniqTargets {
+		var videos, assets []remoteFile
+		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+			log.Printf("[同步] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
+			time.Sleep(30 * time.Second)
+			if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+				log.Printf("[同步] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
+				sum.DirsSkipped++
+				continue
+			}
+		}
+		sc, dl, sk, fl := applySyncResults(h.DB, ops, videos, assets, p.LocalPath, domain, format, keepExt, skipExist, t.base)
+		sum.Dirs++
+		sum.Videos += len(videos)
+		sum.StrmCreated += sc
+		sum.AssetsTotal += len(assets)
+		sum.AssetsDownloaded += dl
+		sum.AssetsSkipped += sk
+		sum.AssetsFailed += fl
+		log.Printf("[同步] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
+	}
+
+	// 标记事件已应用 + 更新水位
+	now := time.Now()
+	ids := make([]string, 0, len(pending))
+	for _, ev := range pending {
+		ids = append(ids, ev.EventID)
+	}
+	if len(ids) > 0 {
+		h.DB.Model(&model.SyncEvent{}).Where("event_id IN ?", ids).
+			Updates(map[string]interface{}{"status": "applied", "applied_at": now})
+	}
+	h.Config.SaveSetting("incr-last", fmt.Sprint(now.Unix()))
+
+	if sum.StrmCreated+sum.AssetsDownloaded+sum.Deleted+sum.Moved > 0 {
+		h.notifyEmbyRefresh(p.LocalPath)
+	}
+	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
+	log.Printf("[同步] ✅ 增量同步完成（耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
+		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Ignored, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	return sum, nil
+}
+
+// absPathOf 爬到网盘根，返回目录绝对路径（如 /整理/已存在），失败返回空
+func absPathOf(cookie, cid string, memo map[string]dirInfo) string {
+	if cid == "" || cid == "0" {
+		return ""
+	}
+	var parts []string
+	cur := cid
+	for i := 0; i < 64; i++ {
+		info, ok := memo[cur]
+		if !ok {
+			var err error
+			info, err = get115DirInfo(cookie, cur)
+			if err != nil {
+				return ""
+			}
+			memo[cur] = info
+		}
+		parts = append(parts, info.n)
+		if info.pid == "" || info.pid == "0" {
+			break
+		}
+		cur = info.pid
+	}
+	for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
+		parts[l], parts[r] = parts[r], parts[l]
+	}
+	return "/" + strings.Join(parts, "/")
+}
+
+// removeSyncedFile 按文件 id 从台账定位并删除本地文件（仅删除本工具生成过的文件）
+func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
+	if fileID == "" {
+		return false
+	}
+	var sf model.SyncedFile
+	if err := h.DB.Where("file_id = ?", fileID).First(&sf).Error; err != nil {
+		return false // 台账无记录（从未同步过），无需处理
+	}
+	full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
+	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+		log.Printf("[同步] 删除本地文件失败 %s: %v", full, err)
+		return false
+	}
+	h.DB.Delete(&sf)
+	log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
+	return true
+}
+
+// removeSyncedItem 清理 move/rename/delete 事件的旧位置，三级定位：
+// 1) 台账按 file_id 精确匹配（本工具生成且已登记的文件）
+// 2) 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
+//    （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
+// 3) 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
+func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo, quiet bool) bool {
+	// 1) 台账精确匹配
+	if ev.FileID != "" && h.removeSyncedFile(ev.FileID, localRoot) {
+		return true
+	}
+	// 2) 路径推导
+	if ev.Cid != "" && ev.FileName != "" {
+		if base, ok, err := get115RelPath(cookie, ev.Cid, rootCid, memo); err == nil && ok {
+			rel := path.Join(base, ev.FileName)
+			local := filepath.Join(localRoot, filepath.FromSlash(rel))
+			// 目录：整树删除（strm/附属全在树内），并清理台账
+			if st, err := os.Stat(local); err == nil && st.IsDir() {
+				if err := os.RemoveAll(local); err != nil {
+					log.Printf("[同步] 删除本地目录失败 %s: %v", rel, err)
+					return false
+				}
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", rel, rel+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[同步] 目录删除-执行成功: %s", rel)
+				return true
+			}
+			// 文件：strm 与附属实体两种形态
+			for _, cand := range []struct{ rel, suffix string }{{rel, ".strm"}, {rel, ""}} {
+				full := filepath.Join(localRoot, filepath.FromSlash(cand.rel)) + cand.suffix
+				if _, err := os.Stat(full); err == nil {
+					if err := os.Remove(full); err != nil {
+						log.Printf("[同步] 删除本地文件失败 %s: %v", cand.rel+cand.suffix, err)
+						return false
+					}
+					h.DB.Where("rel_path = ?", cand.rel+cand.suffix).Delete(&model.SyncedFile{})
+					log.Printf("[同步] ✓ 本地文件已清理: %s", cand.rel+cand.suffix)
+					return true
+				}
+			}
+		}
+	}
+	// 3) 台账按文件名模糊兜底
+	if ev.FileName != "" {
+		var sfs []model.SyncedFile
+		h.DB.Where("rel_path = ? OR rel_path = ?", ev.FileName+".strm", ev.FileName).Find(&sfs)
+		// 进一步按文件名后缀精确过滤（rel_path 最后一段必须完全等于）
+		for _, sf := range sfs {
+			if path.Base(sf.RelPath) == ev.FileName+".strm" || path.Base(sf.RelPath) == ev.FileName {
+				full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
+				if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+					continue
+				}
+				h.DB.Delete(&sf)
+				log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
+				return true
+			}
+		}
+		// 目录事件：台账中出现过该名称路径段的，按最浅前缀整树删除
+		var segs []model.SyncedFile
+		h.DB.Where("rel_path LIKE ? OR rel_path LIKE ?", "%/"+ev.FileName+"/%", "%/"+ev.FileName).Limit(50).Find(&segs)
+		bestPrefix := ""
+		for _, sf := range segs {
+			parts := strings.Split(sf.RelPath, "/")
+			for i, part := range parts {
+				if part == ev.FileName {
+					prefix := strings.Join(parts[:i+1], "/")
+					if bestPrefix == "" || len(prefix) < len(bestPrefix) {
+						bestPrefix = prefix
+					}
+					break
+				}
+			}
+		}
+		if bestPrefix != "" {
+			full := filepath.Join(localRoot, filepath.FromSlash(bestPrefix))
+			if err := os.RemoveAll(full); err == nil {
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", bestPrefix, bestPrefix+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[同步] ✓ 本地目录已清理: %s", bestPrefix)
+				return true
+			}
+		}
+	}
+	// 4) 本地磁盘按名搜索兜底（父目录与台账均不可用时）：
+	//    目录精确名匹配取最浅层整树删除；文件匹配 实体/strm 两种形态
+	if ev.FileName != "" {
+		var hitDir, hitFile string
+		filepath.WalkDir(localRoot, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			name := d.Name()
+			if name == ev.FileName {
+				if d.IsDir() {
+					if hitDir == "" || len(p) < len(hitDir) {
+						hitDir = p
+					}
+				} else {
+					hitFile = p
+				}
+			} else if name == ev.FileName+".strm" {
+				hitFile = p
+			}
+			return nil
+		})
+		if hitDir != "" {
+			if err := os.RemoveAll(hitDir); err == nil {
+				rel, _ := filepath.Rel(localRoot, hitDir)
+				h.DB.Where("rel_path = ? OR rel_path LIKE ?", filepath.ToSlash(rel), filepath.ToSlash(rel)+"/%").Delete(&model.SyncedFile{})
+				log.Printf("[同步] ✓ 本地目录已清理: %s", rel)
+				return true
+			}
+		}
+		if hitFile != "" {
+			if err := os.Remove(hitFile); err == nil {
+				rel, _ := filepath.Rel(localRoot, hitFile)
+				h.DB.Where("rel_path = ?", filepath.ToSlash(rel)).Delete(&model.SyncedFile{})
+				log.Printf("[同步] ✓ 本地文件已清理: %s", rel)
+				return true
+			}
+		}
+	}
+	if !quiet {
+		log.Printf("[同步] ○ 本地未找到对应文件: %s", ev.FileName)
+	}
+	return false
+}
+

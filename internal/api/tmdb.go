@@ -49,7 +49,6 @@ type TmdbMedia struct {
 
 // loadTmdbClient 从数据库加载配置构建客户端
 func loadTmdbClient(db interface{ Where(query interface{}, args ...interface{}) interface{ First(dest interface{}) interface{} } }) (*TmdbClient, error) {
-	_ = db
 	// 通过全局 DB 读取
 	var cfg model.TmdbConfig
 	if err := model.DB.First(&cfg).Error; err != nil {
