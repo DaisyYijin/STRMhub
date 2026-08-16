@@ -321,7 +321,7 @@ function confirmFullSync(btn) {
   const bubble = document.createElement('div');
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
-  bubble.innerHTML = '<div class="cb-text">全量同步将重建整个媒体库的 STRM 与附属文件，耗时较长。确定执行？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
+  bubble.innerHTML = '<div class="cb-text">确定全量同步？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
   btn.appendChild(bubble);
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
@@ -343,7 +343,7 @@ function confirmIncrementalSync(btn) {
   const bubble = document.createElement('div');
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
-  bubble.innerHTML = '<div class="cb-text">将拉取 115 生活事件并同步最新变化（增/删/移），确定执行？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
+  bubble.innerHTML = '<div class="cb-text">确定增量同步？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
   btn.appendChild(bubble);
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
@@ -365,7 +365,7 @@ function resetOrgRecords(btn) {
   const bubble = document.createElement('div');
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
-  bubble.innerHTML = '<div class="cb-text">清空全部整理去重记录？之后重新整理会重新识别入库（已入库的将判为已存在需人工处理）。</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定清空</button></div>';
+  bubble.innerHTML = '<div class="cb-text">确定清空整理记录？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定清空</button></div>';
   btn.appendChild(bubble);
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
@@ -469,8 +469,17 @@ async function strmSlowScan() {
     appendLog('STRM 慢扫: ' + (d.message || ''));
   } catch (e) { toast('慢扫失败: ' + e.message); }
 }
+function strmCleanupConfirm(btn) {
+  closeConfirmBubble(); document.removeEventListener('click', closeConfirmBubbleOnOutside);
+  const b = document.createElement('div'); b.id = 'confirm-bubble'; b.className = 'confirm-bubble';
+  b.innerHTML = '<div class="cb-text">确定清理失效 STRM？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">清理</button></div>';
+  btn.appendChild(b); b.classList.add('show');
+  b.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
+  b.querySelector('.cb-ok').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); strmCleanup(); };
+  setTimeout(() => document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true }), 0);
+}
+
 async function strmCleanup() {
-  if (!confirm('确定清理所有失效 STRM（将删除数据库记录和本地文件）？')) return;
   toast('清理进行中...');
   try {
     const d = await api('/strm/cleanup', { method: 'POST' });

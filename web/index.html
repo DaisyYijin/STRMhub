@@ -780,7 +780,7 @@ av:
         <div class="form-inline-group" style="gap:10px;flex-wrap:wrap">
           <button class="btn btn-outline" onclick="strmFastScan()">快速扫描</button>
           <button class="btn btn-outline" onclick="strmSlowScan()">深度扫描</button>
-          <button class="btn btn-danger" onclick="strmCleanup()">清理失效</button>
+          <button class="btn btn-danger" onclick="strmCleanupConfirm(this)" style="position:relative">清理失效</button>
           <span id="strm-scan-result" style="font-size:13px;color:var(--text-2)"></span>
         </div>
         <div class="alert alert-info" style="margin-top:10px">快速扫描：校验 115 文件是否仍存在。深度扫描：完整验证下载直链。清理失效：删除失效记录和本地文件。</div>
@@ -925,6 +925,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=42"></script>
+<script src="/js/app.js?v=43"></script>
 </body>
 </html>

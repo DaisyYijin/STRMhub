@@ -316,17 +316,18 @@ tr:hover td { background: var(--fill-1); }
 /* 重置确认气泡 */
 .confirm-bubble {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 8px);
   right: 0;
+  max-width: 260px;
+  white-space: normal;
   background: var(--card-bg, #fff);
   border: 1px solid var(--border, #e5e6eb);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0,0,0,.12);
   padding: 12px 14px;
   z-index: 2000;
-  white-space: nowrap;
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translateY(4px);
   transition: opacity .15s, transform .15s;
   pointer-events: none;
 }
@@ -338,8 +339,9 @@ tr:hover td { background: var(--fill-1); }
 .confirm-bubble::before {
   content: '';
   position: absolute;
-  top: -6px;
+  bottom: -6px;
   right: 20px;
+  transform: rotate(225deg);
   width: 10px;
   height: 10px;
   background: var(--card-bg, #fff);
