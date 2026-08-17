@@ -1552,6 +1552,13 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	}
 
 	replaceRules := loadReplaceRules()
+
+	// 计算库根绝对路径（去重记录网盘验证用，不能传空否则验证被跳过）
+	libAbs := ""
+	if ops.cookie != "" {
+		libAbs = absPathOf(ops.cookie, cfg.Library, map[string]dirInfo{})
+	}
+
 	topEntries, err := listPendingTopLevel(ops, cfg.Pending)
 	if err != nil {
 		onLog("✗ 遍历转存目录失败: " + err.Error())
@@ -1564,7 +1571,7 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 
 	onLog(fmt.Sprintf("▶ 转存目录发现 %d 个条目，开始整理...", len(topEntries)))
 	for _, entry := range topEntries {
-		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, "", onLog, 0, &successCount)...)
+		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
 	return results, successCount

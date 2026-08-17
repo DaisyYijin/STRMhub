@@ -196,8 +196,7 @@ func (h *Handler) triggerOrganizeAndSync() {
 	start := time.Now()
 	log.Printf("[上传] ▶ 转存后自动整理+增量同步开始...")
 
-	// 整理：把转存目录加入待整理扫描范围
-	// 转存目录（share.folder）可能 ≠ 待整理目录（org-basic.pending），需要都扫
+	// 整理：直接扫描转存目录（转存触发时不需要扫待整理目录）
 	shareFolder := ""
 	var shareCfg struct {
 		Folder string `json:"folder"`
@@ -205,19 +204,26 @@ func (h *Handler) triggerOrganizeAndSync() {
 	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareCfg)
 	shareFolder = shareCfg.Folder
 
-	// 先用原始待整理目录整理
-	_, _, orgErr := h.executeOrganize(false)
-	if orgErr != nil {
-		log.Printf("[上传] ○ 整理待整理目录跳过: %v", orgErr)
-	}
-
-	// 如果转存目录 ≠ 待整理目录，再用转存目录作为待整理目录整理一次
 	if shareFolder != "" {
 		orgCfg, err := h.loadOrgConfig()
-		if err == nil && orgCfg.Pending != shareFolder {
-			log.Printf("[上传] ▶ 转存目录 ≠ 待整理目录，额外扫描转存目录...")
-			orgCfg.Pending = shareFolder
-			h.executeOrganizeWithConfig(orgCfg, false)
+		if err != nil {
+			log.Printf("[上传] ○ 整理跳过（配置缺失）: %v", err)
+		} else {
+			// 转存目录作为待整理目录
+			if orgCfg.Pending != shareFolder {
+				orgCfg.Pending = shareFolder
+			}
+			log.Printf("[上传] ▶ 直接扫描转存目录...")
+			_, _, orgErr := h.executeOrganizeWithConfig(orgCfg, false)
+			if orgErr != nil {
+				log.Printf("[上传] ○ 转存目录整理失败: %v", orgErr)
+			}
+		}
+	} else {
+		// 没配转存目录，退回到扫待整理目录
+		_, _, orgErr := h.executeOrganize(false)
+		if orgErr != nil {
+			log.Printf("[上传] ○ 整理跳过: %v", orgErr)
 		}
 	}
 
