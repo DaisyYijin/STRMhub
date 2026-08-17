@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,12 +40,17 @@ type OrgConfig struct {
 	MinSize     int64  `json:"min_size"`
 }
 
+// renameTpl 全局重命名模板（runOrganizeEngine 初始化时从配置加载）
+var renameTpl *RenameConfig
+
 // RenameConfig 重命名配置
 type RenameConfig struct {
 	MovieFolder string `json:"movie_folder"` // 电影文件夹命名规则
 	MovieFile   string `json:"movie_file"`   // 电影文件命名规则
 	TVFolder    string `json:"tv_folder"`    // 电视剧文件夹命名规则
 	TVFile      string `json:"tv_file"`      // 电视剧文件命名规则
+	AVFolder    string `json:"av_folder"`    // AV 文件夹命名规则
+	AVFile      string `json:"av_file"`      // AV 文件命名规则
 }
 
 // loadOrgConfig 从数据库加载整理配置
@@ -375,6 +381,19 @@ func matchCategory(cat *model.CategoryRule, media *TmdbMedia) bool {
 		}
 	}
 
+	// 检查自定义正则（命中即匹配，不需要其他条件）
+	if cat.CustomRegex != "" {
+		if re, err := regexp.Compile(cat.CustomRegex); err == nil {
+			if re.MatchString(media.Title) || re.MatchString(media.OriginalTitle) {
+				return true
+			}
+		}
+		// 只有正则条件且未命中
+		if cat.GenreIds == "" && cat.OriginalLanguage == "" && cat.OriginCountry == "" && cat.Ext == "" {
+			return false
+		}
+	}
+
 	// 检查 origin_country
 	if cat.OriginCountry != "" {
 		countryList := strings.Split(cat.OriginCountry, ",")
@@ -465,23 +484,18 @@ func isQualityToken(token string) bool {
 }
 
 func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
+	// 兼容旧调用（无 Handler 时的硬编码格式，模板引擎在 rename.go 中）
 	media.Title = sanitizeName(media.Title)
 	firstLetter := titleFirstLetter(media.Title)
 	year := media.Year
 	if year == "" {
 		year = "0000"
 	}
-
-	// 目录命名：{first_letter}-{title}-{year}-[tmdb={tmdb_id}]（与既有媒体库风格一致）
 	folder := fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
-
 	if media.MediaType == "movie" {
-		// 电影文件：{title} ({year}) [{tmdb_id}].{ext}
 		file := fmt.Sprintf("%s (%s) [%d]%s", media.Title, year, media.TmdbID, ext)
 		return folder + "/" + file
 	}
-
-	// 电视剧：.../Season {season}/{title} - S{season:02d}E{episode:02d}[.{quality}].{ext}
 	if parsed.Season > 0 {
 		subFolder := fmt.Sprintf("Season %02d", parsed.Season)
 		if parsed.Episode > 0 {
@@ -495,6 +509,32 @@ func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 		return folder + "/" + subFolder
 	}
 	return folder
+}
+
+// buildNewNameWithTemplate 用模板引擎生成目标路径（Handler 方法，可读配置）
+func buildNewNameWithTemplate(media *TmdbMedia, parsed *ParsedName, originalName string) string {
+	media.Title = sanitizeName(media.Title)
+	if renameTpl == nil {
+		return buildNewName(media, parsed, pathExt(originalName)) // 降级到硬编码
+	}
+	ctx := buildRenameContext(media, parsed, originalName)
+	var path string
+	switch media.MediaType {
+	case "movie":
+		path = ctx.ApplyTemplate(renameTpl.MovieFolder) + "/" + ctx.ApplyTemplate(renameTpl.MovieFile)
+	case "tv":
+		path = ctx.ApplyTemplate(renameTpl.TVFolder) + "/" + ctx.ApplyTemplate(renameTpl.TVFile)
+	default:
+		path = ctx.ApplyTemplate(renameTpl.AVFolder) + "/" + ctx.ApplyTemplate(renameTpl.AVFile)
+	}
+	// 剧集需要插入 Season 目录（如果模板没有包含）
+	if media.MediaType == "tv" && parsed.Season > 0 && !strings.Contains(path, "Season") {
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) == 2 {
+			path = parts[0] + "/" + fmt.Sprintf("Season %02d", parsed.Season) + "/" + parts[1]
+		}
+	}
+	return sanitizePath(path)
 }
 
 // titleFirstLetter 取标题首字母：英文取首字母，中文取拼音首字母（巴→B），数字为 #
@@ -774,6 +814,23 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	// 加载替换规则
 	replaceRules := loadReplaceRules()
 
+	// 加载重命名模板配置
+	if v := modelSettingValue("org-rename"); v != "" {
+		var saved RenameConfig
+		if json.Unmarshal([]byte(v), &saved) == nil {
+			renameTpl = &saved
+		}
+	} else {
+		renameTpl = &RenameConfig{
+			MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+			MovieFile:   "{title}.{resource_pix}.{resource_type}-{resource_team}{ext}",
+			TVFolder:    "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+			TVFile:      "{title} - {season_episode}.{resource_pix}.{resource_type}-{resource_team}{ext}",
+			AVFolder:    "{first_letter}-{title}-{year}",
+			AVFile:      "{title}{ext}",
+		}
+	}
+
 	// 库根绝对路径（去重记录的网盘验证用；OpenAPI 通道取不到则跳过验证）
 	libAbs := ""
 	if ops.cookie != "" {
@@ -1041,8 +1098,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 
 	// 不存在 → 分类 + 移动到我的影视库
 	category := classifyMedia(media)
-	ext := pathExt(mainVideo.Name)
-	newPath := buildNewName(media, parsed, ext)
+	newPath := buildNewNameWithTemplate(media, parsed, mainVideo.Name)
 	targetDir := category + "/" + pathDir(newPath)
 
 	_ = targetDir // 目标目录在下方按新结构创建（根目录 + 季目录）
@@ -1278,8 +1334,7 @@ func organizeIdentifiedFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, repl
 	}
 
 	category := mainResult.Category
-	ext := pathExt(f.Name)
-	newPath := buildNewName(media, parsed, ext)
+	newPath := buildNewNameWithTemplate(media, parsed, f.Name)
 	targetDir := category + "/" + pathDir(newPath)
 
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
@@ -1379,8 +1434,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 
 	// 分类 + 移动到影视库
 	category := classifyMedia(media)
-	ext := pathExt(f.Name)
-	newPath := buildNewName(media, parsed, ext)
+	newPath := buildNewNameWithTemplate(media, parsed, f.Name)
 	targetDir := category + "/" + pathDir(newPath)
 
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
@@ -1446,4 +1500,13 @@ func isEpisodeOnly(title string) bool {
 	// ep01, e01, 01, 1
 	cleaned := strings.TrimPrefix(strings.TrimPrefix(t, "ep"), "e")
 	return isAllDigits(cleaned) && len(cleaned) <= 4
+}
+
+// modelSettingValue 从 DB Setting 表读配置值（organize.go 内用，不走 Handler）
+func modelSettingValue(key string) string {
+	var s model.Setting
+	if err := model.DB.Where("`key` = ?", key).First(&s).Error; err == nil {
+		return s.Value
+	}
+	return ""
 }

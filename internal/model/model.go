@@ -104,6 +104,7 @@ type CategoryRule struct {
 	OriginalLanguage string `json:"original_language" gorm:"size:100"`  // 原语言，如 "zh,cn,bo,za"
 	OriginCountry    string `json:"origin_country" gorm:"size:100"`     // 原产地，如 "CN,TW,HK"
 	Ext              string `json:"ext" gorm:"size:100"`                // 文件后缀，如 "iso"
+	CustomRegex      string `json:"custom_regex" gorm:"size:500"`        // 自定义正则（匹配标题或原名）
 
 	IsDefault bool `json:"is_default" gorm:"default:false"`             // 是否兜底（未匹配任何分类时归入）
 	Priority  int  `json:"priority" gorm:"default:0"`                   // 优先级，从小到大，先匹配到先停止
@@ -117,6 +118,7 @@ type WashRule struct {
 	MediaType string `json:"media_type" gorm:"size:20"`                 // movie, tv（空=匹配所有）
 	Category  string `json:"category" gorm:"size:100"`                  // 匹配二级分类名，逗号分隔（空=所有）
 	PriorityLevel string `json:"priority_level" gorm:"type:text"`       // JSON 数组，优先级规则
+	OldVersionTarget string `json:"old_version_target" gorm:"size:20;default:'redundant'"` // 旧版去向: redundant/existing/delete
 }
 
 // MediaLibrary 已整理的媒体记录（用于去重）
