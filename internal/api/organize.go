@@ -562,6 +562,107 @@ func titleFirstLetter(title string) string {
 	return "0"
 }
 
+// checkByCloudSHA1 直接查网盘媒体库目标目录的 SHA1 去重（不依赖本地缓存表）
+// 流程：根据 TMDB ID 计算目标目录路径 → 去网盘列出该目录的文件 → 比对 SHA1
+// 返回 true=已存在 / false=不存在或目录为空
+func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs string, currentSHA1 string) bool {
+	if ops.cookie == "" || libAbs == "" || currentSHA1 == "" {
+		return false // 条件不足，不判已存在（宁可重复入库也不误判）
+	}
+
+	// 计算目标目录（用与 buildNewName 相同的目录规则）
+	firstLetter := titleFirstLetter(media.Title)
+	year := media.Year
+	if year == "" {
+		year = "0000"
+	}
+	folderName := fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+	absDir := strings.TrimSuffix(libAbs, "/") + "/" + folderName
+
+	// 查目标目录 cid
+	cid, ok := cloudPathCid(ops.cookie, absDir)
+	if !ok {
+		return false // 目录不存在 → 新片
+	}
+
+	// 列出目录下的文件
+	body, err := httpGet115UA("https://webapi.115.com/files",
+		url.Values{
+			"aid":      {"1"},
+			"cid":      {cid},
+			"show_dir": {"1"},
+			"limit":    {"50"},
+			"format":   {"json"},
+		}, ops.cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return false // 查询失败，不判已存在
+	}
+	var r struct {
+		State bool                      `json:"state"`
+		Data  []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(body, &r) != nil || !r.State {
+		return false
+	}
+
+	// 比对 SHA1：目录里有任何文件的 SHA1 与当前文件相同 → 已存在
+	for _, d := range r.Data {
+		if fmt.Sprint(d["f"]) != "1" {
+			continue // 只看文件
+		}
+		sha1 := fmt.Sprint(d["sha"])
+		if sha1 == "<nil>" {
+			continue
+		}
+		if strings.EqualFold(sha1, currentSHA1) {
+			return true
+		}
+	}
+	return false // 目录存在但没有相同 SHA1 的文件 → 可能是不同版本/不同季
+}
+
+// cloudDirHasVideos 检查网盘目录下是否有视频文件（空目录或不存在都返回 false）
+func cloudDirHasVideos(cookie, absPath string) bool {
+	cid, ok := cloudPathCid(cookie, absPath)
+	if !ok {
+		return false
+	}
+	body, err := httpGet115UA("https://webapi.115.com/files",
+		url.Values{
+			"aid":      {"1"},
+			"cid":      {cid},
+			"show_dir": {"1"},
+			"limit":    {"20"},
+			"format":   {"json"},
+		}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return true
+	}
+	var r struct {
+		State bool                      `json:"state"`
+		Data  []map[string]interface{} `json:"data"`
+		Count int                       `json:"count"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return true
+	}
+	if !r.State || r.Count == 0 {
+		return false
+	}
+	for _, d := range r.Data {
+		if fmt.Sprint(d["f"]) == "1" {
+			name := fmt.Sprint(d["n"])
+			ext := strings.ToLower(pathExt(name))
+			for _, ve := range []string{".mp4", ".mkv", ".ts", ".avi", ".mov", ".rmvb", ".webm", ".flv", ".m2ts", ".wmv", ".mpg", ".iso"} {
+				if ext == ve {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // sha1ExistsInLibrary 文件 sha1 是否已存在于媒体库台账（同一文件不同命名也能识别）
 func sha1ExistsInLibrary(sha1 string) bool {
 	if sha1 == "" {
@@ -1064,37 +1165,26 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 
 	onLog(fmt.Sprintf("✦ 识别成功: %s/ → %s (%s) [%s/tmdb=%d]", dir.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
 
-	// sha1 去重（快路径）：主视频文件已在媒体库中（同一文件不同命名也算）
-	if sha1ExistsInLibrary(mainVideo.Sha1) {
+	// 直接查网盘去重（不依赖本地缓存表，不会过期）
+	// 检查网盘目标目录里是否有相同 SHA1 的文件
+	if checkByCloudSHA1(ops, media, cfg, libAbs, mainVideo.Sha1) {
 		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-			onLog(fmt.Sprintf("✗ %s/ - sha1去重移动失败: %v", dir.Name, err))
+			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 		} else {
-			onLog(fmt.Sprintf("○ %s/ - 文件sha1已存在媒体库，已移到已存在目录（%s…）", dir.Name, mainVideo.Sha1[:8]))
+			onLog(fmt.Sprintf("○ %s/ → 已存在: %s (%s)，已移到已存在目录", dir.Name, media.Title, media.Year))
 		}
 		for _, vf := range videoFiles {
 			results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Title: media.Title, Year: media.Year, MediaType: media.MediaType,
-				Message: "文件sha1已存在媒体库"})
+				Message: "网盘已有相同文件"})
 		}
 		return results
 	}
 
-	// 检查是否已存在（含洗版判定）
+	// 洗版判定：本地记录命中且新版更优时替换（保留洗版逻辑，用本地记录）
 	if rec, ok := lookupMediaRecord(media); ok {
-		targetDirForWash := rec.TargetPath
-		// 洗版：新版更好 → 旧版移冗余后继续正常入库流程
-		if tryWashReplace(ops, cfg, media, mainVideo.Name, targetDirForWash, onLog) {
+		if tryWashReplace(ops, cfg, media, mainVideo.Name, rec.TargetPath, onLog) {
 			// 旧版已让位，落入下方正常入库
-		} else {
-			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
-			} else {
-				onLog(fmt.Sprintf("○ %s/ → 已存在: %s (%s)，已移到已存在目录", dir.Name, media.Title, media.Year))
-			}
-			for _, vf := range videoFiles {
-				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Title: media.Title, Year: media.Year, MediaType: media.MediaType,
-					Message: "已存在（洗版判定：保留库内版本）"})
-			}
-			return results
+			_ = rec
 		}
 	}
 
@@ -1387,13 +1477,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	if len(replaceRules) > 0 {
 		name = applyReplaceRules(name, replaceRules)
 	}
-	// sha1 去重快路径：文件已在媒体库中，无需识别
-	if sha1ExistsInLibrary(f.Sha1) {
-		ops.moveFiles(cfg.Existing, []string{f.Fid})
-		moveSiblingAttachments(ops, cfg.Pending, baseName(f.Name), "", cfg.Existing, false, onLog)
-		onLog(fmt.Sprintf("○ %s - 文件sha1已存在媒体库，已移到已存在目录（%s…）", f.Name, f.Sha1[:8]))
-		return OrganizeResult{FileName: f.Name, Status: "exists", Message: "文件sha1已存在媒体库"}
-	}
+	// SHA1 去重移到 TMDB 识别后（需要 media 信息来计算目标目录）
 	onLog(fmt.Sprintf("▶ 开始识别: %s", f.Name))
 	parsed := parseFileName(name)
 	oldBase := baseName(f.Name)
@@ -1425,8 +1509,8 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 
 	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s) [%s/tmdb=%d]", f.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
 
-	// 检查是否已存在（带网盘验证，失效记录自动清除）
-	if checkExistsVerified(ops, media, cfg, libAbs) {
+	// 直接查网盘去重（不依赖本地缓存表）
+	if checkByCloudSHA1(ops, media, cfg, libAbs, f.Sha1) {
 		ops.moveFiles(cfg.Existing, []string{f.Fid})
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Existing, false, onLog)
 		result.Status = "exists"
@@ -1578,50 +1662,3 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	return results, successCount
 }
 
-// cloudDirHasVideos 检查网盘目录下是否有视频文件（空目录或不存在都返回 false）
-func cloudDirHasVideos(cookie, absPath string) bool {
-	// 先查目录是否存在
-	cid, ok := cloudPathCid(cookie, absPath)
-	if !ok {
-		return false // 目录不存在
-	}
-	// 列出目录内容，检查是否有视频文件
-	body, err := httpGet115UA("https://webapi.115.com/files",
-		url.Values{
-			"aid":      {"1"},
-			"cid":      {cid},
-			"show_dir": {"1"},
-			"limit":    {"20"},
-			"format":   {"json"},
-		}, cookie, ua115Unified(), 15*time.Second)
-	if err != nil {
-		return true // 查询失败保守按有文件
-	}
-	var r struct {
-		State bool                      `json:"state"`
-		Data  []map[string]interface{} `json:"data"`
-		Count int                       `json:"count"`
-	}
-	if json.Unmarshal(body, &r) != nil {
-		return true
-	}
-	if !r.State {
-		return false
-	}
-	if r.Count == 0 {
-		return false // 空目录
-	}
-	// 检查是否有视频文件
-	for _, d := range r.Data {
-		if fmt.Sprint(d["f"]) == "1" {
-			name := fmt.Sprint(d["n"])
-			ext := strings.ToLower(pathExt(name))
-			for _, ve := range []string{".mp4", ".mkv", ".ts", ".avi", ".mov", ".rmvb", ".webm", ".flv", ".m2ts", ".wmv", ".mpg", ".iso"} {
-				if ext == ve {
-					return true
-				}
-			}
-		}
-	}
-	return false // 有内容但没有视频文件
-}
