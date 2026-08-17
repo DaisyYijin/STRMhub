@@ -12,6 +12,8 @@ import (
 
 	"strmhub/internal/model"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/mozillazg/go-pinyin"
 )
 
@@ -1509,4 +1511,61 @@ func modelSettingValue(key string) string {
 		return s.Value
 	}
 	return ""
+}
+
+// executeOrganizeWithConfig 用指定的 OrgConfig 执行整理（转存目录等场景）
+func (h *Handler) executeOrganizeWithConfig(cfg *OrgConfig, syncAfter bool) ([]gin.H, []OrganizeResult, error) {
+	ops, err := h.newPan115Ops()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	logFn := func(msg string) { log.Println(msg) }
+	orgResults, successCount := runOrganizeEngineWithConfig(ops, cfg, logFn)
+
+	steps := []gin.H{}
+	totalFiles := len(orgResults)
+	existsCount, failedCount := 0, 0
+	for _, r := range orgResults {
+		if r.Status == "exists" {
+			existsCount++
+		}
+		if r.Status == "failed" {
+			failedCount++
+		}
+	}
+	steps = append(steps, gin.H{"step": "整理（转存目录）", "status": "完成",
+		"message": fmt.Sprintf("共 %d 个文件，成功 %d，已存在 %d，失败 %d", totalFiles, successCount, existsCount, failedCount)})
+
+	return steps, orgResults, nil
+}
+
+// runOrganizeEngineWithConfig 用指定的 OrgConfig 运行整理引擎
+func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]OrganizeResult, int) {
+	results := []OrganizeResult{}
+	successCount := 0
+
+	tc, err := loadTmdbClient(nil)
+	if err != nil {
+		onLog("✗ TMDB 配置错误: " + err.Error())
+		return results, 0
+	}
+
+	replaceRules := loadReplaceRules()
+	topEntries, err := listPendingTopLevel(ops, cfg.Pending)
+	if err != nil {
+		onLog("✗ 遍历转存目录失败: " + err.Error())
+		return results, 0
+	}
+	if len(topEntries) == 0 {
+		onLog("○ 转存目录为空")
+		return results, 0
+	}
+
+	onLog(fmt.Sprintf("▶ 转存目录发现 %d 个条目，开始整理...", len(topEntries)))
+	for _, entry := range topEntries {
+		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, "", onLog, 0, &successCount)...)
+		time.Sleep(300 * time.Millisecond)
+	}
+	return results, successCount
 }
