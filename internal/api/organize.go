@@ -806,8 +806,39 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 	onLog(fmt.Sprintf("▶ 开始识别: %s/（样本: %s）", dir.Name, mainVideo.Name))
 	parsed := parseFileName(name)
+
+	// 文件名无法提取标题 → 用目录名识别（目录名通常比文件名规范）
+	// 场景：/西游记.1987/ep01.mkv — 文件名只有集数，目录名有标题和年份
+	useDirName := false
+	if parsed.Title == "" || isEpisodeOnly(parsed.Title) {
+		dirParsed := parseFileName(dir.Name)
+		if dirParsed.Title != "" && !isEpisodeOnly(dirParsed.Title) {
+			onLog(fmt.Sprintf("▣ 文件名 %q 无法识别，改用目录名 %q", name, dir.Name))
+			// 用目录名做识别，但保留文件名解析出的季集号
+			if parsed.Season == 0 {
+				parsed.Season = dirParsed.Season
+			}
+			if parsed.Episode == 0 {
+				parsed.Episode = dirParsed.Episode
+			}
+			if parsed.Year == "" {
+				parsed.Year = dirParsed.Year
+			}
+			parsed.IsTV = dirParsed.IsTV || parsed.IsTV
+			parsed = dirParsed // 用目录名的标题/年份
+			// 恢复文件名中的季集号（如果目录名没有的话）
+			if parsed.Season == 0 && parseFileName(name).Season > 0 {
+				parsed.Season = parseFileName(name).Season
+			}
+			if parsed.Episode == 0 && parseFileName(name).Episode > 0 {
+				parsed.Episode = parseFileName(name).Episode
+			}
+			useDirName = true
+		}
+	}
+
 	if parsed.Title == "" {
-		// 无法识别，整个目录移到冗余
+		// 文件名和目录名都无法识别，移到冗余
 		moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
 		onLog(fmt.Sprintf("○ %s/ - 无法提取标题，已移到冗余", dir.Name))
 		return results
@@ -816,13 +847,30 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
 	if err != nil || media == nil {
-		msg := "TMDB 未找到匹配"
-		if err != nil {
-			msg = "TMDB 识别失败: " + err.Error()
+		// 文件名识别失败 → 如果还没试过目录名，用目录名再识别一次
+		if !useDirName {
+			dirParsed := parseFileName(dir.Name)
+			if dirParsed.Title != "" {
+				onLog(fmt.Sprintf("▣ 文件名识别失败，改用目录名 %q 重试", dir.Name))
+				// 保留文件名的季集号
+				if dirParsed.Season == 0 {
+					dirParsed.Season = parsed.Season
+				}
+				if dirParsed.Episode == 0 {
+					dirParsed.Episode = parsed.Episode
+				}
+				media, err = tc.recognize(dirParsed)
+			}
 		}
-		moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
-		onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
-		return results
+		if err != nil || media == nil {
+			msg := "TMDB 未找到匹配"
+			if err != nil {
+				msg = "TMDB 识别失败: " + err.Error()
+			}
+			moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
+			onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
+			return results
+		}
 	}
 
 	onLog(fmt.Sprintf("✦ 识别成功: %s/ → %s (%s) [%s/tmdb=%d]", dir.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
@@ -1258,4 +1306,15 @@ func pathBase(p string) string {
 		return p[idx+1:]
 	}
 	return p
+}
+
+// isEpisodeOnly 判断标题是否只是集数/编号（如 "ep01"、"E05"、"01"）
+func isEpisodeOnly(title string) bool {
+	t := strings.ToLower(strings.TrimSpace(title))
+	if t == "" {
+		return true
+	}
+	// ep01, e01, 01, 1
+	cleaned := strings.TrimPrefix(strings.TrimPrefix(t, "ep"), "e")
+	return isAllDigits(cleaned) && len(cleaned) <= 4
 }
