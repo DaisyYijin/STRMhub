@@ -61,34 +61,51 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		payload["wp_path_id"] = req.Target
 	}
 
-	// 用 web 版 API（不加密，Cookie 认证）
+	// 用 web 版离线下载接口（Cookie 认证，表单提交）
 	form := url.Values{"url": {req.URL}}
 	if req.Target != "" {
 		form.Set("wp_path_id", req.Target)
 	}
-	body, err := post115Form("https://clouddownload.115.com/web/lixian/?ac=add_task_url", form, cookie, ua115Unified(), 20*time.Second)
+	// 先尝试 115.com 的 web 离线下载接口
+	body, err := post115Form("https://115.com/web/lixian/?ac=add_task_url", form, cookie, ua115Unified(), 20*time.Second)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "离线下载请求失败: " + err.Error()})
 		return
 	}
+	log.Printf("[上传] 离线下载响应: %s", truncateStr(string(body), 300))
 
-	// 解析响应
+	// 解析响应（兼容多种错误字段名）
 	var resp struct {
-		State bool   `json:"state"`
-		Error string `json:"error"`
-		ErrNo int    `json:"errno"`
-		Data  json.RawMessage `json:"data"`
+		State   bool   `json:"state"`
+		Error   string `json:"error"`
+		ErrNo   int    `json:"errno"`
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errMsg"`
+		Message string `json:"message"`
+		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解析响应失败: " + truncateStr(string(body), 200)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "解析响应失败: " + truncateStr(string(body), 300)})
 		return
 	}
 	if !resp.State {
 		errMsg := resp.Error
+		if errMsg == "" {
+			errMsg = resp.ErrMsg
+		}
+		if errMsg == "" {
+			errMsg = resp.Message
+		}
 		if errMsg == "" && resp.ErrNo != 0 {
 			errMsg = fmt.Sprintf("错误码 %d", resp.ErrNo)
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "115 拒绝: " + errMsg})
+		if errMsg == "" && resp.ErrCode != 0 {
+			errMsg = fmt.Sprintf("错误码 %d", resp.ErrCode)
+		}
+		if errMsg == "" {
+			errMsg = "未知原因（响应: " + truncateStr(string(body), 100) + "）"
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
 		return
 	}
 
