@@ -401,6 +401,30 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 		return media, err
 	}
 
+	// 第 1.5 轮：年份搜索无结果 → 去掉年份宽搜索，按年份最近匹配
+	// 场景：文件名写 2018 但 TMDB 记为 2017（跨年上映/首播）
+	if parsed.Year != "" {
+		var wide *TmdbMedia
+		if parsed.IsTV {
+			wide, err = tc.SearchTV(parsed.Title, "")
+		} else {
+			wide, err = tc.SearchMovie(parsed.Title, "")
+		}
+		if err == nil && wide != nil {
+			// 如果唯一结果或年份差 ≤1 年，接受
+			yearDiff := absYearDiff(wide.Year, parsed.Year)
+			if yearDiff <= 1 {
+				log.Printf("[整理] 年份宽搜索命中: %q 年份=%s（文件名=%s，差 %d 年）",
+					wide.Title, wide.Year, parsed.Year, yearDiff)
+				return wide, nil
+			}
+			// 如果多个结果，尝试找年份最接近的（在 SearchXxx 内已取第一个，
+			// 这里只处理唯一结果的情况；多结果的精确匹配需要改 SearchXxx 返回列表）
+			log.Printf("[整理] 年份宽搜索: 找到 %q 年份=%s，与文件名 %s 差 %d 年，跳过",
+				wide.Title, wide.Year, parsed.Year, yearDiff)
+		}
+	}
+
 	// 第二轮：清洗后的标题重试（去掉特殊字符/残留标记，压紧空白）
 	cleaned := cleanSearchTitle(parsed.Title)
 	if cleaned != "" && cleaned != parsed.Title {
@@ -543,4 +567,18 @@ func cleanSearchTitle(title string) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(string(b)), " "))
+}
+
+// absYearDiff 计算两个年份字符串的绝对差值（解析失败返回 999）
+func absYearDiff(a, b string) int {
+	ai, err1 := strconv.Atoi(strings.TrimSpace(a))
+	bi, err2 := strconv.Atoi(strings.TrimSpace(b))
+	if err1 != nil || err2 != nil {
+		return 999
+	}
+	d := ai - bi
+	if d < 0 {
+		return -d
+	}
+	return d
 }
