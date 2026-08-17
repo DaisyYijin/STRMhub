@@ -198,8 +198,11 @@ func (tc *TmdbClient) getMovieDetails(id int) ([]string, error) {
 }
 
 // SearchTV 搜索电视剧
-func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
+func (tc *TmdbClient) SearchTV(query string, year string) (*TmdbMedia, error) {
 	params := map[string]string{"query": query}
+	if year != "" {
+		params["first_air_date_year"] = year // TMDB 剧集搜索的年份参数
+	}
 	body, err := tc.get("/search/tv", params)
 	if err != nil {
 		return nil, err
@@ -223,7 +226,7 @@ func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
-		log.Printf("[整理] 搜索 %q（TV）无结果", query)
+		log.Printf("[整理] 搜索 %q（TV，年份=%s）无结果", query, year)
 		return nil, nil
 	}
 	cands := make([]string, 0, 3)
@@ -239,16 +242,16 @@ func (tc *TmdbClient) SearchTV(query string) (*TmdbMedia, error) {
 	}
 	log.Printf("[整理] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
-	year := ""
+	resultYear := ""
 	if len(r.FirstAirDate) >= 4 {
-		year = r.FirstAirDate[:4]
+		resultYear = r.FirstAirDate[:4]
 	}
 	origCountry, _ := tc.getTVDetails(r.ID)
 	return &TmdbMedia{
 		TmdbID:       r.ID,
 		Title:        r.Name,
 		OriginalTitle: r.OriginalName,
-		Year:         year,
+		Year:         resultYear,
 		MediaType:    "tv",
 		GenreIDs:     r.GenreIDs,
 		Overview:     r.Overview,
@@ -383,14 +386,14 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 		if media != nil {
 			return media, nil
 		}
-		return tc.SearchTV(q)
+		return tc.SearchTV(q, parsed.Year)
 	}
 
 	// 第一轮：原始标题（剧集直接搜 TV）
 	var media *TmdbMedia
 	var err error
 	if parsed.IsTV {
-		media, err = tc.SearchTV(parsed.Title)
+		media, err = tc.SearchTV(parsed.Title, parsed.Year)
 	} else {
 		media, err = movieThenTV(parsed.Title)
 	}
@@ -403,7 +406,7 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	if cleaned != "" && cleaned != parsed.Title {
 		log.Printf("[整理] 首次搜索无结果，用清洗标题重试: %q → %q", parsed.Title, cleaned)
 		if parsed.IsTV {
-			media, err = tc.SearchTV(cleaned)
+			media, err = tc.SearchTV(cleaned, parsed.Year)
 		} else {
 			media, err = movieThenTV(cleaned)
 		}
@@ -423,7 +426,7 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 				p2.Year = parsed.Year
 			}
 			if parsed.IsTV {
-				return tc.SearchTV(p2.Title)
+				return tc.SearchTV(p2.Title, parsed.Year)
 			}
 			return movieThenTV(p2.Title)
 		}
