@@ -643,14 +643,14 @@ av:
         <div class="card">
           <div class="alert alert-info">监控上传：只上传 emby 生成的标准格式的媒体图片。</div>
           <div class="form-row"><div class="label">监控目录</div><div class="control"><input type="text" id="monitor-dir" placeholder="emby 媒体图片所在目录"></div></div>
-          <div class="form-row"><div class="label">上传目标目录</div><div class="control"><input type="text" id="monitor-target" placeholder="115 目标目录 cid"></div></div>
+          <div class="form-row"><div class="label">上传目标目录</div><div class="control"><input type="text" id="monitor-target" placeholder="目标目录 cid（可选，默认用接收文件夹）"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
         </div>
       </div>
       <div class="tab-panel" data-panel="ud-download">
         <div class="card">
-          <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="transfer-link" placeholder="支持115分享、磁力、ed2k、阿里云盘分享（自动秒传到115）"></div></div>
-          <div class="form-row"><div class="label">转存目录</div><div class="control"><input type="text" id="transfer-target" placeholder="115 目标目录 cid"></div></div>
+          <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="transfer-link" placeholder="115分享链接 / 磁力(magnet:) / ed2k / HTTP下载链接"></div></div>
+          <div class="form-row"><div class="label">转存目录</div><div class="control"><input type="text" id="transfer-target" placeholder="目标目录 cid（可选，默认用接收文件夹）"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
         </div>
         <div class="card" style="padding:0">
@@ -915,6 +915,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=45"></script>
+<script src="/js/app.js?v=46"></script>
 </body>
 </html>

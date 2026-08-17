@@ -120,6 +120,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
 
+		// 离线下载（磁力/ed2k/HTTP）
+		protected.POST("/offline/add", h.offlineAddTask)
+		protected.GET("/offline/tasks", h.offlineTaskList)
+
 		// 重置整理记录（清空 MediaLibrary 去重表，误判已存在时使用）
 		protected.POST("/organize/reset-records", func(c *gin.Context) {
 			var rec model.MediaLibrary

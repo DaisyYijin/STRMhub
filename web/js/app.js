@@ -690,7 +690,30 @@ function switchUDTab(tab) {
   document.querySelectorAll('#page-upload-download .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('#page-upload-download .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
 }
-function transfer() { toast('转存功能开发中'); }
+async function transfer() {
+  const url = document.getElementById('transfer-link').value.trim();
+  const target = document.getElementById('transfer-target').value.trim();
+  if (!url) { toast('请填写链接'); return; }
+
+  // 判断链接类型：115 分享 → /share/receive；磁力/ed2k/HTTP → /offline/add
+  const isShare = /115\.com\/s\//.test(url) || url.startsWith('115.com/s/');
+  const endpoint = isShare ? '/share/receive' : '/offline/add';
+  const body = isShare
+    ? { url, code: prompt('请输入提取码：') || '', target_cid: target }
+    : { url, target_cid: target };
+
+  if (isShare && !body.code) { toast('已取消'); return; }
+
+  toast(isShare ? '转存进行中...' : '离线下载任务提交中...');
+  try {
+    const d = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+    toast(d.message || '完成');
+    appendLog(`✓ ${isShare ? '分享转存' : '离线下载'}: ${d.message || ''}`);
+  } catch (e) {
+    toast('失败: ' + e.message);
+    appendLog(`✗ ${isShare ? '分享转存' : '离线下载'} 失败: ${e.message}`);
+  }
+}
 async function testProxy() {
   const url = document.getElementById('proxy-url').value.trim();
   if (!url) { toast('请先填写代理地址'); return; }
