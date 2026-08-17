@@ -87,10 +87,18 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 	}
 
 	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(req.URL, 60), linkType)
+
+	// 离线下载是异步的：提交后启动一个延迟检查协程，60 秒后触发增量
+	// （如果 115 秒传命中则文件已就位；否则等下载完成后的下一轮 cron 接管）
+	go func() {
+		time.Sleep(60 * time.Second)
+		h.triggerIncrementalAfterTransfer()
+	}()
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "离线下载任务已提交，可在 115 客户端或网页版查看进度",
+		"message": "离线下载任务已提交，下载完成后自动生成 STRM",
 		"type":    linkType,
-		"note":    "下载完成后由「自动整理+增量同步」接管",
+		"note":    "秒传命中约 1 分钟后 STRM 生成；新下载需等 115 下载完成后由定时任务接管",
 	})
 }
 
@@ -141,4 +149,29 @@ func classifyLink(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// triggerIncrementalAfterTransfer 转存/离线下载成功后立即触发增量同步
+// （协程内执行，不阻塞 HTTP 响应；等 3 秒让 115 服务端写完文件索引）
+func (h *Handler) triggerIncrementalAfterTransfer() {
+	time.Sleep(3 * time.Second)
+
+	if !fullSyncMu.TryLock() {
+		log.Printf("[上传] ○ 增量同步已跳过（已有任务运行中）")
+		return
+	}
+	defer fullSyncMu.Unlock()
+	beginTask("增量同步（转存触发）")
+	defer endTask()
+
+	p := h.incrParamsFromConfig()
+	log.Printf("[上传] ▶ 转存/下载后自动增量同步开始...")
+	start := time.Now()
+	sum, err := h.executeIncrementalSync(p)
+	if err != nil {
+		log.Printf("[上传] ✗ 自动增量同步失败: %v", err)
+		return
+	}
+	log.Printf("[上传] ✅ 自动增量同步完成，耗时 %s · STRM %d，附属 %d",
+		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
 }

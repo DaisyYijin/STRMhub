@@ -179,8 +179,14 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 
 	msg := fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
 	log.Printf("[上传] %s", msg)
+
+	// 转存成功后立即触发一次增量同步（不等下一轮 cron，30 秒内生成 STRM）
+	if success > 0 {
+		go h.triggerIncrementalAfterTransfer()
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": msg, "count": success, "failed": fail,
-		"note": "转存内容若在待整理目录，将由下一轮自动整理+增量同步接管"})
+		"note": "转存成功，增量同步已自动触发（约 30 秒后完成 STRM 生成）"})
 }
 
 // extractShareCode 从分享链接提取 share_code
