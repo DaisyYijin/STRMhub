@@ -76,9 +76,10 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 
 	// 解析响应（兼容多种错误字段名）
 	var resp struct {
-		State   bool   `json:"state"`
-		Error   string `json:"error"`
-		ErrNo   int    `json:"errno"`
+		State    bool   `json:"state"`
+		Error    string `json:"error"`
+		ErrorMsg string `json:"error_msg"`
+		ErrNo    int    `json:"errno"`
 		ErrCode int    `json:"errcode"`
 		ErrMsg  string `json:"errMsg"`
 		Message string `json:"message"`
@@ -89,7 +90,11 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		return
 	}
 	if !resp.State {
-		errMsg := resp.Error
+		// 按优先级取错误信息：error_msg > error > errMsg > message > 错误码
+		errMsg := resp.ErrorMsg
+		if errMsg == "" {
+			errMsg = resp.Error
+		}
 		if errMsg == "" {
 			errMsg = resp.ErrMsg
 		}
