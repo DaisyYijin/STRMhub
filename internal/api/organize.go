@@ -706,10 +706,12 @@ func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules [
 			return results
 		}
 		f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size, Sha1: entry.Sha1}
-		result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
-		results = append(results, result)
-		if result.Status == "success" {
-			*successCount++
+		result := processSingleFileWithSiblings(ops, cfg, tc, replaceRules, f, libAbs, onLog)
+		results = append(results, result...)
+		for _, r := range results {
+			if r.Status == "success" {
+				*successCount++
+			}
 		}
 		return results
 	}
@@ -960,6 +962,185 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	onLog(fmt.Sprintf("✓ %s/ → %s (%s) [%s/%s] → %s", dir.Name, media.Title, media.Year, category, media.MediaType, targetDir))
 
 	return results
+}
+
+// processSingleFileWithSiblings 散文件批量处理：识别第一个文件后，
+// 同前缀的其他散文件共享识别结果（一部剧 24 集只需 1 次 TMDB 调用）
+// 前缀判定：文件名去掉 EP/SxxExx/集数 部分后剩余部分相同
+func processSingleFileWithSiblings(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, libAbs string, onLog func(string)) []OrganizeResult {
+	// 先识别主文件
+	result := processSingleFile(ops, cfg, tc, replaceRules, f, libAbs, onLog)
+	if result.Status != "success" {
+		return []OrganizeResult{result}
+	}
+
+	// 识别成功 → 列出待整理目录中的其他散文件，找同前缀的视频
+	mainPrefix := extractSeriesPrefix(f.Name)
+	if mainPrefix == "" {
+		return []OrganizeResult{result} // 无法提取前缀，不批量处理
+	}
+
+	entries, _, err := ops.listEntries(cfg.Pending, 0)
+	if err != nil {
+		return []OrganizeResult{result} // 列表失败，只处理主文件
+	}
+
+	var siblings []remoteFile
+	for _, e := range entries {
+		if fmt.Sprint(e["f"]) != "1" { // 只看文件
+			continue
+		}
+		name := fmt.Sprint(e["n"])
+		if name == f.Name {
+			continue // 跳过主文件（已处理）
+		}
+		if classifyFile(name) != FileTypeVideo {
+			continue
+		}
+		if extractSeriesPrefix(name) == mainPrefix {
+			siblings = append(siblings, remoteFile{
+				Fid:  fmt.Sprint(e["fid"]),
+				Name: name,
+				Size: 0,
+				Sha1: fmt.Sprint(e["sha"]),
+			})
+		}
+	}
+
+	if len(siblings) == 0 {
+		return []OrganizeResult{result} // 没有同前缀的其他文件
+	}
+
+	onLog(fmt.Sprintf("▣ 发现 %d 个同前缀散文件，共享识别结果批量处理", len(siblings)))
+
+	// 构建与主文件相同的目标（分类/目录/媒体信息从 result 提取不行，
+	// 需要重新构造——用主文件的 parsed 和 media）
+	// 简化：直接用 processDir 逻辑处理剩余文件
+	var allResults = []OrganizeResult{result}
+	successCount := 1
+
+	for _, sib := range siblings {
+		sibResult := organizeIdentifiedFile(ops, cfg, tc, replaceRules, sib, libAbs, result, onLog)
+		allResults = append(allResults, sibResult)
+		if sibResult.Status == "success" {
+			successCount++
+		}
+	}
+
+	onLog(fmt.Sprintf("✓ 散文件批量完成: 共 %d 个文件（成功 %d）", len(allResults), successCount))
+	return allResults
+}
+
+// extractSeriesPrefix 提取剧集文件名的系列前缀（去掉 EP/SxxExx/集数部分）
+// "BLJXD.2026.EP01.HD1080P..." → "BLJXD.2026"
+// "Show.Name.S01E05.720p..." → "Show.Name"
+func extractSeriesPrefix(name string) string {
+	base := baseName(name)
+	// 按 . 分割，找 EP/SxxExx 位置截断
+	parts := strings.Split(base, ".")
+	for i, part := range parts {
+		upper := strings.ToUpper(part)
+		// 匹配 EP01, E01, S01E05, S01E05E06 等
+		if len(upper) >= 3 {
+			if strings.HasPrefix(upper, "EP") && len(upper) <= 5 && isAllDigits(upper[2:]) {
+				return strings.Join(parts[:i], ".")
+			}
+			if strings.HasPrefix(upper, "S") && strings.Contains(upper, "E") && len(upper) <= 10 {
+				return strings.Join(parts[:i], ".")
+			}
+		}
+		// 匹配纯数字段（可能是集数）
+		if isAllDigits(part) && len(part) <= 3 && i > 0 {
+			// 前一段不是年份（4位）则认为这是集数
+			if !isAllDigits(parts[i-1]) || len(parts[i-1]) != 4 {
+				return strings.Join(parts[:i], ".")
+			}
+		}
+	}
+	return base // 没找到 EP 标记，返回整个基名
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// organizeIdentifiedFile 用已识别的媒体信息处理单个散文件（跳过 TMDB 识别）
+func organizeIdentifiedFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, libAbs string, mainResult OrganizeResult, onLog func(string)) OrganizeResult {
+	result := OrganizeResult{FileName: f.Name}
+
+	// sha1 去重
+	if sha1ExistsInLibrary(f.Sha1) {
+		ops.moveFiles(cfg.Existing, []string{f.Fid})
+		onLog(fmt.Sprintf("○ %s - sha1已存在，已移到已存在目录", f.Name))
+		return OrganizeResult{FileName: f.Name, Status: "exists", Message: "sha1已存在"}
+	}
+
+	// 解析文件名获取季集号
+	name := f.Name
+	if len(replaceRules) > 0 {
+		name = applyReplaceRules(name, replaceRules)
+	}
+	parsed := parseFileName(name)
+
+	// 从主结果提取媒体信息
+	// 重新调 recognize 太浪费——用 media 重建
+	// 简化：直接构造目标路径
+	media := &TmdbMedia{
+		Title:     mainResult.Title,
+		Year:      mainResult.Year,
+		MediaType: mainResult.MediaType,
+		TmdbID:    mainResult.TmdbID,
+	}
+
+	category := mainResult.Category
+	ext := pathExt(f.Name)
+	newPath := buildNewName(media, parsed, ext)
+	targetDir := category + "/" + pathDir(newPath)
+
+	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
+	if err != nil {
+		result.Status = "failed"
+		result.Message = "创建目录失败: " + err.Error()
+		return result
+	}
+
+	if err := ops.moveFiles(targetCid, []string{f.Fid}); err != nil {
+		result.Status = "failed"
+		result.Message = "移动失败: " + err.Error()
+		return result
+	}
+
+	// 重命名为标准名
+	if stdName := pathBase(newPath); stdName != "" && stdName != f.Name {
+		if err := ops.rename(f.Fid, stdName); err != nil {
+			onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", f.Name, err))
+		} else {
+			onLog(fmt.Sprintf("✓ 重命名 %s → %s", f.Name, stdName))
+		}
+	}
+
+	result.Category = category
+	result.TargetDir = targetDir
+	result.TmdbID = mainResult.TmdbID
+	result.Title = mainResult.Title
+	result.Year = mainResult.Year
+	result.MediaType = mainResult.MediaType
+	result.Status = "success"
+	result.Message = fmt.Sprintf("→ %s (%s) [%s] → %s", mainResult.Title, mainResult.Year, category, targetDir)
+	onLog(fmt.Sprintf("✓ %s → %s", f.Name, stdPath(newPath)))
+	return result
+}
+
+func stdPath(p string) string {
+	return p
 }
 
 // processSingleFile 处理待整理目录下的顶层单独视频文件
