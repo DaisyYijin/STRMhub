@@ -22,8 +22,9 @@ import (
 // POST /offline/add  body: {"url":"magnet:?xt=...", "target_cid":"可选"}
 func (h *Handler) offlineAddTask(c *gin.Context) {
 	var req struct {
-		URL    string `json:"url"`
-		Target string `json:"target_cid"`
+		URL      string `json:"url"`
+		Target   string `json:"target_cid"`
+		Organize bool   `json:"organize"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写链接"})
@@ -90,10 +91,12 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 
 	// 离线下载是异步的：提交后启动一个延迟检查协程，60 秒后触发增量
 	// （如果 115 秒传命中则文件已就位；否则等下载完成后的下一轮 cron 接管）
-	go func() {
-		time.Sleep(60 * time.Second)
-		h.triggerIncrementalAfterTransfer()
-	}()
+	if req.Organize {
+		go func() {
+			time.Sleep(60 * time.Second)
+			h.triggerOrganizeAndSync()
+		}()
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "离线下载任务已提交，下载完成后自动生成 STRM",
@@ -149,6 +152,38 @@ func classifyLink(raw string) string {
 	default:
 		return ""
 	}
+}
+
+// triggerOrganizeAndSync 转存后自动「整理+增量同步」（整理优先，增量收尾）
+func (h *Handler) triggerOrganizeAndSync() {
+	time.Sleep(3 * time.Second)
+
+	if !fullSyncMu.TryLock() {
+		log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中）")
+		return
+	}
+	defer fullSyncMu.Unlock()
+	beginTask("自动整理+增量（转存触发）")
+	defer endTask()
+
+	start := time.Now()
+	log.Printf("[上传] ▶ 转存后自动整理+增量同步开始...")
+
+	// 整理
+	_, _, orgErr := h.executeOrganize(false)
+	if orgErr != nil {
+		log.Printf("[上传] ○ 整理跳过: %v", orgErr)
+	}
+
+	// 增量同步
+	p := h.incrParamsFromConfig()
+	sum, err := h.executeIncrementalSync(p)
+	if err != nil {
+		log.Printf("[上传] ✗ 自动增量同步失败: %v", err)
+		return
+	}
+	log.Printf("[上传] ✅ 自动整理+增量完成，耗时 %s · STRM %d，附属 %d",
+		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
 }
 
 // triggerIncrementalAfterTransfer 转存/离线下载成功后立即触发增量同步

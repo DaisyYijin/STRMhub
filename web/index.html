@@ -649,15 +649,9 @@ av:
       </div>
       <div class="tab-panel" data-panel="ud-download">
         <div class="card">
-          <div class="form-row"><div class="label">分享链接</div><div class="control"><input type="text" id="transfer-link" placeholder="115分享链接 / 磁力(magnet:) / ed2k / HTTP下载链接"></div></div>
-          <div class="form-row"><div class="label">转存目录</div><div class="control"><input type="text" id="transfer-target" placeholder="目标目录 cid（可选，默认用接收文件夹）"></div></div>
+          <div class="form-row"><div class="label">链接</div><div class="control"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()"></div></div>
+          <div class="form-row"><div class="label">转存后整理</div><div class="control"><div class="segmented-control" id="transfer-organize-switch"><div class="seg-item active" data-value="true" onclick="setTransferOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="setTransferOrganize(false)">关闭</div></div><span style="font-size:12px;color:var(--text-3);margin-left:8px">开启后自动识别入库并生成 STRM</span></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
-        </div>
-        <div class="card" style="padding:0">
-          <table>
-            <thead><tr><th>任务</th><th>状态</th><th>进度</th><th>时间</th><th>操作</th></tr></thead>
-            <tbody id="transfer-tbody"><tr><td colspan="5" style="text-align:center;color:var(--text-3)">暂无转存任务</td></tr></tbody>
-          </table>
         </div>
       </div>
     </div>
@@ -915,6 +909,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=46"></script>
+<script src="/js/app.js?v=47"></script>
 </body>
 </html>

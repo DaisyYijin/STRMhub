@@ -690,28 +690,54 @@ function switchUDTab(tab) {
   document.querySelectorAll('#page-upload-download .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('#page-upload-download .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
 }
+let transferOrganizeVal = true;
+function setTransferOrganize(v) {
+  transferOrganizeVal = v;
+  document.querySelectorAll('#transfer-organize-switch .seg-item').forEach(el => {
+    el.classList.toggle('active', String(el.dataset.value) === String(v));
+  });
+}
+
 async function transfer() {
   const url = document.getElementById('transfer-link').value.trim();
-  const target = document.getElementById('transfer-target').value.trim();
   if (!url) { toast('请填写链接'); return; }
 
-  // 判断链接类型：115 分享 → /share/receive；磁力/ed2k/HTTP → /offline/add
-  const isShare = /115\.com\/s\//.test(url) || url.startsWith('115.com/s/');
+  // 自动判断链接类型
+  const isShare = url.includes('115.com/s/');
   const endpoint = isShare ? '/share/receive' : '/offline/add';
-  const body = isShare
-    ? { url, code: prompt('请输入提取码：') || '', target_cid: target }
-    : { url, target_cid: target };
 
-  if (isShare && !body.code) { toast('已取消'); return; }
+  // 115 分享链接自动从 URL 提取提取码（?password=xxx 或 #xxx）
+  let code = '';
+  let cleanUrl = url;
+  if (isShare) {
+    const m = url.match(/[?#](?:password=)?([a-zA-Z0-9]{4,})/);
+    if (m) { code = m[1]; cleanUrl = url.split(/[?#]/)[0]; }
+    if (!code) {
+      code = prompt('115 分享需要提取码，请输入：') || '';
+      if (!code) { toast('已取消'); return; }
+    }
+  }
 
-  toast(isShare ? '转存进行中...' : '离线下载任务提交中...');
+  const body = {
+    url: cleanUrl,
+    code: code,
+    target_cid: '',
+    organize: transferOrganizeVal,
+  };
+
+  toast(isShare ? '转存进行中...' : '离线下载提交中...');
   try {
     const d = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
     toast(d.message || '完成');
-    appendLog(`✓ ${isShare ? '分享转存' : '离线下载'}: ${d.message || ''}`);
+    appendLog(`✓ ${isShare ? '转存' : '离线下载'}: ${d.message || ''}`);
+    // 清空输入框
+    document.getElementById('transfer-link').value = '';
+    if (transferOrganizeVal) {
+      appendLog('⏳ 自动整理+增量同步将在转存完成后触发...');
+    }
   } catch (e) {
     toast('失败: ' + e.message);
-    appendLog(`✗ ${isShare ? '分享转存' : '离线下载'} 失败: ${e.message}`);
+    appendLog(`✗ ${isShare ? '转存' : '离线下载'} 失败: ${e.message}`);
   }
 }
 async function testProxy() {

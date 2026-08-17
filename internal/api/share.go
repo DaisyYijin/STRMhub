@@ -27,9 +27,10 @@ import (
 // POST /share/receive  body: {"url":"https://115.com/s/xxx", "code":"提取码", "target_cid":"可选，默认接收文件夹"}
 func (h *Handler) ShareReceive(c *gin.Context) {
 	var req struct {
-		URL    string `json:"url"`
-		Code   string `json:"code"`
-		Target string `json:"target_cid"`
+		URL      string `json:"url"`
+		Code     string `json:"code"`
+		Target   string `json:"target_cid"`
+		Organize bool   `json:"organize"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写分享链接"})
@@ -180,9 +181,9 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 	msg := fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
 	log.Printf("[上传] %s", msg)
 
-	// 转存成功后立即触发一次增量同步（不等下一轮 cron，30 秒内生成 STRM）
-	if success > 0 {
-		go h.triggerIncrementalAfterTransfer()
+	// 转存成功且开启自动整理 → 触发「整理+增量」
+	if success > 0 && req.Organize {
+		go h.triggerOrganizeAndSync()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": msg, "count": success, "failed": fail,
