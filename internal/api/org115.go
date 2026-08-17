@@ -72,8 +72,15 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 		if len(syncCfg.VideoExt) > 0 {
 			filter.videoExts = buildExtSet(syncCfg.VideoExt)
 		}
+		// 获取库名作为 STRM 路径第一层
+		orgLibName := ""
+		if cookie, err := h.get115Cookie(); err == nil {
+			if info, err := get115DirInfo(cookie, orgCfg.Library); err == nil {
+				orgLibName = info.n
+			}
+		}
 		var videos, assets []remoteFile
-		if err := walk115Dir(ops, orgCfg.Library, "", &videos, &assets, filter); err != nil {
+		if err := walk115Dir(ops, orgCfg.Library, orgLibName, &videos, &assets, filter); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
 			return steps, orgResults, nil
 		}

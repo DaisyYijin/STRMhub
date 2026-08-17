@@ -106,9 +106,17 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	}
 	filter.assetExts[".nfo"] = true
 
-	// 递归遍历，分类收集
+	// 获取媒体库根目录名（如"俱乐部"），作为 STRM 路径的第一层
+	libName := ""
+	if cookie, err := h.get115Cookie(); err == nil {
+		if info, err := get115DirInfo(cookie, req.Cid); err == nil {
+			libName = info.n
+		}
+	}
+
+	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
 	var videos, assets []remoteFile
-	if err := walk115Dir(ops, req.Cid, "", &videos, &assets, filter); err != nil {
+	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}

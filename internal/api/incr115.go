@@ -376,6 +376,12 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	memo := map[string]dirInfo{}
+	// 获取媒体库根目录名（STRM 路径第一层）
+	libName := ""
+	if info, err := get115DirInfo(cookie, p.Cid); err == nil {
+		libName = info.n
+	}
+
 	// 作用域：只监控媒体库子树；待整理/已存在/冗余等整理工作区的事件静默忽略
 	libAbs := absPathOf(cookie, p.Cid, memo)
 	var excludedAbs []string
@@ -509,10 +515,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	domain, format, keepExt, skipExist := h.getStrmConfig()
 	for _, t := range uniqTargets {
 		var videos, assets []remoteFile
-		if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+		if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter); err != nil {
 			log.Printf("[同步] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
 			time.Sleep(30 * time.Second)
-			if err := walk115Dir(ops, t.cid, t.base, &videos, &assets, filter); err != nil {
+			if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter); err != nil {
 				log.Printf("[同步] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
 				sum.DirsSkipped++
 				continue
