@@ -1493,9 +1493,9 @@ const DEFAULT_CONFIGS = {
   'org-gpt': { url: 'https://api.siliconflow.cn/v1', key: '', model: '' },
   'org-rename': {
     movie_folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
-    movie_file: '{title}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}',
+    movie_file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
     tv_folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
-    tv_file: '{title} - {season_episode}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}',
+    tv_file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
     av_folder: '{first_letter}-{title}',
     av_file: '{title}{ext}',
   },

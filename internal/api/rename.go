@@ -65,12 +65,87 @@ func buildRenameContext(media *TmdbMedia, parsed *ParsedName, originalName strin
 func (ctx *RenameContext) ApplyTemplate(template string) string {
 	result := template
 
-	// 先处理块语法：{变量名}包裹的部分在变量非空时输出
-	// 格式：{first_letter}/{title}  → G/钢铁侠（first_letter非空时输出 /钢铁侠）
-	// 简化实现：直接替换变量，块语法由模板设计者用 {var} 控制
-	// 高级块语法（{变量非空则输出}）暂不实现，直接变量替换已够用
+	replacements := ctx.allReplacements()
 
-	replacements := map[string]string{
+	// 第一步：处理 <> 块语法（变量非空才输出块内容）
+	// 格式：<.{resource_pix}> → resource_pix 非空时输出 ".1080p"，空时输出 ""
+	// 格式：<-{resource_team}> → resource_team 非空时输出 "-TnT"，空时输出 ""
+	result = processBlocks(result, replacements)
+
+	// 第二步：替换普通 {variable}
+	for k, v := range replacements {
+		result = strings.ReplaceAll(result, k, v)
+	}
+
+	// 清理连续分隔符（变量为空时可能留下）
+	for strings.Contains(result, "..") {
+		result = strings.ReplaceAll(result, "..", ".")
+	}
+	for strings.Contains(result, "--") {
+		result = strings.ReplaceAll(result, "--", "-")
+	}
+	result = strings.TrimSpace(result)
+
+	return result
+}
+
+// processBlocks 处理 <> 块语法
+// 语法：<任意文字{variable}任意文字> — 块内所有 {variable} 非空时输出整块，有空变量时丢弃整块
+// 多变量块：<.{a}{b}> — a 和 b 都非空才输出
+// 可嵌套变量：<({resource_effect}).{video_encode}> — effect 和 encode 都非空才输出
+func processBlocks(template string, replacements map[string]string) string {
+	// 从最内层开始匹配 <>
+	for {
+		// 找最深层的 <...> 块（不包含其他 <）
+		start := -1
+		for i := 0; i < len(template); i++ {
+			if template[i] == '<' && (i+1 >= len(template) || template[i+1] != '<') {
+				// 检查是否是 HTML 标签（不太可能，但防御一下）
+				start = i
+			}
+			if template[i] == '>' && start >= 0 {
+				block := template[start+1 : i]
+				// 检查块内是否有 {variable}
+				if !strings.Contains(block, "{") {
+					start = -1
+					continue
+				}
+				// 替换块内所有变量
+				blockContent := block
+				allNonEmpty := true
+				for k, v := range replacements {
+					if strings.Contains(blockContent, k) {
+						if v == "" {
+							allNonEmpty = false
+							break
+						}
+						blockContent = strings.ReplaceAll(blockContent, k, v)
+					}
+				}
+				// 还有没有未替换的 {xxx}（可能是嵌套变量）
+				if strings.Contains(blockContent, "{") {
+					// 保守：假设未替换的变量为空
+					allNonEmpty = false
+				}
+				if allNonEmpty {
+					template = template[:start] + blockContent + template[i+1:]
+				} else {
+					template = template[:start] + template[i+1:]
+				}
+				start = -1
+				continue // 重新扫描
+			}
+		}
+		if start == -1 {
+			break // 没有更多块了
+		}
+	}
+	return template
+}
+
+// allReplacements 返回全部变量映射
+func (ctx *RenameContext) allReplacements() map[string]string {
+	return map[string]string{
 		// 原始文件信息
 		"{original_name}":     ctx.OriginalName,
 		"{ext}":              ctx.Ext,
@@ -103,18 +178,6 @@ func (ctx *RenameContext) ApplyTemplate(template string) string {
 		"{season_year}":    ctx.SeasonYear,
 		"{episode_name}":   ctx.EpisodeName,
 	}
-
-	for k, v := range replacements {
-		result = strings.ReplaceAll(result, k, v)
-	}
-
-	// 清理连续的点/横线（变量为空时可能留下）
-	result = strings.ReplaceAll(result, "..", ".")
-	result = strings.ReplaceAll(result, "--", "-")
-	result = strings.ReplaceAll(result, "..", ".") // 再清一次（可能有三个）
-	result = strings.TrimSpace(result)
-
-	return result
 }
 
 // seasonEpisode 返回 SxxExx 格式
@@ -131,12 +194,12 @@ func (ctx *RenameContext) seasonEpisode() string {
 // LoadRenameTemplates 从配置加载重命名模板（yaml 优先，DB 回退）
 func (h *Handler) LoadRenameTemplates() *RenameConfig {
 	cfg := &RenameConfig{
-		MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		MovieFile:   "{title}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
-		TVFolder:    "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		TVFile:      "{title} - {season_episode}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
-		AVFolder:    "{first_letter}-{title}",
-		AVFile:      "{title}{ext}",
+		MovieFolder:   "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+		MovieFile:   "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		TVFolder:   "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+		TVFile:   "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		AVFolder:   "{first_letter}-{title}",
+		AVFile:   "{title}<.{resource_pix}><.{resource_type}>{ext}",
 	}
 
 	v := h.getSettingValue("org-rename")

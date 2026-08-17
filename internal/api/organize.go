@@ -823,11 +823,11 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	} else {
 		renameTpl = &RenameConfig{
 			MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-			MovieFile:   "{title}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
-			TVFolder:    "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-			TVFile:      "{title} - {season_episode}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
-			AVFolder:    "{first_letter}-{title}",
-			AVFile:      "{title}{ext}",
+			MovieFile: "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+			TVFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+			TVFile: "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+			AVFolder: "{first_letter}-{title}",
+			AVFile: "{title}<.{resource_pix}><.{resource_type}>{ext}",
 		}
 	}
 
