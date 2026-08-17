@@ -132,10 +132,10 @@ func (ctx *RenameContext) seasonEpisode() string {
 func (h *Handler) LoadRenameTemplates() *RenameConfig {
 	cfg := &RenameConfig{
 		MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		MovieFile:   "{title}.{resource_pix}.{resource_type}-{resource_team}{ext}",
+		MovieFile:   "{title}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
 		TVFolder:    "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		TVFile:      "{title} - {season_episode}.{resource_pix}.{resource_type}-{resource_team}{ext}",
-		AVFolder:    "{first_letter}-{title}-{year}",
+		TVFile:      "{title} - {season_episode}.{resource_pix}.{resource_type}.{video_encode}.{audio_encode}-{resource_team}{ext}",
+		AVFolder:    "{first_letter}-{title}",
 		AVFile:      "{title}{ext}",
 	}
 
