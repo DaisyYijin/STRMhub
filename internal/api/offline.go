@@ -61,12 +61,12 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		payload["wp_path_id"] = req.Target
 	}
 
-	// 加密并发送
-	ver := getAppVerCached()
-	ua := fmt.Sprintf("Mozilla/5.0 115disk/%s 115Browser/%s 115wangpan_android/%s", ver, ver, ver)
-	payloadJSON, _ := json.Marshal(payload)
-	form := url.Values{"data": {encrypt115(payloadJSON)}}
-	body, err := post115Form("https://clouddownload.115.com/lixianssp/?ac=add_task_url", form, cookie, ua, 20*time.Second)
+	// 用 web 版 API（不加密，Cookie 认证）
+	form := url.Values{"url": {req.URL}}
+	if req.Target != "" {
+		form.Set("wp_path_id", req.Target)
+	}
+	body, err := post115Form("https://clouddownload.115.com/web/lixian/?ac=add_task_url", form, cookie, ua115Unified(), 20*time.Second)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "离线下载请求失败: " + err.Error()})
 		return
@@ -76,14 +76,19 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 	var resp struct {
 		State bool   `json:"state"`
 		Error string `json:"error"`
+		ErrNo int    `json:"errno"`
 		Data  json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解析响应失败: " + truncateStr(string(body), 150)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "解析响应失败: " + truncateStr(string(body), 200)})
 		return
 	}
 	if !resp.State {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "115 拒绝: " + resp.Error})
+		errMsg := resp.Error
+		if errMsg == "" && resp.ErrNo != 0 {
+			errMsg = fmt.Sprintf("错误码 %d", resp.ErrNo)
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "115 拒绝: " + errMsg})
 		return
 	}
 

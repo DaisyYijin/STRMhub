@@ -130,13 +130,6 @@
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
-        <!-- 接收文件夹（转存/离线下载的默认目标目录） -->
-        <div class="card">
-          <div class="form-row"><div class="label">接收文件夹</div><div class="control"><div class="form-inline-group"><input type="text" id="share-folder" placeholder="转存/离线下载的默认目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('share-folder')">选择目录</button></div></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存配置</button></div></div>
-          <div class="alert alert-info">转存和离线下载功能在「上传下载」页。这里配置的接收文件夹是它们的默认目标目录，建议放在待整理目录下以实现自动入库。</div>
-        </div>
-
       </div>
 
       <!-- 123 账号同步 -->
@@ -647,6 +640,10 @@ av:
       </div>
       <div class="tab-panel" data-panel="ud-download">
         <div class="card">
+          <div class="form-row"><div class="label">转存目录</div><div class="control"><div class="form-inline-group"><input type="text" id="share-folder" placeholder="转存/离线下载的目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('share-folder')">选择目录</button></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存目录</button></div></div>
+        </div>
+        <div class="card">
           <div class="form-row"><div class="label">链接</div><div class="control"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()"></div></div>
           <div class="form-row"><div class="label">转存后整理</div><div class="control"><div class="segmented-control" id="transfer-organize-switch"><div class="seg-item active" data-value="true" onclick="setTransferOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="setTransferOrganize(false)">关闭</div></div><span style="font-size:12px;color:var(--text-3);margin-left:8px">开启后自动识别入库并生成 STRM</span></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
@@ -907,6 +904,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=48"></script>
+<script src="/js/app.js?v=49"></script>
 </body>
 </html>

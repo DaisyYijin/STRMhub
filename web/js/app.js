@@ -57,7 +57,7 @@ const PAGE_TITLES = {
 };
 
 function showPage(id) {
-  if (id === 'logs') startLogPoll(); else stopLogPoll();
+  if (id !== 'logs') stopLogPoll();
   if (id === 'dashboard') loadDashboard();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
@@ -1567,6 +1567,7 @@ function clearLogViewer() {
 }
 function openLog() {
   showPage('logs');
+  startLogPoll();
 }
 // 服务端日志轮询：日志页可见时每 3 秒刷新，离开自动停止
 function startLogPoll() {
@@ -1591,7 +1592,8 @@ async function loadSystemLogs() {
     viewer.textContent = data.logs || '暂无日志';
     if (nearBottom) viewer.scrollTop = viewer.scrollHeight;
   } catch (e) {
-    if (viewer.textContent.startsWith('加载中')) viewer.textContent = '暂无日志...';
+    console.error('[日志] 加载失败:', e);
+    viewer.textContent = '加载失败: ' + (e.message || '未知错误');
   }
 }
 
