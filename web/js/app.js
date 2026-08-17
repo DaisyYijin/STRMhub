@@ -57,7 +57,7 @@ const PAGE_TITLES = {
 };
 
 function showPage(id) {
-  if (id !== 'logs') stopLogPoll();
+  if (id === 'logs') { startLogPoll(); } else { stopLogPoll(); }
   if (id === 'dashboard') loadDashboard();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));
@@ -87,6 +87,7 @@ function showPage(id) {
     loadWash();
   }
   if (id === 'sync') loadConfigs();
+  if (id === 'upload-download') loadConfigs();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
@@ -1556,7 +1557,7 @@ function appendLog(line) {
   const viewer = document.getElementById('client-log');
   if (!viewer) return;
   const time = new Date().toLocaleTimeString();
-  viewer.textContent = (viewer.textContent === '暂无日志...' ? '' : viewer.textContent) + `[${time}] ${line}\n`;
+  viewer.textContent = (viewer.textContent === '暂无日志...' || viewer.textContent === '暂无操作...' ? '' : viewer.textContent) + `[${time}] ${line}\n`;
   viewer.scrollTop = viewer.scrollHeight;
 }
 function clearLogViewer() {
