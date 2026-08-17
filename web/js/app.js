@@ -57,7 +57,11 @@ const PAGE_TITLES = {
 };
 
 function showPage(id) {
-  if (id === 'logs') { startLogPoll(); } else { stopLogPoll(); }
+  if (id === 'logs') {
+    startLogPoll();
+    // 立即加载一次（不等到 interval）
+    loadSystemLogs();
+  } else { stopLogPoll(); }
   if (id === 'dashboard') loadDashboard();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.menu-item').forEach(n => n.classList.remove('active'));

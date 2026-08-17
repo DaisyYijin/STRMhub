@@ -196,7 +196,7 @@ tr:hover td { background: var(--fill-1); }
 .qrcode-box { width: 180px; height: 180px; border: 1px solid var(--border); border-radius: var(--radius); display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 13px; background: var(--fill-1); }
 
 /* ===== 日志 ===== */
-.log-viewer { background: #1d2129; color: #e5e6eb; border-radius: var(--radius); padding: 12px 16px; font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.8; height: 400px; overflow-y: auto; white-space: pre-wrap; }
+.log-viewer { background: #1d2129; color: #e5e6eb; border-radius: var(--radius); padding: 12px 16px; font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.8; height: 400px; min-height: 120px; overflow-y: auto; white-space: pre-wrap; display: block !important; }
 
 
 /* ===== 工具 ===== */

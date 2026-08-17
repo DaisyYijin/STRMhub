@@ -195,6 +195,71 @@ func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 	}
 }
 
+// renameBeforeMove 在源目录中先重命名文件（带画质信息），再移动到目标
+// 顺序：重命名 → 移动（而非 移动 → 重命名，减少目标目录的中间状态）
+func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, onLog func(string)) {
+	for _, vf := range videoFiles {
+		ext := pathExt(vf.Name)
+		p := parseFileName(vf.Name)
+		p.Quality = extractQualityInfo(vf.Name)
+
+		var newName string
+		if media.MediaType == "movie" {
+			newName = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
+		} else if p.Season > 0 && p.Episode > 0 {
+			newName = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
+		} else {
+			continue
+		}
+		if p.Quality != "" {
+			newName += "." + p.Quality
+		}
+		newName += ext
+
+		if newName != vf.Name {
+			if err := ops.rename(vf.Fid, newName); err != nil {
+				onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", vf.Name, err))
+			} else {
+				onLog(fmt.Sprintf("✓ 重命名 %s → %s", vf.Name, newName))
+			}
+		}
+	}
+
+	// 字幕跟随视频新名（前缀匹配）
+	for _, f := range files {
+		ext := strings.ToLower(pathExt(f.Name))
+		if !orgAttachmentExts[ext] {
+			continue
+		}
+		fb := baseName(f.Name)
+		for _, vf := range videoFiles {
+			vfBase := baseName(vf.Name)
+			if fb == vfBase || strings.HasPrefix(fb, vfBase+".") {
+				p := parseFileName(vf.Name)
+				suffix := strings.TrimPrefix(fb, vfBase)
+				var newSub string
+				if media.MediaType == "movie" {
+					newSub = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
+				} else {
+					newSub = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
+					if q := extractQualityInfo(vf.Name); q != "" {
+						newSub += "." + q
+					}
+				}
+				newSubName := newSub + suffix + ext
+				if newSubName != f.Name {
+					if err := ops.rename(f.Fid, newSubName); err != nil {
+						onLog(fmt.Sprintf("○ 字幕重命名失败 %s: %v", f.Name, err))
+					} else {
+						onLog(fmt.Sprintf("✓ 字幕 %s → %s", f.Name, newSubName))
+					}
+				}
+				break
+			}
+		}
+	}
+}
+
 // moveQuietly 移动并记录失败（失败不再被吞掉）
 func moveQuietly(ops *pan115Ops, targetCid string, fids []string, label string, onLog func(string)) {
 	if err := ops.moveFiles(targetCid, fids); err != nil {
@@ -339,6 +404,62 @@ func sanitizeName(name string) string {
 	return strings.TrimSpace(r.Replace(name))
 }
 
+// extractQualityInfo 从原始文件名提取画质信息（分辨率/来源/编码等）
+// "Animal.Control.S04E01.1080p.NowPlayer.WEB-DL.AAC2.0.H.264-BlackTV.mkv"
+//   → "1080p.WEB-DL.AAC2.0.H.264"
+func extractQualityInfo(filename string) string {
+	base := baseName(filename)
+	parts := strings.Split(base, ".")
+
+	var qualityParts []string
+	// 跳过：标题段（前面的大写单词）和 S/E 编号段
+	skipTitle := true
+	for _, part := range parts {
+		upper := strings.ToUpper(part)
+
+		// 跳过 SxxExx / EPxx / 纯数字编号
+		if (strings.HasPrefix(upper, "S") && strings.Contains(upper, "E")) ||
+			(strings.HasPrefix(upper, "EP") && len(upper) <= 5) {
+			skipTitle = false
+			continue
+		}
+		if skipTitle {
+			continue // 标题部分
+		}
+
+		// 收集画质相关字段
+		if isQualityToken(part) {
+			qualityParts = append(qualityParts, part)
+		}
+	}
+	return strings.Join(qualityParts, ".")
+}
+
+// isQualityToken 判断是否为画质相关的 token
+func isQualityToken(token string) bool {
+	upper := strings.ToUpper(token)
+	// 常见画质关键词
+	qualityKeywords := []string{
+		"1080P", "720P", "2160P", "4K", "480P",
+		"WEB-DL", "WEB-DL", "BLURAY", "BLU-RAY", "REMUX", "HDTV", "WEBRIP", "DVDRIP",
+		"H.264", "H.265", "X264", "X265", "HEVC", "AVC",
+		"AAC", "AC3", "DTS", "FLAC", "TRUEHD", "DDP", "DD",
+		"HDR", "DV", "SDR", "DOVI",
+		"10BIT", "8BIT",
+	}
+	for _, kw := range qualityKeywords {
+		if strings.Contains(upper, kw) {
+			return true
+		}
+	}
+	// AAC2.0, DTS-HD等复合token
+	if strings.HasPrefix(upper, "AAC") || strings.HasPrefix(upper, "DTS") ||
+		strings.HasPrefix(upper, "DDP") || strings.HasPrefix(upper, "TRUEHD") {
+		return true
+	}
+	return false
+}
+
 func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 	media.Title = sanitizeName(media.Title)
 	firstLetter := titleFirstLetter(media.Title)
@@ -356,11 +477,15 @@ func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 		return folder + "/" + file
 	}
 
-	// 电视剧：.../Season {season}/{title} - S{season:02d}E{episode:02d}.{ext}
+	// 电视剧：.../Season {season}/{title} - S{season:02d}E{episode:02d}[.{quality}].{ext}
 	if parsed.Season > 0 {
 		subFolder := fmt.Sprintf("Season %02d", parsed.Season)
 		if parsed.Episode > 0 {
-			file := fmt.Sprintf("%s - S%02dE%02d%s", media.Title, parsed.Season, parsed.Episode, ext)
+			file := fmt.Sprintf("%s - S%02dE%02d", media.Title, parsed.Season, parsed.Episode)
+			if parsed.Quality != "" {
+				file += "." + parsed.Quality
+			}
+			file += ext
 			return folder + "/" + subFolder + "/" + file
 		}
 		return folder + "/" + subFolder
@@ -952,6 +1077,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
+	// 先在源目录重命名（批量 batch_rename），再移动到目标
+	renameBeforeMove(ops, media, videoFiles, files, onLog)
+
 	// 视频/字幕 → 季目录（电影为根目录）
 	if len(mediaFids) > 0 {
 		if err := ops.moveFiles(mediaCid, mediaFids); err != nil {
@@ -979,9 +1107,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			ops.moveFiles(junkCid, junkFids)
 		}
 	}
-
-	// 视频与字幕按标准名重命名
-	renameToStandard(ops, media, videoFiles, files, newPath, onLog)
 
 	// 整理完毕：已移空的源目录移到冗余（避免待整理目录残留空壳）
 	if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {

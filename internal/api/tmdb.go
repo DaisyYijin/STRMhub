@@ -286,6 +286,7 @@ type ParsedName struct {
 	Episode    int
 	IsTV       bool
 	Resolution string // 1080p, 2160p 等
+	Quality    string // 完整画质串（1080p.WEB-DL.AAC2.0.H.264 等，由调用方填充）
 }
 
 var (
