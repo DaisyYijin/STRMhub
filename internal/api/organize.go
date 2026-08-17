@@ -580,11 +580,12 @@ func checkExistsVerified(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAb
 	if err := model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).First(&rec).Error; err != nil {
 		return false
 	}
-	// 网盘验证：记录的目录部分在库根下是否仍存在（OpenAPI 通道/未取得库路径时跳过验证）
+	// 网盘验证：检查记录的目标目录下是否还有视频文件（空目录 = 已清空 = 记录过期）
 	if ops.cookie != "" && libAbs != "" && rec.TargetPath != "" {
 		dirPart := path.Dir(rec.TargetPath)
-		if !cloudPathExistsCk(ops.cookie, path.Join(libAbs, dirPart)) {
-			log.Printf("[整理] ✦ 去重记录已过期，自动清除: %s (%s) tmdb=%d 旧目标=%s",
+		absDir := path.Join(libAbs, dirPart)
+		if !cloudDirHasVideos(ops.cookie, absDir) {
+			log.Printf("[整理] ✦ 去重记录已过期（网盘目录为空或不存在），自动清除: %s (%s) tmdb=%d 旧目标=%s",
 				rec.Title, rec.Year, rec.TmdbID, rec.TargetPath)
 			model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
 			return false
@@ -1575,4 +1576,52 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 		time.Sleep(300 * time.Millisecond)
 	}
 	return results, successCount
+}
+
+// cloudDirHasVideos 检查网盘目录下是否有视频文件（空目录或不存在都返回 false）
+func cloudDirHasVideos(cookie, absPath string) bool {
+	// 先查目录是否存在
+	cid, ok := cloudPathCid(cookie, absPath)
+	if !ok {
+		return false // 目录不存在
+	}
+	// 列出目录内容，检查是否有视频文件
+	body, err := httpGet115UA("https://webapi.115.com/files",
+		url.Values{
+			"aid":      {"1"},
+			"cid":      {cid},
+			"show_dir": {"1"},
+			"limit":    {"20"},
+			"format":   {"json"},
+		}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return true // 查询失败保守按有文件
+	}
+	var r struct {
+		State bool                      `json:"state"`
+		Data  []map[string]interface{} `json:"data"`
+		Count int                       `json:"count"`
+	}
+	if json.Unmarshal(body, &r) != nil {
+		return true
+	}
+	if !r.State {
+		return false
+	}
+	if r.Count == 0 {
+		return false // 空目录
+	}
+	// 检查是否有视频文件
+	for _, d := range r.Data {
+		if fmt.Sprint(d["f"]) == "1" {
+			name := fmt.Sprint(d["n"])
+			ext := strings.ToLower(pathExt(name))
+			for _, ve := range []string{".mp4", ".mkv", ".ts", ".avi", ".mov", ".rmvb", ".webm", ".flv", ".m2ts", ".wmv", ".mpg", ".iso"} {
+				if ext == ve {
+					return true
+				}
+			}
+		}
+	}
+	return false // 有内容但没有视频文件
 }
