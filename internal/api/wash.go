@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
 
 	"strmhub/internal/model"
@@ -74,21 +73,12 @@ func matchField(name, cond, value string) bool {
 	return neg != hit
 }
 
-var rePix = regexp.MustCompile(`(?i)\b(4320p|2160p|1080p|720p|480p)\b`)
-var reType = regexp.MustCompile(`(?i)\b(REMUX|BluRay|WEB-?DL|HDTV|WEBRip|DVDRip)\b`)
-var reEffect = regexp.MustCompile(`(?i)\b(DV|DoVi|HDR10\+?|HDR|SDR)\b`)
 
-func extractPix(name string) string   { return rePix.FindString(name) }
-func extractType(name string) string  { return reType.FindString(name) }
-func extractEffect(name string) string { return reEffect.FindString(name) }
-func extractTeam(name string) string {
-	// 制作组：最后一个 '-' 之后（去掉扩展名）
-	base := strings.TrimSuffix(name, path.Ext(name))
-	if i := strings.LastIndex(base, "-"); i >= 0 {
-		return strings.TrimSpace(base[i+1:])
-	}
-	return ""
-}
+// 画质提取已迁移到 resource.go 的 ParseResourceInfo（完整版）
+func extractPix(name string) string   { return ParseResourceInfo(name).Pix }
+func extractType(name string) string  { return ParseResourceInfo(name).Type }
+func extractEffect(name string) string { return ParseResourceInfo(name).Effect }
+func extractTeam(name string) string  { return ParseResourceInfo(name).Team }
 
 // washDecision 洗版判定：返回是否替换（新版本优于库内版本）
 func washDecision(newName string, libraryNames []string, rules []washRule) bool {

@@ -201,7 +201,8 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 	for _, vf := range videoFiles {
 		ext := pathExt(vf.Name)
 		p := parseFileName(vf.Name)
-		p.Quality = extractQualityInfo(vf.Name)
+		ri := ParseResourceInfo(vf.Name)
+		quality := ri.QualityString()
 
 		var newName string
 		if media.MediaType == "movie" {
@@ -211,8 +212,11 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		} else {
 			continue
 		}
-		if p.Quality != "" {
-			newName += "." + p.Quality
+		if quality != "" {
+			newName += "." + quality
+		}
+		if ri.Team != "" {
+			newName += "-" + ri.Team
 		}
 		newName += ext
 
@@ -242,7 +246,7 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 					newSub = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
 				} else {
 					newSub = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
-					if q := extractQualityInfo(vf.Name); q != "" {
+					if q := ParseResourceInfo(vf.Name).QualityString(); q != "" {
 						newSub += "." + q
 					}
 				}
