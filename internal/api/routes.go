@@ -1021,5 +1021,9 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
 		return
 	}
+	// emby 配置保存时同步更新反代缓存
+	if req.Key == "emby" {
+		UpdateEmbyConfig(req.Value)
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }

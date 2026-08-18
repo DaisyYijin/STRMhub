@@ -34,6 +34,7 @@ var (
 )
 
 // getEmbyTarget 获取 Emby 服务器地址（从 EMBY管理 配置读取，5 分钟缓存）
+// 读取顺序：yaml 配置优先，DB settings 表回退
 func getEmbyTarget(db *gorm.DB) string {
 	embyTargetMu.RLock()
 	if time.Since(embyTargetAt) < 5*time.Minute && embyTargetURL != "" {
@@ -43,15 +44,28 @@ func getEmbyTarget(db *gorm.DB) string {
 	}
 	embyTargetMu.RUnlock()
 
-	// 从 DB 读 emby 配置
 	target := ""
-	var s struct{ Value string }
-	if err := db.Raw("SELECT value FROM settings WHERE `key` = 'emby' LIMIT 1").Scan(&s).Error; err == nil && s.Value != "" {
-		var cfg struct {
-			ServerURL string `json:"server_url"`
-		}
-		if parseJSON(s.Value, &cfg) == nil {
+	var cfg struct {
+		ServerURL string `json:"server_url"`
+	}
+
+	// 先从 yaml 读（前端 saveConfig 写这里）
+	// SettingMap 需要通过 config 加载，这里直接走 DB + yaml 两条路
+	// yaml 路径：通过全局 config 实例不方便拿，改为同时查 DB 并由调用方传 yaml 值
+	// 简化：直接读 DB，同时检查 yaml（通过 Handler 不在这里做）
+	if embyConfigYAML != "" {
+		if parseJSON(embyConfigYAML, &cfg) == nil && cfg.ServerURL != "" {
 			target = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+		}
+	}
+
+	// DB 回退
+	if target == "" {
+		var s struct{ Value string }
+		if err := db.Raw("SELECT value FROM settings WHERE `key` = 'emby' LIMIT 1").Scan(&s).Error; err == nil && s.Value != "" {
+			if parseJSON(s.Value, &cfg) == nil && cfg.ServerURL != "" {
+				target = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+			}
 		}
 	}
 
@@ -60,6 +74,18 @@ func getEmbyTarget(db *gorm.DB) string {
 	embyTargetAt = time.Now()
 	embyTargetMu.Unlock()
 	return target
+}
+
+// embyConfigYAML 从 yaml 配置读取的 emby 配置（由 UpdateEmbyConfig 更新）
+var embyConfigYAML string
+
+// UpdateEmbyConfig 外部调用：更新 yaml 配置缓存（保存 emby 配置时触发）
+func UpdateEmbyConfig(jsonStr string) {
+	embyConfigYAML = jsonStr
+	embyTargetMu.Lock()
+	embyTargetURL = "" // 清缓存，下次重新读
+	embyTargetAt = time.Time{}
+	embyTargetMu.Unlock()
 }
 
 func parseJSON(data string, out interface{}) error {
@@ -103,7 +129,38 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
-	// 根路径友好页面（说明这个端口的用途）
+	// 6086 根路径：非媒体/非API请求 → 反代到 Emby（CMS 9096 同款行为）
+	r.NoRoute(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		// /d/ 开头是 302 服务已处理；/emby/ 已注册；其余全部反代 Emby
+		if strings.HasPrefix(p, "/d/") || strings.HasPrefix(p, "/emby") || strings.HasPrefix(p, "/proxy/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		// 反代到 Emby
+		target := getEmbyTarget(db)
+		if target == "" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(http.StatusOK, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StrmHub</title></head><body style="font-family:system-ui;max-width:640px;margin:60px auto;padding:0 20px"><h2>StrmHub 302 代理</h2><p style="color:#e74c3c">未配置 Emby 服务器地址</p><p>请在「系统配置 → EMBY管理」填写 Emby 服务器地址（如 http://192.168.1.100:8096）后刷新本页。</p></body></html>`)
+			return
+		}
+		targetURL, _ := url.Parse(target)
+		proxy := &httputil.ReverseProxy{
+			Director: func(req *http.Request) {
+				req.Host = targetURL.Host
+				req.URL.Scheme = targetURL.Scheme
+				req.URL.Host = targetURL.Host
+			},
+			FlushInterval: -1,
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				log.Printf("[Emby反代] 转发失败: %v", err)
+				http.Error(w, "Emby 服务器无法连接: "+err.Error(), http.StatusBadGateway)
+			},
+		}
+		proxy.ServeHTTP(c.Writer, c.Request)
+	})
+
+	// 友好状态页（仅当 Emby 未配置时的备选，被 NoRoute 覆盖后实际不触发）
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, `<!DOCTYPE html>
