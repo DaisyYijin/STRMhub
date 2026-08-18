@@ -103,6 +103,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		})
 
 		// STRM 管理
+		// 302 直连（与 6086 代理同款，6060 也能作为 strm 直连地址，CMS 二合一模式）
+		r.GET("/d/:pickcode", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
+		r.GET("/d/:pickcode/*filename", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
+
 		protected.GET("/strm", h.ListStrmFiles)
 		protected.DELETE("/strm/:id", h.DeleteStrmFile)
 						
