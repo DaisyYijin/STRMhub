@@ -313,6 +313,18 @@ func applyReplaceRules(name string, rules []ReplaceRule) string {
 	return name
 }
 
+// mediaTypeCategory 媒体类型对应的一级分类目录名
+func mediaTypeCategory(mediaType string) string {
+	switch mediaType {
+	case "movie":
+		return "电影"
+	case "tv":
+		return "剧集"
+	default:
+		return "AV"
+	}
+}
+
 // classifyMedia 根据分类规则判断二级分类
 func classifyMedia(media *TmdbMedia) string {
 	var categories []model.CategoryRule
@@ -1192,14 +1204,14 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 不存在 → 分类 + 移动到我的影视库
 	category := classifyMedia(media)
 	newPath := buildNewNameWithTemplate(media, parsed, mainVideo.Name)
-	targetDir := category + "/" + pathDir(newPath)
+	targetDir := mediaTypeCategory(media.MediaType) + "/" + category + "/" + pathDir(newPath)
 
 	_ = targetDir // 目标目录在下方按新结构创建（根目录 + 季目录）
 
 	// 按文件分类移动（规范结构）：
 	//   视频 + 字幕 → 季目录（电影为根目录）；NFO + 标准封面图 → 剧集根目录；垃圾 → 冗余
 	parts := strings.Split(newPath, "/")
-	rootRel := category + "/" + parts[0]
+	rootRel := mediaTypeCategory(media.MediaType) + "/" + category + "/" + parts[0]
 	onLog(fmt.Sprintf("▣ 目标目录就绪: %s", rootRel))
 	rootCid, err := ops.ensurePath(cfg.Library, rootRel)
 	if err != nil {
@@ -1428,7 +1440,7 @@ func organizeIdentifiedFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, repl
 
 	category := mainResult.Category
 	newPath := buildNewNameWithTemplate(media, parsed, f.Name)
-	targetDir := category + "/" + pathDir(newPath)
+	targetDir := mediaTypeCategory(media.MediaType) + "/" + category + "/" + pathDir(newPath)
 
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
@@ -1522,7 +1534,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	// 分类 + 移动到影视库
 	category := classifyMedia(media)
 	newPath := buildNewNameWithTemplate(media, parsed, f.Name)
-	targetDir := category + "/" + pathDir(newPath)
+	targetDir := mediaTypeCategory(media.MediaType) + "/" + category + "/" + pathDir(newPath)
 
 	targetCid, err := ops.ensurePath(cfg.Library, targetDir)
 	if err != nil {
