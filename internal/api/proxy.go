@@ -62,6 +62,9 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 		handleProxyRedirect(c, db, cfg)
 	})
 
+	// Emby 反代：客户端访问 http://ip:6086/emby 即可使用 Emby（CMS 9096 同款）
+	registerEmbyProxy(r, db)
+
 	log.Printf("302代理服务启动: http://localhost:%d", cfg.ProxyPort)
 	if err := r.Run(":" + cfg.ProxyPortStr()); err != nil {
 		log.Printf("代理服务启动失败: %v", err)
