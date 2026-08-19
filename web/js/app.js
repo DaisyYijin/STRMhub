@@ -510,6 +510,18 @@ async function pollTaskStatus() {
   const btns = ['btn-fullsync', 'btn-incrsync', 'btn-organize'].map(id => document.getElementById(id)).filter(Boolean);
   try {
     const st = await api('/sync/status');
+    // 最近运行记录
+    const recentEl = document.getElementById('incr-recent-runs');
+    if (recentEl) {
+      const runs = st.recent || [];
+      if (runs.length === 0) {
+        recentEl.textContent = '暂无运行记录';
+      } else {
+        recentEl.innerHTML = runs.map(r =>
+          `<div>${r.ok ? '✓' : '✗'} ${esc(r.name)} · ${esc(r.start)} · 耗时 ${esc(r.elapsed)}</div>`
+        ).join('');
+      }
+    }
     if (st.running) {
       bar.style.display = 'block';
       bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '，开始于 ' + esc(st.since || '-') + '），其他同步/整理操作已暂不可用';

@@ -21,6 +21,49 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ==================== 任务运行历史（最近 5 次） ====================
+
+type runRecord struct {
+	Name    string `json:"name"`
+	Start   string `json:"start"`
+	Elapsed string `json:"elapsed"`
+	OK      bool   `json:"ok"`
+}
+
+var (
+	recentRunsMu sync.Mutex
+	recentRuns   []runRecord
+)
+
+// RecordRun 记录一次任务运行（保留最近 5 次）
+func RecordRun(name string, start time.Time, ok bool) {
+	rec := runRecord{
+		Name:    name,
+		Start:   start.Format("01-02 15:04:05"),
+		Elapsed: time.Since(start).Truncate(time.Second).String(),
+		OK:      ok,
+	}
+	recentRunsMu.Lock()
+	defer recentRunsMu.Unlock()
+	recentRuns = append(recentRuns, rec)
+	if len(recentRuns) > 5 {
+		recentRuns = recentRuns[len(recentRuns)-5:]
+	}
+}
+
+// GetRecentRuns 返回最近运行记录（新的在前）
+func GetRecentRuns() []runRecord {
+	recentRunsMu.Lock()
+	defer recentRunsMu.Unlock()
+	out := make([]runRecord, len(recentRuns))
+	copy(out, recentRuns)
+	// 反转（新的在前）
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
 // stopCh 进程退出信号（关闭后所有后台协程停止）
 var stopCh = make(chan struct{})
 
@@ -48,8 +91,12 @@ func beginTask(name string) {
 
 func endTask() {
 	taskStateMu.Lock()
+	name := taskName
+	start := taskStart
 	taskRunning = false
 	taskStateMu.Unlock()
+	// 自动记录到运行历史
+	RecordRun(name, start, true)
 }
 
 // TaskStatus 当前任务状态快照

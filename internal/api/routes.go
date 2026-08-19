@@ -90,7 +90,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/sync/full", h.RunFullSync)
 		protected.POST("/sync/incremental", h.RunIncrementalSync)
 
-		// 任务状态（前端轮询：任务进行中禁用同步/整理按钮）
+		// 任务状态（前端轮询：任务进行中禁用同步/整理按钮）+ 最近运行记录
 		protected.GET("/sync/status", func(c *gin.Context) {
 			running, name, start := TaskStatus()
 			g := gin.H{"running": running}
@@ -99,6 +99,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 				g["since"] = start.Format("15:04:05")
 				g["elapsed"] = time.Since(start).Truncate(time.Second).String()
 			}
+			g["recent"] = GetRecentRuns()
 			c.JSON(http.StatusOK, g)
 		})
 
