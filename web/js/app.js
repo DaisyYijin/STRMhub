@@ -326,7 +326,13 @@ function confirmFullSync(btn) {
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
   bubble.innerHTML = '<div class="cb-text">确定全量同步？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
-  btn.appendChild(bubble);
+  document.body.appendChild(bubble);
+  // fixed 定位到按钮上方
+  const rect = btn.getBoundingClientRect();
+  bubble.style.position = 'fixed';
+  bubble.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+  bubble.style.left = 'auto';
+  bubble.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
   bubble.querySelector('.cb-ok').onclick = (e) => {
@@ -348,7 +354,13 @@ function confirmIncrementalSync(btn) {
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
   bubble.innerHTML = '<div class="cb-text">确定增量同步？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定同步</button></div>';
-  btn.appendChild(bubble);
+  document.body.appendChild(bubble);
+  // fixed 定位到按钮上方
+  const rect = btn.getBoundingClientRect();
+  bubble.style.position = 'fixed';
+  bubble.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+  bubble.style.left = 'auto';
+  bubble.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
   bubble.querySelector('.cb-ok').onclick = (e) => {
@@ -370,7 +382,13 @@ function resetOrgRecords(btn) {
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
   bubble.innerHTML = '<div class="cb-text">确定清空整理记录？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定清空</button></div>';
-  btn.appendChild(bubble);
+  document.body.appendChild(bubble);
+  // fixed 定位到按钮上方
+  const rect = btn.getBoundingClientRect();
+  bubble.style.position = 'fixed';
+  bubble.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+  bubble.style.left = 'auto';
+  bubble.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
   bubble.querySelector('.cb-ok').onclick = async (e) => {
@@ -1467,7 +1485,13 @@ function resetConfig(key, btn) {
   bubble.id = 'confirm-bubble';
   bubble.className = 'confirm-bubble';
   bubble.innerHTML = '<div class="cb-text">确定重置此配置？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok">确定</button></div>';
-  btn.appendChild(bubble);
+  document.body.appendChild(bubble);
+  // fixed 定位到按钮上方
+  const rect = btn.getBoundingClientRect();
+  bubble.style.position = 'fixed';
+  bubble.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+  bubble.style.left = 'auto';
+  bubble.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
   bubble.classList.add('show');
   bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
   bubble.querySelector('.cb-ok').onclick = (e) => {
