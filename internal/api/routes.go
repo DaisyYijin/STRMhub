@@ -90,6 +90,31 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/sync/full", h.RunFullSync)
 		protected.POST("/sync/incremental", h.RunIncrementalSync)
 
+		// Cron 未来运行时间预览（校验表达式是否正确）
+		protected.POST("/sync/cron-preview", func(c *gin.Context) {
+			var req struct {
+				Cron string `json:"cron"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || req.Cron == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请填写 cron 表达式"})
+				return
+			}
+			var next []string
+			t := time.Now()
+			for i := 0; i < 5; i++ {
+				t = nextCronTime(req.Cron, t)
+				if t.IsZero() {
+					break
+				}
+				next = append(next, t.Format("01-02 15:04"))
+			}
+			if len(next) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "cron 表达式无效或未来一年内不会触发"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"next": next})
+		})
+
 		// 任务状态（前端轮询：任务进行中禁用同步/整理按钮）+ 最近运行记录
 		protected.GET("/sync/status", func(c *gin.Context) {
 			running, name, start := TaskStatus()

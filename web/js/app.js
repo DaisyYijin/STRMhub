@@ -90,7 +90,7 @@ function showPage(id) {
     loadCategory();
     loadWash();
   }
-  if (id === 'sync') loadConfigs();
+  if (id === 'sync') { loadConfigs(); previewCron(); }
   if (id === 'upload-download') loadConfigs();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
@@ -502,6 +502,29 @@ async function loadDashboard() {
 
 // ==================== STRM 管理 ====================
 
+
+// Cron 未来运行时间预览（防抖 500ms）
+let cronPreviewTimer = null;
+async function previewCron() {
+  clearTimeout(cronPreviewTimer);
+  cronPreviewTimer = setTimeout(async () => {
+    const expr = document.getElementById('incr-cron').value.trim();
+    const el = document.getElementById('incr-cron-preview');
+    if (!expr) { el.textContent = '请填写 cron 表达式'; return; }
+    el.textContent = '计算中...';
+    try {
+      const d = await api('/sync/cron-preview', { method: 'POST', body: JSON.stringify({ cron: expr }) });
+      const times = d.next || [];
+      if (times.length === 0) {
+        el.textContent = '○ 未来一年内不会触发，请检查表达式';
+      } else {
+        el.innerHTML = times.map((t, i) => `第 ${i + 1} 次: ${esc(t)}`).join('<br>');
+      }
+    } catch (e) {
+      el.textContent = '✗ ' + (e.message || '表达式无效');
+    }
+  }, 500);
+}
 
 // ==================== 任务状态（同步/整理互斥提示） ====================
 let taskPollTimer = null;

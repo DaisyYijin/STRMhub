@@ -153,3 +153,18 @@ func StartIncrScheduler(h *Handler) {
 	}()
 	log.Println("[调度] 调度器已启动（cron 触发 自动整理+增量同步；全量同步仅手动）")
 }
+
+// nextCronTime 计算给定时刻之后下一次 cron 触发时间
+// 逐分钟扫描（最多扫描一年，约 52.6 万次，毫秒级完成）
+func nextCronTime(expr string, after time.Time) time.Time {
+	// 从下一分钟开始（对齐分钟）
+	t := after.Truncate(time.Minute).Add(time.Minute)
+	limit := t.AddDate(1, 0, 0) // 最多扫描一年
+	for t.Before(limit) {
+		if CronMatch(expr, t) {
+			return t
+		}
+		t = t.Add(time.Minute)
+	}
+	return time.Time{} // 未找到
+}

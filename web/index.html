@@ -126,7 +126,8 @@
 
         <div class="card">
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
-          <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *"></div></div>
+          <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *" oninput="previewCron()"></div></div>
+          <div class="form-row"><div class="label">未来运行时间</div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
           <div class="form-row"><div class="label">最近运行</div><div class="control"><div id="incr-recent-runs" style="font-size:13px;color:var(--text-2);line-height:1.9">加载中...</div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
@@ -905,6 +906,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=50"></script>
+<script src="/js/app.js?v=51"></script>
 </body>
 </html>
