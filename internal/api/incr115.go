@@ -304,7 +304,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 
 	incrStart := time.Now()
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
-	log.Printf("[同步] ▶ 增量同步开始，等待 3 秒后拉取事件...%s，沉淀等待 3 秒后拉取生活事件...", p.Cid)
+	log.Printf("[同步] ▶ 增量同步开始（媒体库 cid=%s），沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
@@ -382,7 +382,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		libName = info.n
 	}
 
-	// 作用域：只监控媒体库子树；待整理/已存在/冗余等整理工作区的事件静默忽略
+	// 作用域：只监控媒体库子树；待整理/已存在/冗余/转存目录等整理工作区的事件静默忽略
 	libAbs := absPathOf(cookie, p.Cid, memo)
 	var excludedAbs []string
 	var orgCfgRaw struct {
@@ -393,7 +393,11 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	if err := json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw); err != nil {
 		log.Printf("[同步] ○ 整理配置解析失败（使用默认值）: %v", err)
 	}
-	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant} {
+	var shareCfgRaw struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareCfgRaw)
+	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant, shareCfgRaw.Folder} {
 		if cid != "" {
 			if a := absPathOf(cookie, cid, memo); a != "" {
 				excludedAbs = append(excludedAbs, strings.TrimSuffix(a, "/"))
