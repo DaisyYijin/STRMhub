@@ -242,6 +242,33 @@ func (h *Handler) triggerOrganizeAndSync() {
 		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
 }
 
+// shareFolderCid 读取分享同步配置的转存目录 cid（未配置返回空）
+func (h *Handler) shareFolderCid() string {
+	var cfg struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &cfg)
+	return cfg.Folder
+}
+
+// dirInside 判断 childCid 是否位于 parentCid 子树内（含相等），取不到路径返回 false
+func (h *Handler) dirInside(childCid, parentCid string) bool {
+	if childCid == "" || parentCid == "" || childCid == parentCid {
+		return childCid == parentCid && childCid != ""
+	}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return false
+	}
+	memo := map[string]dirInfo{}
+	childAbs := strings.TrimSuffix(absPathOf(cookie, childCid, memo), "/")
+	parentAbs := strings.TrimSuffix(absPathOf(cookie, parentCid, memo), "/")
+	if childAbs == "" || parentAbs == "" {
+		return false
+	}
+	return childAbs == parentAbs || strings.HasPrefix(childAbs+"/", parentAbs+"/")
+}
+
 // dirOverlapWithLibrary 判断转存目录与媒体库是否存在包含关系
 // （相等、转存目录在库内、或转存目录覆盖整个库都算）。取不到路径时返回
 // false 放行，由引擎层的 orgGuards 兜底

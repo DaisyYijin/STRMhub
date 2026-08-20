@@ -34,6 +34,18 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 	logFn := func(msg string) { log.Println(msg) }
 	orgResults, successCount := runOrganizeEngine(ops, orgCfg, logFn)
 
+	// 转存目录兜底扫描：磁力/离线下载完成时间不可控（提交 60 秒后的自动触发
+	// 可能扑空），手动/定时整理时顺带扫一遍转存目录，保证迟到内容最终被整理。
+	// 转存目录在待整理子树内（会被上面的扫描覆盖）或与媒体库重叠时跳过
+	if shareCid := h.shareFolderCid(); shareCid != "" && shareCid != orgCfg.Pending && !h.dirOverlapWithLibrary(shareCid, orgCfg.Library) && !h.dirInside(shareCid, orgCfg.Pending) {
+		log.Printf("[整理] ▶ 顺带扫描转存目录...")
+		shareCfg := *orgCfg
+		shareCfg.Pending = shareCid
+		shareResults, shareOK := runOrganizeEngineWithConfig(ops, &shareCfg, logFn)
+		orgResults = append(orgResults, shareResults...)
+		successCount += shareOK
+	}
+
 	totalFiles := len(orgResults)
 	existsCount := 0
 	failedCount := 0
