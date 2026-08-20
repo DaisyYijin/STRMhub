@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,43 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, int, string, error) {
 		}
 	}
 	return dirs, count, origin, nil
+}
+
+// Resolve115Path 把网盘绝对路径逐段解析为 cid（供前端手填路径时换算）
+// GET /storage/115/resolve?path=/影视测试/俱乐部
+// 依赖目录列表缓存，逐段匹配目录名；单层目录数超过一页（1150）时可能漏配
+func (h *Handler) Resolve115Path(c *gin.Context) {
+	p := strings.Trim(c.Query("path"), "/ \t")
+	if p == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "路径为空"})
+		return
+	}
+	ops, err := h.newPan115Ops()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	cid := "0"
+	for i, seg := range strings.Split(p, "/") {
+		dirs, _, _, err := ops.listDirs(cid)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "读取目录失败: " + err.Error()})
+			return
+		}
+		found := ""
+		for _, d := range dirs {
+			if fmt.Sprint(d["name"]) == seg {
+				found = fmt.Sprint(d["cid"])
+				break
+			}
+		}
+		if found == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("路径不存在：/%s（第 %d 段 %q 未找到）", p, i+1, seg)})
+			return
+		}
+		cid = found
+	}
+	c.JSON(http.StatusOK, gin.H{"cid": cid, "path": "/" + p})
 }
 
 // build115FileQuery 构造 115 文件列表查询参数

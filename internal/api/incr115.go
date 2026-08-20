@@ -535,10 +535,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	domain, format, keepExt, skipExist := h.getStrmConfig()
 	for _, t := range uniqTargets {
 		var videos, assets []remoteFile
-		if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter); err != nil {
+		if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter, nil); err != nil {
 			log.Printf("[同步] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
 			time.Sleep(30 * time.Second)
-			if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter); err != nil {
+			if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter, nil); err != nil {
 				log.Printf("[同步] 遍历目录重试仍失败 %s: %v，跳过", t.base, err)
 				sum.DirsSkipped++
 				continue

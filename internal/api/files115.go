@@ -188,8 +188,9 @@ func list115Entries(cookie, cid string, offset int) ([]map[string]interface{}, i
 }
 
 // walk115Dir 递归遍历目录，按过滤器分别收集视频（生成 strm）和附属文件（实体落盘）
-// assets 为 nil 时只收集视频（整理管线等场景）
-func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFile, f *syncFilter) error {
+// assets 为 nil 时只收集视频（整理管线等场景）；skipCids 非空时跳过这些 cid 的子树
+// （整理工作区：待整理/已存在/冗余/转存目录，同步库根时不应生成 STRM）
+func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFile, f *syncFilter, skipCids map[string]bool) error {
 	dirLabel := basePath
 	if dirLabel == "" {
 		dirLabel = "(根目录)"
@@ -209,8 +210,13 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 			isDir := fmt.Sprint(d["f"]) == "0"
 			name := fmt.Sprint(d["n"])
 			if isDir {
+				subCid := fmt.Sprint(d["cid"])
+				if skipCids != nil && skipCids[subCid] {
+					log.Printf("[同步] ○ 跳过整理工作区目录: %s", path.Join(basePath, name))
+					continue
+				}
 				subPath := path.Join(basePath, name)
-				if err := walk115Dir(ops, fmt.Sprint(d["cid"]), subPath, videos, assets, f); err != nil {
+				if err := walk115Dir(ops, subCid, subPath, videos, assets, f, skipCids); err != nil {
 					return err
 				}
 			} else {

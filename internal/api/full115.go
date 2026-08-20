@@ -161,9 +161,9 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		}
 	}
 
-	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
+	// 整理工作区不参与同步（见 orgSkipCids）
 	var videos, assets []remoteFile
-	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter); err != nil {
+	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter, h.orgSkipCids(req.Cid)); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}
@@ -196,6 +196,29 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		"assets_skipped":    skipped,
 		"assets_failed":     failed,
 	})
+}
+
+// orgSkipCids 整理工作区（待整理/已存在/冗余/转存目录）的 cid 集合，
+// 同步遍历时跳过这些子树——同步媒体库根目录时，工作区里等待处理的
+// 内容不应生成 STRM。rootCid 自身不计入（同步目标就是工作区时照常执行）
+func (h *Handler) orgSkipCids(rootCid string) map[string]bool {
+	skip := map[string]bool{}
+	var orgSkip struct {
+		Pending   string `json:"pending"`
+		Existing  string `json:"existing"`
+		Redundant string `json:"redundant"`
+	}
+	var shareSkip struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgSkip)
+	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareSkip)
+	for _, c := range []string{orgSkip.Pending, orgSkip.Existing, orgSkip.Redundant, shareSkip.Folder} {
+		if c != "" && c != rootCid {
+			skip[c] = true
+		}
+	}
+	return skip
 }
 
 // assetDLWorkers 附属文件并发下载线程数（CDN 下载不占 API 限额，CMS 同款思路）

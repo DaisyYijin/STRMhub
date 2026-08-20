@@ -66,6 +66,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 目录浏览
 		protected.GET("/storage/115/dirs", h.List115Dirs)
+		protected.GET("/storage/115/resolve", h.Resolve115Path)
 		protected.GET("/storage/local/dirs", h.ListLocalDirs)
 
 		// 核心配置（TMDB）

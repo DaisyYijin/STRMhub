@@ -407,8 +407,9 @@ function resetOrgRecords(btn) {
 
 // ==================== 增量同步 ====================
 async function startIncrementalSync() {
-  const cid = resolveCID('full-cid') || '0';
-  if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
+  await resolveInputCID('full-cid');
+  const cid = resolveCID('full-cid');
+  if (!cid || cid === '0') { toast('无法识别 115 目录：请点「选择目录」重新选择，或直接输入纯数字 cid'); return; }
   try {
     toast('增量同步进行中（受 API 间隔限制可能持续数分钟）...');
     appendLog('开始增量同步（拉取 115 生活事件，定向同步受影响目录）...');
@@ -620,14 +621,27 @@ async function loadLocalDirs(path) {
   }
 }
 
-// 手动输入路径/cid 直接跳转
-function dirPickerJump() {
+// 手动输入路径/cid 直接跳转（115 支持 "/路径/跳转" 和纯数字 cid 两种写法）
+async function dirPickerJump() {
   const input = document.getElementById('dir-picker-input');
   const v = (input.value || '').trim();
   if (!v) return;
   if (dirPicker.mode === '115') {
-    const cid = v.replace(/\D/g, '');
-    load115Dirs(cid || '0', {});
+    if (/^\d+$/.test(v)) {
+      load115Dirs(v, {});
+      return;
+    }
+    // 路径写法：后端逐段解析成 cid 再跳转，并把面包屑设为该路径
+    try {
+      const data = await api('/storage/115/resolve?path=' + encodeURIComponent(v));
+      if (data && data.cid) {
+        dirPicker.trail = v.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+        load115Dirs(data.cid, { restore: dirPicker.trail });
+      }
+    } catch (e) {
+      document.getElementById('dir-picker-list').innerHTML =
+        '<div class="dir-empty">' + esc(e.message || '路径无法解析') + '</div>';
+    }
   } else {
     loadLocalDirs(v);
   }
@@ -677,8 +691,10 @@ function confirmDirPicker() {
   const target = document.getElementById(dirPickerTarget);
   if (dirPicker.mode === '115') {
     if (target) {
-      // 输入框显示可读路径，真实 cid 存 dataset 供同步/保存使用
+      // 输入框显示可读路径，真实 cid 存 dataset 供同步/保存使用；
+      // dataset.path 记录 cid 对应的路径，用于检测用户手改路径后的 cid 失配
       target.dataset.cid = dirPicker.cid;
+      target.dataset.path = dirPicker.trail.length ? '/' + dirPicker.trail.join('/') : '';
       target.value = dirPicker.trail.length ? '/' + dirPicker.trail.join('/') : '';
       target.placeholder = '根目录';
     }
@@ -688,20 +704,59 @@ function confirmDirPicker() {
   closeDirPicker();
 }
 
-// resolveCID 取输入框对应的 115 cid：优先 dataset（目录选择器写入），
-// 兼容用户手填纯数字 cid 的情况
+// resolveInputCID 把输入框里手填的路径解析成 cid（调后端逐段匹配），
+// 成功后写回 dataset.cid/dataset.path。防抖后由输入事件触发，
+// 也在同步/保存前主动 await 一次兜底
+async function resolveInputCID(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  const v = (el.value || '').trim();
+  if (!v || /^\d+$/.test(v)) return;
+  if (el.dataset.cid && el.dataset.cid !== '0' && el.dataset.path === v) return; // cid 与路径已对上号
+  try {
+    const data = await api('/storage/115/resolve?path=' + encodeURIComponent(v));
+    if (data && data.cid) {
+      el.dataset.cid = data.cid;
+      el.dataset.path = v;
+    }
+  } catch (e) { /* 解析失败保留原 dataset.cid，提交时由 resolveCID 拦截 */ }
+}
+
+// attachCIDResolvers 给 115 目录输入框挂防抖解析（手填路径自动换算 cid）
+const CID_INPUTS = ['full-cid', 'share-folder', 'org-pending', 'org-existing', 'org-redundant'];
+function attachCIDResolvers() {
+  CID_INPUTS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let timer = null;
+    el.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => resolveInputCID(id), 600);
+    });
+  });
+}
+
+// resolveCID 取输入框对应的 115 cid。
+// 优先级：纯数字输入 > 与当前路径匹配的 dataset.cid；都不满足返回 ''。
+// 关键：dataset.cid 只有在记录的 dataset.path 等于当前输入值时才可信，
+// 否则用户手改过路径而 cid 还是旧目录的——静默用旧 cid 会同步错目录
 function resolveCID(inputId) {
   const el = document.getElementById(inputId);
   const v = (el.value || '').trim();
-  if (el.dataset && el.dataset.cid && el.dataset.cid !== '0') return el.dataset.cid;
   if (/^\d+$/.test(v)) return v;
+  if (el.dataset && el.dataset.cid && el.dataset.cid !== '0') {
+    if (el.dataset.path === undefined || el.dataset.path === v) return el.dataset.cid;
+  }
   return '';
 }
 
 // ==================== 全量同步 ====================
 async function startFullSync() {
-  const cid = resolveCID('full-cid') || '0';
-  if (!document.getElementById('full-cid').value.trim() && cid === '0') { toast('请先选择 115 目录或填写 cid'); return; }
+  // 手填路径先解析成 cid（防抖解析可能还没触发），解析不了就拒绝执行，
+  // 绝不能拿旧 dataset.cid 静默同步错误的目录
+  await resolveInputCID('full-cid');
+  const cid = resolveCID('full-cid');
+  if (!cid || cid === '0') { toast('无法识别 115 目录：请点「选择目录」重新选择，或直接输入纯数字 cid'); return; }
   const videoExt = getTags('video-ext');
   if (!videoExt.length) { toast('请至少保留一个视频文件后缀'); return; }
   try {
@@ -1428,14 +1483,17 @@ function applyConfig(key, v) {
       setVal('msg-tg-chat-id', v.tg.chat_id);
       setMsgEnabled('tg', v.tg.enabled === true || v.tg.enabled === 'true');
     }
-  } else if (key === 'org-basic') {
-    // 输入框显示可读路径，cid 存 dataset（兼容旧数据：值本身是数字 cid）
+	} else if (key === 'org-basic') {
+    // 输入框显示可读路径，cid 存 dataset（兼容旧数据：值本身是数字 cid）；
+    // 同步记录 dataset.path，用于检测用户手改路径后的 cid 失配
     const pairs = [['org-pending', 'pending'], ['org-existing', 'existing'], ['org-redundant', 'redundant']];
     pairs.forEach(([id, k]) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.dataset.cid = v[k] || '';
-      setVal(id, v[k + '_path'] !== undefined ? v[k + '_path'] : (v[k] || ''));
+      const shown = v[k + '_path'] !== undefined ? v[k + '_path'] : (v[k] || '');
+      el.dataset.path = shown;
+      setVal(id, shown);
     });
   } else if (key === 'org-recognize') {
     setVal('org-replace-rules', v.replace_rules);
@@ -1458,20 +1516,28 @@ function applyConfig(key, v) {
     setVal('emby-api-key', v.api_key);
     setVal('emby-path-mapping', v.path_mapping);
     if (v.auto_refresh !== undefined) setEmbyAutoRefresh(v.auto_refresh === true || v.auto_refresh === 'true');
-  } else if (key === 'full') {
+	} else if (key === 'full') {
     const cidEl = document.getElementById('full-cid');
-    if (cidEl) { cidEl.dataset.cid = v.cid || ''; }
-    setVal('full-cid', v.path !== undefined ? v.path : (v.cid || ''));
+    if (cidEl) {
+      cidEl.dataset.cid = v.cid || '';
+      const shown = v.path !== undefined ? v.path : (v.cid || '');
+      cidEl.dataset.path = shown;
+      setVal('full-cid', shown);
+    }
     setVal('full-local', v.local_path);
     if (v.video_ext) setTags('video-ext', v.video_ext);
     if (v.image_ext) setTags('image-ext', v.image_ext);
     if (v.data_ext) setTags('data-ext', v.data_ext);
   } else if (key === 'incr') {
     setVal('incr-cron', v.cron);
-  } else if (key === 'share') {
+	} else if (key === 'share') {
     const el = document.getElementById('share-folder');
-    if (el) el.dataset.cid = v.folder || '';
-    setVal('share-folder', v.folder_path !== undefined ? v.folder_path : (v.folder || ''));
+    if (el) {
+      el.dataset.cid = v.folder || '';
+      const shown = v.folder_path !== undefined ? v.folder_path : (v.folder || '');
+      el.dataset.path = shown;
+      setVal('share-folder', shown);
+    }
   } else if (key === 'monitor') {
     setVal('monitor-dir', v.dir);
     setVal('monitor-target', v.target);
@@ -1521,7 +1587,30 @@ function warnPendingDirOverlap() {
   }
 }
 
+// firstUnresolvedCID 返回第一个"有输入文本但解析不出 cid"的输入框 id（全解析成功返回 ''）
+function firstUnresolvedCID(ids) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if ((el.value || '').trim() && !resolveCID(id)) return id;
+  }
+  return '';
+}
+
 async function saveConfig(key) {
+  // 含 115 目录的配置：先把手填路径解析成 cid；解析失败直接拦截，
+  // 避免存入空 cid 或与显示路径不符的旧 cid
+  let cidFields = [];
+  if (key === 'full') cidFields = ['full-cid'];
+  if (key === 'share') cidFields = ['share-folder'];
+  if (key === 'org-basic') cidFields = ['org-pending', 'org-existing', 'org-redundant'];
+  if (cidFields.length) {
+    await Promise.all(cidFields.map(resolveInputCID));
+    if (firstUnresolvedCID(cidFields)) {
+      toast('目录路径无法识别：请点「选择目录」重新选择，或输入纯数字 cid');
+      return;
+    }
+  }
   const value = collectConfig(key);
   if (value === null) { toast('该配置暂未支持保存'); return; }
   try {
@@ -1714,6 +1803,7 @@ window.addEventListener('DOMContentLoaded', () => {
     autoResizeTextarea(ta);
   });
   updateRenameExample();
+  attachCIDResolvers();
   startTaskPoll();
   checkAuth();
 });
