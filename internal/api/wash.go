@@ -144,6 +144,23 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	if len(libNames) == 0 {
 		return washSkip
 	}
+	// 剧集集数守卫（CMS 图解"当前集是否已存在"分支）：
+	// 新文件的集数在库内从未出现 → 是新增集，直接正常入库；
+	// 只有同一集已存在时才做画质洗版比较，否则新剧集会被误判进已存在
+	if media.MediaType == "tv" {
+		if newEp := parseFileName(newName).Episode; newEp > 0 {
+			sameEpisode := false
+			for _, ln := range libNames {
+				if parseFileName(ln).Episode == newEp {
+					sameEpisode = true
+					break
+				}
+			}
+			if !sameEpisode {
+				return washSkip
+			}
+		}
+	}
 	if !washDecision(newName, libNames, rules) {
 		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本，按已存在处理", newName))
 		return washNotBetter

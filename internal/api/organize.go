@@ -1203,6 +1203,20 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
+	// 网盘去重前置（CMS 图解第一步）：主视频 SHA1 已在同步台账里
+	// （以前同步过同一文件）→ 直接进已存在，省一次 TMDB 识别
+	if mainVideo.Sha1 != "" && sha1ExistsInLibrary(mainVideo.Sha1) {
+		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+		} else {
+			onLog(fmt.Sprintf("○ %s/ - SHA1 命中同步台账，已移到已存在目录", dir.Name))
+		}
+		for _, vf := range videoFiles {
+			results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中同步台账"})
+		}
+		return results
+	}
+
 	// 应用替换规则
 	name := mainVideo.Name
 	if len(replaceRules) > 0 {
