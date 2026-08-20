@@ -161,9 +161,14 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		}
 	}
 
-	// 整理工作区不参与同步（见 orgSkipCids）
+	// 整理工作区不参与同步（见 orgSkipCids）；
+	// 打印已配置个数，少于预期（待整理/已存在/冗余/转存）说明有 cid 配错或配漏
+	skipCids := h.orgSkipCids(req.Cid)
+	log.Printf("[同步] ○ 整理工作区排除: 已配置 %d/4（待整理/已存在/冗余/转存目录，配置不全时对应目录会被同步）", len(skipCids))
+
+	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
 	var videos, assets []remoteFile
-	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter, h.orgSkipCids(req.Cid)); err != nil {
+	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter, skipCids); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}
