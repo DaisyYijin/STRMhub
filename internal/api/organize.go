@@ -1406,7 +1406,15 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	var mediaFids, metaFids, junkFids []string
 	for _, f := range files {
 		switch classifyFile(f.Name) {
-		case FileTypeVideo, FileTypeSubtitle:
+		case FileTypeVideo:
+			// 广告/引流视频与超小视频不随正片入库（此前按扩展名误入 mediaFids，
+			// 被前移环节的过滤漏掉、未改名就搬进了库）
+			if isAdOnlyVideo(f.Name) || (minBytes > 0 && f.Size > 0 && f.Size < minBytes) {
+				junkFids = append(junkFids, f.Fid)
+			} else {
+				mediaFids = append(mediaFids, f.Fid)
+			}
+		case FileTypeSubtitle:
 			mediaFids = append(mediaFids, f.Fid)
 		case FileTypeNFO, FileTypeStdImage:
 			metaFids = append(metaFids, f.Fid) // 封面/NFO 放剧集根目录
