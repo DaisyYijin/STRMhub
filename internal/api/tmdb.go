@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"strmhub/internal/model"
 )
@@ -304,6 +305,24 @@ var (
 	reReleaseGroup = regexp.MustCompile(`[\.\s_-]([A-Za-z0-9]+)$`)
 )
 
+// reAdBracketBlock / reAdDomain 发布站广告：全角括号块与域名
+var (
+	reAdBracketBlock = regexp.MustCompile(`【[^【】]*】`)
+	reAdDomain       = regexp.MustCompile(`(?i)\b(www\.)?[a-z0-9][a-z0-9-]{1,15}\.(com|net|org|cc|xyz|me|tv|info|vip|top)\b`)
+)
+
+// stripReleaseAds 剥离文件名/目录名中的发布站广告（【高清影视之家发布
+// www.SSDSSE.com】块与裸域名），清理残留分隔符。放在 parseFileName 最前，
+// 保证标题提取和搜索都不被广告前缀污染
+func stripReleaseAds(name string) string {
+	name = reAdBracketBlock.ReplaceAllString(name, " ")
+	name = reAdDomain.ReplaceAllString(name, " ")
+	for strings.Contains(name, "  ") {
+		name = strings.ReplaceAll(name, "  ", " ")
+	}
+	return strings.Trim(name, " -_.@")
+}
+
 // parseFileName 从视频文件名解析标题、年份、季集等信息
 func parseFileName(filename string) *ParsedName {
 	// 去掉文件后缀
@@ -311,6 +330,8 @@ func parseFileName(filename string) *ParsedName {
 	if idx := strings.LastIndex(name, "."); idx > 0 {
 		name = name[:idx]
 	}
+	// 先剥离发布站广告（【…】块/域名），再解析
+	name = stripReleaseAds(name)
 
 	result := &ParsedName{}
 
@@ -440,6 +461,23 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 		}
 	}
 
+	// 第二点五轮：中英混合标题拆分搜索。
+	// 场景："骗不了人的男人 Softie Conman"——TMDB 对混合串整体匹配不到，
+	// 中文名或英文名单独搜索才能命中
+	if cjk, latin := splitCJKLatin(parsed.Title); cjk != "" && latin != "" {
+		for _, q := range []string{cjk, latin} {
+			log.Printf("[整理] 混合标题拆分搜索: %q（原 %q）", q, parsed.Title)
+			if parsed.IsTV {
+				media, err = tc.SearchTV(q, parsed.Year)
+			} else {
+				media, err = movieThenTV(q)
+			}
+			if err != nil || media != nil {
+				return media, err
+			}
+		}
+	}
+
 	// 第三轮：GPT 兜底（配置了 GPT 识别时）——从原始文件名提取标题/年份再搜
 	if gptCfg := loadGPTFallback(); gptCfg != nil {
 		if ext := gptExtract(gptCfg, parsed.Title); ext != nil && ext.Title != "" && ext.Title != parsed.Title {
@@ -457,6 +495,60 @@ func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 		}
 	}
 	return media, nil
+}
+
+// splitCJKLatin 把中英混合标题拆成中文名与英文名（各自取最长连续段）。
+// "骗不了人的男人[国日多音轨+中文字幕] Softie Conman"
+//   → ("骗不了人的男人", "Softie Conman")
+func splitCJKLatin(title string) (cjk, latin string) {
+	isCJK := func(r rune) bool {
+		return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r)
+	}
+	isLatin := func(r rune) bool {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '\'' || r == '’' || r == ':' || r == '!' || r == '-' || r == '&' || r == '.'
+	}
+	var curCJK, curLatin, bestCJK, bestLatin []rune
+	flush := func() {
+		if len(curCJK) > len(bestCJK) {
+			bestCJK = append([]rune(nil), curCJK...)
+		}
+		if len(curLatin) > len(bestLatin) {
+			bestLatin = append([]rune(nil), curLatin...)
+		}
+		curCJK, curLatin = curCJK[:0], curLatin[:0]
+	}
+	for _, r := range title {
+		switch {
+		case isCJK(r):
+			if len(curLatin) > 0 {
+				flush()
+			}
+			curCJK = append(curCJK, r)
+		case isLatin(r):
+			if len(curCJK) > 0 {
+				flush()
+			}
+			curLatin = append(curLatin, r)
+		case r == ' ' || r == '·':
+			// 空格归入当前段，不打断连续性
+			if len(curCJK) > 0 {
+				curCJK = append(curCJK, r)
+			} else if len(curLatin) > 0 {
+				curLatin = append(curLatin, r)
+			}
+		default:
+			flush()
+		}
+	}
+	flush()
+	cjk = strings.TrimSpace(string(bestCJK))
+	latin = strings.TrimSpace(string(bestLatin))
+	// 拉丁段必须含字母（排除 "2022"/"1080p" 这类纯数字残留）
+	if !strings.ContainsFunc(latin, func(r rune) bool { return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' }) {
+		latin = ""
+	}
+	return cjk, latin
 }
 
 // gptFallbackCfg GPT 识别配置（org-gpt 设置）

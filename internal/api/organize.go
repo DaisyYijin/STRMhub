@@ -41,6 +41,7 @@ type OrgConfig struct {
 	Redundant   string `json:"redundant"`  // 冗余目录 cid（识别失败等）
 	ReplaceRules string `json:"replace_rules"`
 	MinSize     int64  `json:"min_size"`
+	ShareCid    string `json:"-"` // 转存目录 cid（loadOrgConfig 注入；同为工作区根，绝不被当条目处理）
 }
 
 // renameTpl 全局重命名模板（runOrganizeEngine 初始化时从配置加载）
@@ -86,6 +87,12 @@ func (h *Handler) loadOrgConfig() (*OrgConfig, error) {
 	if cfg.Library == "" {
 		return nil, fmt.Errorf("未配置全量同步的媒体库目录（整理目标库取自全量同步配置）")
 	}
+	// 转存目录同样是工作区根：整理引擎跳过它自身（内容由转存触发/守望者以它为扫描根处理）
+	var shareCfg struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareCfg)
+	cfg.ShareCid = shareCfg.Folder
 	return &cfg, nil
 }
 
@@ -942,6 +949,13 @@ func newOrgGuards(cookie, scanCid string, cfg *OrgConfig) *orgGuards {
 			g.protected = append(g.protected, strings.TrimSuffix(a, "/"))
 		}
 	}
+	// 转存目录同样是保护子树——但仅当它不是扫描根时：
+	// 转存触发场景（Pending 被替换成转存目录）要正常处理其内容
+	if cfg.ShareCid != "" && cfg.ShareCid != scanCid {
+		if a := g.absOf(cfg.ShareCid); a != "" {
+			g.protected = append(g.protected, strings.TrimSuffix(a, "/"))
+		}
+	}
 	scanAbs := strings.TrimSuffix(g.absOf(scanCid), "/")
 	for _, p := range g.protected {
 		if scanAbs != "" && (p == scanAbs || strings.HasPrefix(p, scanAbs+"/")) {
@@ -1030,10 +1044,13 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 		return results, 0
 	}
 
-	// 四个工作区根目录（媒体库/待整理/已存在/冗余）永不被移动：
+	// 五个工作区根目录（媒体库/待整理/已存在/冗余/转存目录）永不被移动：
 	// 引擎只往它们里面放内容，目录自身绝不能被当作影视条目处理
-	// （否则会出现"已经存在文件夹移进自己"，或媒体库嵌在待整理内时整库被搬进已存在）
+	// （否则会出现"已经存在文件夹移进自己"、转存目录被当容器壳搬进冗余等事故）
 	excluded := map[string]bool{cfg.Library: true, cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+	if cfg.ShareCid != "" {
+		excluded[cfg.ShareCid] = true
+	}
 	filtered := topEntries[:0]
 	for _, e := range topEntries {
 		if e.IsDir && excluded[e.Cid] {
@@ -1806,8 +1823,11 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 		return results, 0
 	}
 
-	// 四个工作区根目录自身永不被当作条目处理（与 runOrganizeEngine 一致）
+	// 五个工作区根目录自身永不被当作条目处理（与 runOrganizeEngine 一致）
 	excluded := map[string]bool{cfg.Library: true, cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+	if cfg.ShareCid != "" && cfg.ShareCid != cfg.Pending {
+		excluded[cfg.ShareCid] = true
+	}
 	filtered := topEntries[:0]
 	for _, e := range topEntries {
 		if e.IsDir && excluded[e.Cid] {
