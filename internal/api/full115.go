@@ -225,8 +225,11 @@ func (h *Handler) orgSkipCids(rootCid string) (map[string]bool, []string) {
 	} {
 		mark := "✗"
 		if s.cid != "" {
-			mark = "✓"
-			if s.cid != rootCid {
+			if s.cid == rootCid {
+				// 配成了同步根本身：引擎不把同步根当工作区，实际不会跳过
+				mark = "=同步根(不生效)"
+			} else {
+				mark = "✓"
 				skip[s.cid] = true
 			}
 		}
