@@ -161,10 +161,9 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		}
 	}
 
-	// 整理工作区不参与同步（见 orgSkipCids）；
-	// 打印已配置个数，少于预期（待整理/已存在/冗余/转存）说明有 cid 配错或配漏
-	skipCids := h.orgSkipCids(req.Cid)
-	log.Printf("[同步] ○ 整理工作区排除: 已配置 %d/4（待整理/已存在/冗余/转存目录，配置不全时对应目录会被同步）", len(skipCids))
+	// 整理工作区不参与同步（见 orgSkipCids）；打印各槽位配置情况，配错配漏一眼可见
+	skipCids, slots := h.orgSkipCids(req.Cid)
+	log.Printf("[同步] ○ 整理工作区排除: %s（✗ 的槽位对应目录会被当成媒体同步，请到对应配置卡重新选择目录）", strings.Join(slots, " "))
 
 	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
 	var videos, assets []remoteFile
@@ -205,8 +204,9 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 
 // orgSkipCids 整理工作区（待整理/已存在/冗余/转存目录）的 cid 集合，
 // 同步遍历时跳过这些子树——同步媒体库根目录时，工作区里等待处理的
-// 内容不应生成 STRM。rootCid 自身不计入（同步目标就是工作区时照常执行）
-func (h *Handler) orgSkipCids(rootCid string) map[string]bool {
+// 内容不应生成 STRM。rootCid 自身不计入（同步目标就是工作区时照常执行）。
+// 第二个返回值为各槽位的配置情况（"待整理:✓/✗" 列表，供日志诊断配错配漏）
+func (h *Handler) orgSkipCids(rootCid string) (map[string]bool, []string) {
 	skip := map[string]bool{}
 	var orgSkip struct {
 		Pending   string `json:"pending"`
@@ -218,12 +218,21 @@ func (h *Handler) orgSkipCids(rootCid string) map[string]bool {
 	}
 	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgSkip)
 	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareSkip)
-	for _, c := range []string{orgSkip.Pending, orgSkip.Existing, orgSkip.Redundant, shareSkip.Folder} {
-		if c != "" && c != rootCid {
-			skip[c] = true
+	slots := make([]string, 0, 4)
+	for _, s := range []struct{ name, cid string }{
+		{"待整理", orgSkip.Pending}, {"已存在", orgSkip.Existing},
+		{"冗余", orgSkip.Redundant}, {"转存目录", shareSkip.Folder},
+	} {
+		mark := "✗"
+		if s.cid != "" {
+			mark = "✓"
+			if s.cid != rootCid {
+				skip[s.cid] = true
+			}
 		}
+		slots = append(slots, s.name+":"+mark)
 	}
-	return skip
+	return skip, slots
 }
 
 // assetDLWorkers 附属文件并发下载线程数（CDN 下载不占 API 限额，CMS 同款思路）

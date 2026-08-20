@@ -80,7 +80,8 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 			}
 		}
 		var videos, assets []remoteFile
-		if err := walk115Dir(ops, orgCfg.Library, orgLibName, &videos, &assets, filter, h.orgSkipCids(orgCfg.Library)); err != nil {
+		skipCids, _ := h.orgSkipCids(orgCfg.Library)
+		if err := walk115Dir(ops, orgCfg.Library, orgLibName, &videos, &assets, filter, skipCids); err != nil {
 			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
 			return steps, orgResults, nil
 		}
