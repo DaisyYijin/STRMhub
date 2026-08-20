@@ -1689,6 +1689,69 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 
 // ==================== AV 番号识别与处理 ====================
 
+// avCategoryConfig AV 分类配置（与 UI 上的 YAML 对应）
+// 无码/有码/未分类 按番号前缀匹配，空前缀 = 兜底
+type avCategoryConfig struct {
+	Name      string   // 分类名（如"无码"）
+	Prefixes  []string // 番号前缀列表（空 = 兜底）
+}
+
+// loadAVCategories 从 org-basic 配置读 AV 分类（暂用内置默认，后续接 UI 的 YAML）
+func loadAVCategories() []avCategoryConfig {
+	// 默认配置（与用户 YAML 示例一致）
+	return []avCategoryConfig{
+		{Name: "无码", Prefixes: []string{"ABC", "DEF", "START"}},
+		{Name: "有码", Prefixes: nil}, // 兜底
+	}
+}
+
+// classifyAVNumber 按番号前缀分类，返回分类名
+func classifyAVNumber(avNum string) string {
+	cats := loadAVCategories()
+	avNumUpper := strings.ToUpper(avNum)
+	// 先精确匹配有前缀的分类
+	for _, cat := range cats {
+		if len(cat.Prefixes) == 0 {
+			continue // 跳过兜底
+		}
+		for _, prefix := range cat.Prefixes {
+			if strings.HasPrefix(avNumUpper, strings.ToUpper(prefix)) {
+				return cat.Name
+			}
+		}
+	}
+	// 再找兜底分类
+	for _, cat := range cats {
+		if len(cat.Prefixes) == 0 {
+			return cat.Name
+		}
+	}
+	return "未分类"
+}
+
+// sanitizeAVFilename 清洗 AV 文件名中的广告前缀
+// "4k688.com@START-622.mp4" → "START-622.mp4"
+// "www.xxx.com@MIDV-001.mp4" → "MIDV-001.mp4"
+func sanitizeAVFilename(name string) string {
+	// @ 前面的广告域名
+	if idx := strings.LastIndex(name, "@"); idx >= 0 && idx < len(name)/2 {
+		name = name[idx+1:]
+	}
+	// www.xxx.com 前缀（无 @ 分隔）
+	if m := regexp.MustCompile(`(?i)^www\.[a-z0-9.-]+\.com[-_.]?`).FindStringSubmatch(name); m != nil {
+		name = strings.TrimPrefix(name, m[0])
+	}
+	// 4k688.com 等纯域名前缀
+	if m := regexp.MustCompile(`(?i)^[a-z0-9]+\.com[-_@]?`).FindStringSubmatch(name); m != nil {
+		name = strings.TrimPrefix(name, m[0])
+	}
+	// 【xxx】方括号广告
+	name = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(name, "")
+	// 多余的前导分隔符
+	name = strings.TrimLeft(name, "-_.")
+	return name
+}
+
 // avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12、FC2-PPV-1234567 等
 var avNumRegex = regexp.MustCompile(`(?i)([A-Z]{2,6})-?(\d{2,5})`)
 
@@ -1724,12 +1787,11 @@ tryFile:
 
 // processAVDirectory 处理 AV 目录（跳过 TMDB，直接用番号入库）
 func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir dirEntry, files []remoteFile, onLog func(string), results []OrganizeResult) []OrganizeResult {
-	// AV 目录结构：/AV/番号/文件
-	// 分类子目录用番号首字母：/AV/S/START-622/
-	firstLetter := media.Title[:1]
-	avDir := firstLetter + "/" + media.Title
+	// AV 目录结构：/AV/分类/番号/（分类 = 无码/有码，按番号前缀匹配）
+	category := classifyAVNumber(media.Title)
+	avDir := category + "/" + media.Title
 
-	onLog(fmt.Sprintf("▣ AV 目标目录: %s", avDir))
+	onLog(fmt.Sprintf("▣ AV 目标目录: %s（分类: %s）", avDir, category))
 
 	targetCid, err := ops.ensurePath(cfg.Library, avDir)
 	if err != nil {
@@ -1737,8 +1799,39 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 		return results
 	}
 
-	// 先重命名再移动
-	renameBeforeMove(ops, media, files, files, onLog)
+	// 先清洗广告前缀并重命名（"4k688.com@START-622.mp4" → "START-622.mp4"）
+	for _, f := range files {
+		cleanName := sanitizeAVFilename(f.Name)
+		ext := pathExt(f.Name)
+		// 视频文件重命名为 "番号.ext"，字幕/封面保留后缀部分
+		var newName string
+		if classifyFile(f.Name) == FileTypeVideo {
+			newName = media.Title + ext
+		} else if classifyFile(f.Name) == FileTypeSubtitle {
+			// 字幕：番号.后缀部分.ext
+			subSuffix := ""
+			if cleaned := sanitizeAVFilename(baseName(f.Name)); cleaned != baseName(f.Name) {
+				// 有广告前缀被清除了
+			}
+			// 尝试提取 .chs / .cht 等语言标记
+			base := baseName(f.Name)
+			if m := regexp.MustCompile(`\.(chs|cht|eng|chi|jap)`).FindStringSubmatch(base); m != nil {
+				subSuffix = m[0]
+			}
+			newName = media.Title + subSuffix + ext
+		} else {
+			// 其他文件（封面/nfo）：番号.ext
+			newName = media.Title + ext
+		}
+		_ = cleanName
+		if newName != f.Name {
+			if err := ops.rename(f.Fid, newName); err != nil {
+				onLog(fmt.Sprintf("○ AV 重命名失败保持原名 %s: %v", f.Name, err))
+			} else {
+				onLog(fmt.Sprintf("✓ AV 清洗重命名 %s → %s", f.Name, newName))
+			}
+		}
+	}
 
 	// 移动所有文件
 	var fids []string
@@ -1759,8 +1852,8 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 			results = append(results, OrganizeResult{
 				FileName: f.Name, Status: "success",
 				Title: media.Title, MediaType: "av",
-				Category: "AV", TargetDir: avDir,
-				Message: fmt.Sprintf("AV 番号 %s", media.Title),
+				Category: category, TargetDir: avDir,
+				Message: fmt.Sprintf("AV %s/%s", category, media.Title),
 			})
 		}
 	}
