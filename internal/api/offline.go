@@ -242,6 +242,42 @@ func (h *Handler) triggerOrganizeAndSync() {
 		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
 }
 
+// StartTransferWatcher 转存目录守望者：每分钟检查转存目录，发现内容且
+// 无任务运行时触发「自动整理+增量」。磁力/离线下载完成时间不可控，
+// 提交 60 秒后的触发器常在下载完成前跑掉，定时任务又要等下一轮 cron——
+// 守望者保证下载完成后约 1 分钟内被接管。5 分钟冷却防止整理失败时死循环
+func StartTransferWatcher(h *Handler) {
+	go func() {
+		lastTrigger := time.Time{}
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(60 * time.Second):
+			}
+			if time.Since(lastTrigger) < 5*time.Minute {
+				continue
+			}
+			cid := h.shareFolderCid()
+			if cid == "" {
+				continue
+			}
+			ops, err := h.newPan115Ops()
+			if err != nil {
+				continue
+			}
+			entries, _, err := ops.listEntries(cid, 0)
+			if err != nil || len(entries) == 0 {
+				continue
+			}
+			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
+			log.Printf("[守望] ⚑ 转存目录有 %d 个条目，触发自动整理+增量", len(entries))
+			h.triggerOrganizeAndSync()
+			lastTrigger = time.Now()
+		}
+	}()
+}
+
 // shareFolderCid 读取分享同步配置的转存目录 cid（未配置返回空）
 func (h *Handler) shareFolderCid() string {
 	var cfg struct {

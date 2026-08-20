@@ -29,6 +29,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动增量同步 cron 调度器（每分钟检查 incr 配置）
 	StartIncrScheduler(h)
 
+	// 启动转存目录守望者（下载完成后 ~1 分钟自动整理）
+	StartTransferWatcher(h)
+
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 
