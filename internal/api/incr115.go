@@ -303,6 +303,45 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	incrStart := time.Now()
+
+	// ---- 作用域计算与配置体检（先于事件拉取：配置错误时熔断，不消费任何事件）----
+	memo := map[string]dirInfo{}
+	// 媒体库根目录名（STRM 路径第一层）
+	libName := ""
+	if info, err := get115DirInfo(cookie, p.Cid); err == nil {
+		libName = info.n
+	}
+	libAbs := absPathOf(cookie, p.Cid, memo)
+	var excludedAbs []string
+	var orgCfgRaw struct {
+		Pending   string `json:"pending"`
+		Existing  string `json:"existing"`
+		Redundant string `json:"redundant"`
+	}
+	if err := json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw); err != nil {
+		log.Printf("[同步] ○ 整理配置解析失败（使用默认值）: %v", err)
+	}
+	var shareCfgRaw struct {
+		Folder string `json:"folder"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareCfgRaw)
+	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant, shareCfgRaw.Folder} {
+		if cid != "" {
+			if a := absPathOf(cookie, cid, memo); a != "" {
+				excludedAbs = append(excludedAbs, strings.TrimSuffix(a, "/"))
+			}
+		}
+	}
+	// 熔断体检：工作区（待整理/已存在/冗余/转存）若覆盖了整个媒体库
+	//（如待整理选在库根或库的上层），排除区判定会吞掉所有库内事件。
+	// 直接中止本次增量——事件一条都不拉取消费，修正配置后原样补上
+	for _, ex := range excludedAbs {
+		if libAbs != "" && strings.HasPrefix(strings.TrimSuffix(libAbs, "/")+"/", ex+"/") {
+			log.Printf("[同步] ⚠⚠ 工作区目录（%s）覆盖了整个媒体库（%s），增量同步中止（事件未消费）。请到「自动整理/分享同步」把工作区目录改选为媒体库内部子目录或库外目录", ex, libAbs)
+			return sum, fmt.Errorf("配置错误：工作区目录 %s 覆盖了整个媒体库 %s，增量同步中止（事件未消费，修正配置后重试即可补上）", ex, libAbs)
+		}
+	}
+
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
 	log.Printf("[同步] ▶ 增量同步开始（媒体库 cid=%s），沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
@@ -373,44 +412,6 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	isMedia := func(name string) bool {
 		ext := strings.ToLower(path.Ext(name))
 		return filter.videoExts[ext] || filter.assetExts[ext]
-	}
-
-	memo := map[string]dirInfo{}
-	// 获取媒体库根目录名（STRM 路径第一层）
-	libName := ""
-	if info, err := get115DirInfo(cookie, p.Cid); err == nil {
-		libName = info.n
-	}
-
-	// 作用域：只监控媒体库子树；待整理/已存在/冗余/转存目录等整理工作区的事件静默忽略
-	libAbs := absPathOf(cookie, p.Cid, memo)
-	var excludedAbs []string
-	var orgCfgRaw struct {
-		Pending   string `json:"pending"`
-		Existing  string `json:"existing"`
-		Redundant string `json:"redundant"`
-	}
-	if err := json.Unmarshal([]byte(h.getSettingValue("org-basic")), &orgCfgRaw); err != nil {
-		log.Printf("[同步] ○ 整理配置解析失败（使用默认值）: %v", err)
-	}
-	var shareCfgRaw struct {
-		Folder string `json:"folder"`
-	}
-	_ = json.Unmarshal([]byte(h.getSettingValue("share")), &shareCfgRaw)
-	for _, cid := range []string{orgCfgRaw.Pending, orgCfgRaw.Existing, orgCfgRaw.Redundant, shareCfgRaw.Folder} {
-		if cid != "" {
-			if a := absPathOf(cookie, cid, memo); a != "" {
-				excludedAbs = append(excludedAbs, strings.TrimSuffix(a, "/"))
-			}
-		}
-	}
-	// 配置体检：工作区（待整理/已存在/冗余/转存）若覆盖了整个媒体库
-	//（如待整理选在了库根或库的上层），排除区判定会吞掉所有库内事件，
-	// 增量同步将永远空转——大声告警提示修正
-	for _, ex := range excludedAbs {
-		if libAbs != "" && strings.HasPrefix(strings.TrimSuffix(libAbs, "/")+"/", ex+"/") {
-			log.Printf("[同步] ⚠⚠ 工作区目录（%s）覆盖了整个媒体库（%s），库内事件全部被忽略、增量同步不会生成任何 STRM！请到「自动整理/分享同步」把工作区目录改选为媒体库内部子目录或库外目录", ex, libAbs)
-		}
 	}
 
 	scopeOf := func(cid string) string {
