@@ -1733,23 +1733,56 @@ func classifyAVNumber(avNum string) string {
 // "4k688.com@START-622.mp4" → "START-622.mp4"
 // "www.xxx.com@MIDV-001.mp4" → "MIDV-001.mp4"
 func sanitizeAVFilename(name string) string {
-	// @ 前面的广告域名
-	if idx := strings.LastIndex(name, "@"); idx >= 0 && idx < len(name)/2 {
-		name = name[idx+1:]
+	// 保留扩展名，只清洗基名
+	ext := pathExt(name)
+	base := baseName(name)
+
+	// ===== 1. 网站域名类前缀 =====
+	// "4k688.com@XXX-001" / "www.xxx.com@XXX-001" / "xxx.com-XXX-001"
+	// @ 分隔符：取 @ 之后
+	if idx := strings.LastIndex(base, "@"); idx >= 0 && idx < len(base)/2 {
+		base = base[idx+1:]
 	}
-	// www.xxx.com 前缀（无 @ 分隔）
-	if m := regexp.MustCompile(`(?i)^www\.[a-z0-9.-]+\.com[-_.]?`).FindStringSubmatch(name); m != nil {
-		name = strings.TrimPrefix(name, m[0])
+	// www.xxx.com 前缀
+	base = regexp.MustCompile(`(?i)^www\.[a-z0-9.-]+\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`).ReplaceAllString(base, "")
+	// 纯域名前缀（4k688.com、avxxx.net 等）
+	base = regexp.MustCompile(`(?i)^[a-z0-9]{2,15}\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`).ReplaceAllString(base, "")
+
+	// ===== 2. 括号类广告 =====
+	// 【高清xxx网】【广告】等全角括号
+	base = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(base, "")
+	// (www.xxx.com) [4k688.com] 等半角括号（只清开头/结尾的，不清中间的标签）
+	base = regexp.MustCompile(`(?i)^\(\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\)[-_. ]*`).ReplaceAllString(base, "")
+	base = regexp.MustCompile(`(?i)^\[\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\][-_. ]*`).ReplaceAllString(base, "")
+
+	// ===== 3. 文字类广告前缀/后缀 =====
+	// "高清剧集网"、"破解版"、"完整版"、"中文字幕" 等常见前缀
+	adPrefixes := []string{
+		"高清剧集网", "高清网站", "最新地址", "永久地址", "官方网址",
+		"破解版", "完整版", "无修正版", "高清版", "无码版", "有码版",
+		"中文字幕", "无码破解", "字幕版", "4K修复版",
 	}
-	// 4k688.com 等纯域名前缀
-	if m := regexp.MustCompile(`(?i)^[a-z0-9]+\.com[-_@]?`).FindStringSubmatch(name); m != nil {
-		name = strings.TrimPrefix(name, m[0])
+	for _, ad := range adPrefixes {
+		if strings.HasPrefix(base, ad) {
+			base = strings.TrimPrefix(base, ad)
+			// 清除前缀后面的分隔符
+			base = strings.TrimLeft(base, "-_. ")
+		}
 	}
-	// 【xxx】方括号广告
-	name = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(name, "")
-	// 多余的前导分隔符
-	name = strings.TrimLeft(name, "-_.")
-	return name
+
+	// ===== 4. URL 参数类后缀 =====
+	// "XXX-001?from=4k688" / "XXX-001 - www.4k688.com"
+	base = regexp.MustCompile(`[-_ ]+(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz|me|tv)$`).ReplaceAllString(base, "")
+	base = regexp.MustCompile(`\?[a-z=&0-9]+$`).ReplaceAllString(base, "")
+
+	// ===== 5. 多余分隔符 =====
+	base = strings.Trim(base, "-_. ")
+	for strings.Contains(base, "  ") {
+		base = strings.ReplaceAll(base, "  ", " ")
+	}
+	base = strings.Trim(base, "-_. ")
+
+	return base + ext
 }
 
 // avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12、FC2-PPV-1234567 等
