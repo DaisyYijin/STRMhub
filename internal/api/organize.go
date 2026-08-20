@@ -1107,6 +1107,18 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		name = applyReplaceRules(name, replaceRules)
 	}
 	onLog(fmt.Sprintf("▶ 开始识别: %s/（样本: %s）", dir.Name, mainVideo.Name))
+
+	// AV 番号检测：文件名或目录名含番号格式（如 START-622、MIDV-001）时
+	// 跳过 TMDB 识别，直接用番号作为标题归入 AV 分类
+	if avNum := detectAVNumber(dir.Name, mainVideo.Name); avNum != "" {
+		onLog(fmt.Sprintf("✦ 检测到 AV 番号: %s（跳过 TMDB）", avNum))
+		media := &TmdbMedia{
+			Title:     avNum,
+			MediaType: "av",
+		}
+		return processAVDirectory(ops, cfg, media, dir, files, onLog, results)
+	}
+
 	parsed := parseFileName(name)
 
 	// 文件名无法提取标题 → 用目录名识别（目录名通常比文件名规范）
@@ -1674,3 +1686,83 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	return results, successCount
 }
 
+
+// ==================== AV 番号识别与处理 ====================
+
+// avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12、FC2-PPV-1234567 等
+var avNumRegex = regexp.MustCompile(`(?i)([A-Z]{2,6})-?(\d{2,5})`)
+
+// detectAVNumber 从目录名和文件名中检测 AV 番号
+// 优先用目录名（更干净），文件名作为补充
+func detectAVNumber(dirName, fileName string) string {
+	// 先试目录名
+	if m := avNumRegex.FindStringSubmatch(dirName); m != nil {
+		prefix := strings.ToUpper(m[1])
+		num := m[2]
+		// 排除误匹配：常见非 AV 前缀
+		for _, exclude := range []string{"THE", "AND", "FOR", "HD", "SD", "XX", "WEB", "DL", "BLU", "UHD", "HDR", "DTS", "AAC", "H264", "H265", "X264", "X265", "HEVC", "AVC", "1080P", "720P", "2160P", "4K", "2K", "CD", "DVD", "BDRIP", "HDRIP", "WP", "XXX"} {
+			if prefix == exclude {
+				goto tryFile
+			}
+		}
+		return prefix + "-" + num
+	}
+tryFile:
+	// 再试文件名
+	if m := avNumRegex.FindStringSubmatch(fileName); m != nil {
+		prefix := strings.ToUpper(m[1])
+		num := m[2]
+		for _, exclude := range []string{"THE", "AND", "FOR", "HD", "SD", "XX", "WEB", "DL", "BLU", "UHD", "HDR", "DTS", "AAC", "H264", "H265", "X264", "X265", "HEVC", "AVC", "1080P", "720P", "2160P", "4K", "2K", "CD", "DVD", "BDRIP", "HDRIP", "WP", "XXX"} {
+			if prefix == exclude {
+				return ""
+			}
+		}
+		return prefix + "-" + num
+	}
+	return ""
+}
+
+// processAVDirectory 处理 AV 目录（跳过 TMDB，直接用番号入库）
+func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir dirEntry, files []remoteFile, onLog func(string), results []OrganizeResult) []OrganizeResult {
+	// AV 目录结构：/AV/番号/文件
+	// 分类子目录用番号首字母：/AV/S/START-622/
+	firstLetter := media.Title[:1]
+	avDir := firstLetter + "/" + media.Title
+
+	onLog(fmt.Sprintf("▣ AV 目标目录: %s", avDir))
+
+	targetCid, err := ops.ensurePath(cfg.Library, avDir)
+	if err != nil {
+		onLog(fmt.Sprintf("✗ AV 创建目录失败: %v", err))
+		return results
+	}
+
+	// 先重命名再移动
+	renameBeforeMove(ops, media, files, files, onLog)
+
+	// 移动所有文件
+	var fids []string
+	for _, f := range files {
+		fids = append(fids, f.Fid)
+	}
+	if err := ops.moveFiles(targetCid, fids); err != nil {
+		onLog(fmt.Sprintf("✗ AV 移动失败: %v", err))
+		return results
+	}
+
+	// 移空的源目录到冗余
+	ops.moveFiles(cfg.Redundant, []string{dir.Fid})
+
+	onLog(fmt.Sprintf("✓ AV 入库: %s → %s", dir.Name, avDir))
+	for _, f := range files {
+		if classifyFile(f.Name) == FileTypeVideo {
+			results = append(results, OrganizeResult{
+				FileName: f.Name, Status: "success",
+				Title: media.Title, MediaType: "av",
+				Category: "AV", TargetDir: avDir,
+				Message: fmt.Sprintf("AV 番号 %s", media.Title),
+			})
+		}
+	}
+	return results
+}

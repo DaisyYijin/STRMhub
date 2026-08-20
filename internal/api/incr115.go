@@ -424,6 +424,13 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	for _, ev := range pending {
 		switch ev.Type {
 		case evUpload, evReceive, evCopy:
+			// 作用域过滤：冗余/已存在等整理工作区的事件不监控
+			sc := scopeOf(ev.Cid)
+			if sc == "excluded" || sc == "other" {
+				sum.Ignored++
+				sum.Structural++
+				continue
+			}
 			if isMedia(ev.FileName) {
 				dirSet[ev.Cid] = true
 				sum.Relevant++
@@ -432,6 +439,12 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				sum.Relevant++
 			}
 		case evNewFolder, evCopyFolder:
+			// 作用域过滤：冗余/已存在等目录新增不监控
+			if sc := scopeOf(ev.Cid); sc == "excluded" || sc == "other" {
+				sum.Ignored++
+				sum.Structural++
+				continue
+			}
 			// 目录新增/复制（含整目录转存）：按目录自身加入受影响集合
 			if ev.FileID != "" {
 				dirSet[ev.FileID] = true
