@@ -1306,11 +1306,23 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		return results
 	}
 
-	// 洗版判定：本地记录命中且新版更优时替换（保留洗版逻辑，用本地记录）
+	// 洗版判定：库内已有同一部影视时按优先级规则比较版本
 	if rec, ok := lookupMediaRecord(media); ok {
-		if tryWashReplace(ops, cfg, media, mainVideo.Name, rec.TargetPath, onLog) {
+		switch tryWashReplace(ops, cfg, media, mainVideo.Name, rec.TargetPath, onLog) {
+		case washReplaced:
 			// 旧版已让位，落入下方正常入库
-			_ = rec
+		case washNotBetter:
+			// 库内版本更优：新文件按「已存在」处理，不再重复入库
+			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+			} else {
+				onLog(fmt.Sprintf("○ %s/ - 库内已有更优版本，已移到已存在目录", dir.Name))
+			}
+			for _, vf := range videoFiles {
+				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Title: media.Title, Year: media.Year, MediaType: media.MediaType,
+					Message: "库内已有更优版本"})
+			}
+			return results
 		}
 	}
 

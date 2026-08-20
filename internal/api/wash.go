@@ -26,7 +26,8 @@ type washRule struct {
 }
 
 // loadWashRules 加载匹配的洗版策略（media_type/category 任一匹配；空=匹配所有）
-func loadWashRules(mediaType, category string) []washRule {
+// 同时返回该策略配置的旧版去向（redundant/existing/delete，默认 redundant）
+func loadWashRules(mediaType, category string) ([]washRule, string) {
 	var rows []model.WashRule
 	model.DB.Find(&rows)
 	for _, r := range rows {
@@ -38,10 +39,14 @@ func loadWashRules(mediaType, category string) []washRule {
 		}
 		var rules []washRule
 		if json.Unmarshal([]byte(r.PriorityLevel), &rules) == nil && len(rules) > 0 {
-			return rules
+			target := r.OldVersionTarget
+			if target == "" {
+				target = "redundant"
+			}
+			return rules, target
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 func containsCategory(list, cat string) bool {
@@ -118,22 +123,32 @@ func lookupMediaRecord(media *TmdbMedia) (*model.MediaLibrary, bool) {
 	return &rec, true
 }
 
-// tryWashReplace 洗版判定与替换执行：新版更好时把库内旧版移到冗余并
-// 清理台账/记录，返回 true 让调用方继续正常入库；否则返回 false
-func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, targetDir string, onLog func(string)) bool {
-	rules := loadWashRules(media.MediaType, "")
+// 洗版判定结果
+const (
+	washReplaced  = "replaced"  // 新版更优：旧版已让位，新版落入正常入库
+	washNotBetter = "notbetter" // 库内已有更优版本：新版应移「已存在」
+	washSkip      = "skip"      // 未配置规则/库内无该片的文件：不做洗版判定
+)
+
+// tryWashReplace 洗版判定与替换执行：
+//   - 新版更好 → 按策略配置的旧版去向迁移（冗余/已存在；delete 暂不支持按冗余），
+//     清理台账/记录，返回 washReplaced 让调用方继续正常入库
+//   - 旧版更好 → 返回 washNotBetter，调用方应把新文件移「已存在」
+//   - 无规则/库内无文件 → 返回 washSkip
+func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, targetDir string, onLog func(string)) string {
+	rules, oldTarget := loadWashRules(media.MediaType, "")
 	if len(rules) == 0 {
-		return false
+		return washSkip
 	}
 	libNames := libraryFileNamesOf(targetDir)
 	if len(libNames) == 0 {
-		return false
+		return washSkip
 	}
 	if !washDecision(newName, libNames, rules) {
 		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本，按已存在处理", newName))
-		return false
+		return washNotBetter
 	}
-	// 新版更好：旧版文件移冗余（洗版-旧版本/片名 子目录）
+	// 新版更好：旧版按配置的去向迁移（统一放「洗版-旧版本/片名」子目录便于辨认）
 	var sfs []model.SyncedFile
 	prefix := strings.TrimSuffix(targetDir, "/") + "/"
 	model.DB.Where("rel_path LIKE ?", prefix+"%").Find(&sfs)
@@ -143,16 +158,27 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	}
 	if len(fids) > 0 {
 		oldDir := path.Dir(targetDir)
-		junkCid, err := ops.ensurePath(cfg.Redundant, "洗版-旧版本/"+path.Base(oldDir))
+		destCid := cfg.Redundant
+		switch oldTarget {
+		case "existing":
+			destCid = cfg.Existing
+		case "delete":
+			onLog("○ 洗版旧版去向配置为「删除」，暂不支持网盘删除，按冗余处理")
+		}
+		junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
 		if err == nil {
 			if err := ops.moveFiles(junkCid, fids); err != nil {
 				onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
-				return false
+				return washSkip
 			}
 		}
 		model.DB.Where("rel_path LIKE ?", prefix+"%").Delete(&model.SyncedFile{})
 	}
 	model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
-	onLog(fmt.Sprintf("✦ 洗版替换: %s 优于库内版本（%s），旧版已移到冗余", newName, libNames[0]))
-	return true
+	destLabel := "冗余"
+	if oldTarget == "existing" {
+		destLabel = "已存在"
+	}
+	onLog(fmt.Sprintf("✦ 洗版替换: %s 优于库内版本（%s），旧版已移到%s/洗版-旧版本", newName, libNames[0], destLabel))
+	return washReplaced
 }
