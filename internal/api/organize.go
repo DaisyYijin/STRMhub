@@ -1785,35 +1785,42 @@ func sanitizeAVFilename(name string) string {
 	return base + ext
 }
 
-// avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12、FC2-PPV-1234567 等
-var avNumRegex = regexp.MustCompile(`(?i)([A-Z]{2,6})-?(\d{2,5})`)
+// avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12 等
+var avNumRegex = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})\b`)
+
+// fc2NumRegex 匹配 FC2 番号：FC2-PPV-1234567、FC2_1234567 等（数字 5-8 位）
+var fc2NumRegex = regexp.MustCompile(`(?i)\bfc2[-_]?(?:ppv[-_]?)?(\d{5,8})\b`)
+
+// avExcludedPrefixes 常见非 AV 前缀（画质/编码/剧集标记），命中则视为误匹配
+var avExcludedPrefixes = map[string]bool{
+	"THE": true, "AND": true, "FOR": true, "HD": true, "SD": true, "XX": true,
+	"WEB": true, "DL": true, "BLU": true, "UHD": true, "HDR": true, "DTS": true,
+	"AAC": true, "H264": true, "H265": true, "X264": true, "X265": true,
+	"HEVC": true, "AVC": true, "1080P": true, "720P": true, "2160P": true,
+	"4K": true, "2K": true, "CD": true, "DVD": true, "BDRIP": true, "HDRIP": true,
+	"WP": true, "XXX": true,
+	// 剧集/动漫常见标记（ep01、se02、sp01、ova、ncop 等）
+	"EP": true, "SE": true, "SP": true, "EPT": true, "OVA": true, "OAD": true,
+	"NCOP": true, "NCED": true, "PV": true, "CM": true, "TV": true, "VOL": true,
+}
 
 // detectAVNumber 从目录名和文件名中检测 AV 番号
-// 优先用目录名（更干净），文件名作为补充
+// 优先用目录名（更干净），文件名作为补充；返回规范化的番号（前缀大写）
 func detectAVNumber(dirName, fileName string) string {
-	// 先试目录名
-	if m := avNumRegex.FindStringSubmatch(dirName); m != nil {
-		prefix := strings.ToUpper(m[1])
-		num := m[2]
-		// 排除误匹配：常见非 AV 前缀
-		for _, exclude := range []string{"THE", "AND", "FOR", "HD", "SD", "XX", "WEB", "DL", "BLU", "UHD", "HDR", "DTS", "AAC", "H264", "H265", "X264", "X265", "HEVC", "AVC", "1080P", "720P", "2160P", "4K", "2K", "CD", "DVD", "BDRIP", "HDRIP", "WP", "XXX"} {
-			if prefix == exclude {
-				goto tryFile
+	for _, s := range []string{dirName, fileName} {
+		if s == "" {
+			continue
+		}
+		// FC2 番号优先（通用规则匹配不到 7 位数字）
+		if m := fc2NumRegex.FindStringSubmatch(s); m != nil {
+			return "FC2-PPV-" + m[1]
+		}
+		if m := avNumRegex.FindStringSubmatch(s); m != nil {
+			prefix := strings.ToUpper(m[1])
+			if !avExcludedPrefixes[prefix] {
+				return prefix + "-" + m[2]
 			}
 		}
-		return prefix + "-" + num
-	}
-tryFile:
-	// 再试文件名
-	if m := avNumRegex.FindStringSubmatch(fileName); m != nil {
-		prefix := strings.ToUpper(m[1])
-		num := m[2]
-		for _, exclude := range []string{"THE", "AND", "FOR", "HD", "SD", "XX", "WEB", "DL", "BLU", "UHD", "HDR", "DTS", "AAC", "H264", "H265", "X264", "X265", "HEVC", "AVC", "1080P", "720P", "2160P", "4K", "2K", "CD", "DVD", "BDRIP", "HDRIP", "WP", "XXX"} {
-			if prefix == exclude {
-				return ""
-			}
-		}
-		return prefix + "-" + num
 	}
 	return ""
 }
@@ -1848,7 +1855,7 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 			}
 			// 尝试提取 .chs / .cht 等语言标记
 			base := baseName(f.Name)
-			if m := regexp.MustCompile(`\.(chs|cht|eng|chi|jap)`).FindStringSubmatch(base); m != nil {
+			if m := regexp.MustCompile(`\.(chs|cht|eng|chi|jap)\b`).FindStringSubmatch(base); m != nil {
 				subSuffix = m[0]
 			}
 			newName = media.Title + subSuffix + ext

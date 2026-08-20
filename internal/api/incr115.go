@@ -409,13 +409,15 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			return "unknown"
 		}
 		abs = strings.TrimSuffix(abs, "/")
-		if libAbs != "" && strings.HasPrefix(abs+"/", strings.TrimSuffix(libAbs, "/")+"/") {
-			return "library"
-		}
+		// 排除区判断必须先于媒体库：待整理/已存在/冗余通常建在媒体库根目录内部，
+		// 先判 library 会把它们整个吞进"library"作用域，导致冗余目录被重遍历生成 STRM
 		for _, ex := range excludedAbs {
 			if strings.HasPrefix(abs+"/", ex+"/") {
 				return "excluded"
 			}
+		}
+		if libAbs != "" && strings.HasPrefix(abs+"/", strings.TrimSuffix(libAbs, "/")+"/") {
+			return "library"
 		}
 		return "other"
 	}
@@ -481,6 +483,11 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		case evFolderRename:
 			// 目录改名：重遍历父目录重建；旧名子树可能残留，交由后续清理功能
 			if ev.Cid != "" {
+				if sc := scopeOf(ev.Cid); sc == "excluded" || sc == "other" {
+					sum.Ignored++
+					sum.Structural++
+					continue
+				}
 				dirSet[ev.Cid] = true
 			}
 			sum.Structural++
