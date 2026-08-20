@@ -404,6 +404,15 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 		}
 	}
+	// 配置体检：工作区（待整理/已存在/冗余/转存）若覆盖了整个媒体库
+	//（如待整理选在了库根或库的上层），排除区判定会吞掉所有库内事件，
+	// 增量同步将永远空转——大声告警提示修正
+	for _, ex := range excludedAbs {
+		if libAbs != "" && strings.HasPrefix(strings.TrimSuffix(libAbs, "/")+"/", ex+"/") {
+			log.Printf("[同步] ⚠⚠ 工作区目录（%s）覆盖了整个媒体库（%s），库内事件全部被忽略、增量同步不会生成任何 STRM！请到「自动整理/分享同步」把工作区目录改选为媒体库内部子目录或库外目录", ex, libAbs)
+		}
+	}
+
 	scopeOf := func(cid string) string {
 		if cid == "" || cid == "0" {
 			return "unknown"

@@ -1190,10 +1190,26 @@ func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules [
 func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, dir dirEntry, files []remoteFile, libAbs string, onLog func(string)) []OrganizeResult {
 	var results []OrganizeResult
 
-	// 找出视频文件
+	// 分流视频：正片 vs 广告/引流（清洗后无有效内容名、仍含域名、或小于
+	// 最小体积的"视频"是广告载体，不能重命名成正片名混入库）
 	var videoFiles []remoteFile
+	minBytes := int64(cfg.MinSize) * 1024 * 1024
 	for _, f := range files {
-		if classifyFile(f.Name) == FileTypeVideo {
+		if classifyFile(f.Name) != FileTypeVideo {
+			continue
+		}
+		switch {
+		case isAdOnlyVideo(f.Name):
+			onLog(fmt.Sprintf("○ %s - 广告/引流视频，移到冗余", f.Name))
+			if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
+				ops.moveFiles(junkCid, []string{f.Fid})
+			}
+		case minBytes > 0 && f.Size > 0 && f.Size < minBytes:
+			onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），移到冗余", f.Name, float64(f.Size)/1024/1024, cfg.MinSize))
+			if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
+				ops.moveFiles(junkCid, []string{f.Fid})
+			}
+		default:
 			videoFiles = append(videoFiles, f)
 		}
 	}
@@ -2016,6 +2032,18 @@ func isAVAdFile(name string) bool {
 		}
 	}
 	return false
+}
+
+// isAdOnlyVideo 判断视频文件是否为纯广告/引流载体：
+// 清洗发布站广告（【…】块/域名）后连片名都没剩下（文件名整体是广告），
+// 或清洗后仍残留域名。"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4"
+// 清洗后为空 → 广告；"骗不了人的男人.Softie...mkv" 清洗后保留完整片名 → 正片
+func isAdOnlyVideo(name string) bool {
+	cleaned := strings.TrimSpace(stripReleaseAds(baseName(name)))
+	if cleaned == "" {
+		return true
+	}
+	return avAdDomainRegex.MatchString(cleaned)
 }
 
 // avSubLangRegex 字幕语言标记（.chs/.cht/.eng 等）

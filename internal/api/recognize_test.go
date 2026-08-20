@@ -59,3 +59,22 @@ func TestParseFileNameAdPrefix(t *testing.T) {
 		t.Errorf("分辨率解析错误: %q", p.Resolution)
 	}
 }
+
+func TestIsAdOnlyVideo(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		// 用户实测的引流视频：文件名整体是广告
+		{"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4", true},
+		{"【更多无水印高清电影请访问 www.BBQDDQ.com】.MKV", true},
+		// 正片不受影响
+		{"骗不了人的男人.Softie.Conman.2022.1080p.MyTVSuper.WEB-DL.H265.AAC-QuickIO.mkv", false},
+		{"Up.2009.1080p.BluRay.x264.mkv", false},
+	}
+	for _, c := range cases {
+		if got := isAdOnlyVideo(c.name); got != c.want {
+			t.Errorf("isAdOnlyVideo(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
