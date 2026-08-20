@@ -208,6 +208,10 @@ func (h *Handler) triggerOrganizeAndSync() {
 		orgCfg, err := h.loadOrgConfig()
 		if err != nil {
 			log.Printf("[上传] ○ 整理跳过（配置缺失）: %v", err)
+		} else if h.dirOverlapWithLibrary(shareFolder, orgCfg.Library) {
+			// 转存目录与媒体库存在包含关系（转存进了库里，或转存目录覆盖整个库）：
+			// 扫描会波及库内容，直接放弃本次自动整理（引擎层守卫之外的第二道防线）
+			log.Printf("[上传] ⚠ 转存目录与媒体库存在包含关系，跳过自动整理以防误搬库内容，请到「分享同步」修正转存目录")
 		} else {
 			// 转存目录作为待整理目录
 			if orgCfg.Pending != shareFolder {
@@ -236,6 +240,31 @@ func (h *Handler) triggerOrganizeAndSync() {
 	}
 	log.Printf("[上传] ✅ 自动整理+增量完成，耗时 %s · STRM %d，附属 %d",
 		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
+}
+
+// dirOverlapWithLibrary 判断转存目录与媒体库是否存在包含关系
+// （相等、转存目录在库内、或转存目录覆盖整个库都算）。取不到路径时返回
+// false 放行，由引擎层的 orgGuards 兜底
+func (h *Handler) dirOverlapWithLibrary(shareCid, libCid string) bool {
+	if shareCid == "" || libCid == "" {
+		return false
+	}
+	if shareCid == libCid {
+		return true
+	}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return false
+	}
+	memo := map[string]dirInfo{}
+	shareAbs := strings.TrimSuffix(absPathOf(cookie, shareCid, memo), "/")
+	libAbs := strings.TrimSuffix(absPathOf(cookie, libCid, memo), "/")
+	if shareAbs == "" || libAbs == "" {
+		return false
+	}
+	return shareAbs == libAbs ||
+		strings.HasPrefix(shareAbs+"/", libAbs+"/") || // 转存目录在媒体库内
+		strings.HasPrefix(libAbs+"/", shareAbs+"/") // 转存目录覆盖媒体库
 }
 
 // triggerIncrementalAfterTransfer 转存/离线下载成功后立即触发增量同步

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -914,6 +915,70 @@ func collectDirFiles(ops *pan115Ops, cid, basePath string) ([]remoteFile, error)
 	return files, nil
 }
 
+// orgGuards 整理防误伤守卫：
+// 当扫描根（待整理/转存目录）位于媒体库、已存在、冗余三棵子树的同级或上层时，
+// 这些子树内的条目一律跳过——绝不把库内内容当待整理素材重排或搬进冗余。
+// 正常布局（待整理在库内/库外独立）不受影响；OpenAPI 无 Cookie 通道取不到
+// 目录绝对路径时守卫自动失效（靠 trigger 层校验兜底）
+type orgGuards struct {
+	cookie    string
+	memo      map[string]dirInfo
+	absCache  map[string]string
+	protected []string // 受保护子树绝对路径（尾 / 已去除）
+	active    bool     // 扫描根是否覆盖到任一保护子树
+}
+
+// newOrgGuards 计算扫描根与三棵保护子树的空间关系
+func newOrgGuards(cookie, scanCid string, cfg *OrgConfig) *orgGuards {
+	g := &orgGuards{cookie: cookie, memo: map[string]dirInfo{}, absCache: map[string]string{}}
+	if cookie == "" {
+		return g
+	}
+	for _, cid := range []string{cfg.Library, cfg.Existing, cfg.Redundant} {
+		if cid == "" {
+			continue
+		}
+		if a := g.absOf(cid); a != "" {
+			g.protected = append(g.protected, strings.TrimSuffix(a, "/"))
+		}
+	}
+	scanAbs := strings.TrimSuffix(g.absOf(scanCid), "/")
+	for _, p := range g.protected {
+		if scanAbs != "" && (p == scanAbs || strings.HasPrefix(p, scanAbs+"/")) {
+			g.active = true
+			break
+		}
+	}
+	return g
+}
+
+func (g *orgGuards) absOf(cid string) string {
+	if a, ok := g.absCache[cid]; ok {
+		return a
+	}
+	a := absPathOf(g.cookie, cid, g.memo)
+	g.absCache[cid] = a
+	return a
+}
+
+// skip 报告条目是否位于保护子树内（目录传自身 cid，文件传父目录 cid）。
+// 仅在 active 模式下生效；路径取不到时宁可放行（由日志暴露异常布局）
+func (g *orgGuards) skip(cid string) bool {
+	if g == nil || !g.active || cid == "" {
+		return false
+	}
+	a := strings.TrimSuffix(g.absOf(cid), "/")
+	if a == "" {
+		return false
+	}
+	for _, p := range g.protected {
+		if a == p || strings.HasPrefix(a+"/", p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // runOrganizeEngine 整理引擎核心逻辑
 // 按目录级别整理：识别视频→分类→移动整个目录（视频+字幕+NFO+标准图片）到影视库
 func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]OrganizeResult, int) {
@@ -985,8 +1050,13 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 
 	onLog(fmt.Sprintf("发现 %d 个条目，开始整理...", len(topEntries)))
 
+	guards := newOrgGuards(ops.cookie, cfg.Pending, cfg)
+	if guards.active {
+		onLog("⚠ 扫描根覆盖到媒体库/已存在/冗余目录，这些子树内的条目将被跳过（防误整理库内容）")
+	}
+
 	for _, entry := range topEntries {
-		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, libAbs, onLog, 0, &successCount)...)
+		results = append(results, processEntry(ops, cfg, tc, replaceRules, guards, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
 
@@ -998,8 +1068,13 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 //     递归处理每个子目录（每部剧独立识别入库），容器自身最后移到冗余
 //   - 其余目录 → 单部影视目录
 //   - 文件 → 散视频
-func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, entry dirEntry, libAbs string, onLog func(string), depth int, successCount *int) []OrganizeResult {
+func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, guards *orgGuards, entry dirEntry, libAbs string, onLog func(string), depth int, successCount *int) []OrganizeResult {
 	results := []OrganizeResult{}
+	// 库子树防护：目录传自身 cid，文件传父目录 cid；命中保护子树直接放行不处理
+	if guards.skip(entry.Cid) {
+		onLog(fmt.Sprintf("○ 跳过媒体库/工作区内条目: %s（整理不处理库内内容）", entry.Name))
+		return results
+	}
 	if !entry.IsDir {
 		if classifyFile(entry.Name) != FileTypeVideo {
 			return results
@@ -1036,13 +1111,40 @@ func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules [
 		if !hasDirectVideo && len(subDirs) > 0 {
 			onLog(fmt.Sprintf("▣ %s/ 为容器目录（无直接视频，含 %d 个子目录），逐个处理", entry.Name, len(subDirs)))
 			for _, child := range subDirs {
-				results = append(results, processEntry(ops, cfg, tc, replaceRules, child, libAbs, onLog, depth+1, successCount)...)
+				results = append(results, processEntry(ops, cfg, tc, replaceRules, guards, child, libAbs, onLog, depth+1, successCount)...)
 			}
-			// 容器自身（已只剩空目录）移到冗余
-			if err := ops.moveFiles(cfg.Redundant, []string{entry.Fid}); err != nil {
-				onLog(fmt.Sprintf("○ %s/ - 空容器目录移到冗余失败: %v", entry.Name, err))
+			// 容器壳处理：重新列目录确认真的空了才移冗余；
+			// 有残留（移动失败/未识别跳过的条目）时保留原地，避免误吞内容目录
+			remaining, relistErr := listPendingTopLevel(ops, entry.Cid)
+			if relistErr != nil {
+				onLog(fmt.Sprintf("○ %s/ - 复查目录失败，保留原地: %v", entry.Name, relistErr))
+				return results
+			}
+			if len(remaining) > 0 {
+				// 散落的纯垃圾文件（txt/url 广告等）可随壳一起清进冗余
+				allJunk, junkFids := true, []string{}
+				for _, r := range remaining {
+					if r.IsDir || classifyFile(r.Name) != FileTypeJunk {
+						allJunk = false
+						break
+					}
+					junkFids = append(junkFids, r.Fid)
+				}
+				if allJunk && len(junkFids) > 0 {
+					if err := ops.moveFiles(cfg.Redundant, junkFids); err == nil {
+						onLog(fmt.Sprintf("○ %s/ - 容器内 %d 个垃圾文件已移到冗余", entry.Name, len(junkFids)))
+						remaining, _ = listPendingTopLevel(ops, entry.Cid)
+					}
+				}
+			}
+			if len(remaining) == 0 {
+				if err := ops.moveFiles(cfg.Redundant, []string{entry.Fid}); err != nil {
+					onLog(fmt.Sprintf("○ %s/ - 空容器目录移到冗余失败: %v", entry.Name, err))
+				} else {
+					onLog(fmt.Sprintf("○ %s/ - 空容器目录已移到冗余", entry.Name))
+				}
 			} else {
-				onLog(fmt.Sprintf("○ %s/ - 空容器目录已移到冗余", entry.Name))
+				onLog(fmt.Sprintf("○ %s/ - 容器目录仍有 %d 个残留条目，保留原地", entry.Name, len(remaining)))
 			}
 			return results
 		}
@@ -1678,9 +1780,25 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 		return results, 0
 	}
 
+	// 四个工作区根目录自身永不被当作条目处理（与 runOrganizeEngine 一致）
+	excluded := map[string]bool{cfg.Library: true, cfg.Existing: true, cfg.Redundant: true, cfg.Pending: true}
+	filtered := topEntries[:0]
+	for _, e := range topEntries {
+		if e.IsDir && excluded[e.Cid] {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	topEntries = filtered
+
+	guards := newOrgGuards(ops.cookie, cfg.Pending, cfg)
+	if guards.active {
+		onLog("⚠ 扫描根覆盖到媒体库/已存在/冗余目录，这些子树内的条目将被跳过（防误整理库内容）")
+	}
+
 	onLog(fmt.Sprintf("▶ 转存目录发现 %d 个条目，开始整理...", len(topEntries)))
 	for _, entry := range topEntries {
-		results = append(results, processEntry(ops, cfg, tc, replaceRules, entry, libAbs, onLog, 0, &successCount)...)
+		results = append(results, processEntry(ops, cfg, tc, replaceRules, guards, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
 	return results, successCount
@@ -1825,60 +1943,153 @@ func detectAVNumber(dirName, fileName string) string {
 	return ""
 }
 
+// avAdDomainRegex 广告域名（清洗后仍任意位置出现即视为广告载体）
+var avAdDomainRegex = regexp.MustCompile(`(?i)(?:https?://|www\.)?[a-z0-9][a-z0-9-]{1,15}\.(?:com|net|org|cc|xyz|me|tv|info|vip|top|app|club|site|online|icu|fun|win)\b`)
+
+// avAdKeywords 广告文件常见关键词
+var avAdKeywords = []string{
+	"18+", "游戏大全", "最新地址", "永久地址", "永久导航", "网址导航", "导航网",
+	"发布页", "发布器", "天天更新", "每周更新", "免费观看", "在线观看", "手机看片",
+	"福利网", "福利社", "破解版", "高清资源网", "资源网", "看片网", "影片网",
+	"电影网", "安卓版", "app版", "app下载", "磁力搜索", "同城约",
+}
+
+// isAVAdFile 判断 AV 目录内的文件是否为广告/引流文件。
+// 以「清洗后的文件名」为准：正规片的广告前缀会被 sanitizeAVFilename 清掉
+// （"4k688.com@START-622.mp4" → "START-622.mp4"，不含域名，正常入库）；
+// 清完仍残留域名或广告词的才是真广告（如 "18+游戏大全(996gg.cc)-…"）
+func isAVAdFile(name string) bool {
+	cleaned := baseName(sanitizeAVFilename(name))
+	if avAdDomainRegex.MatchString(cleaned) {
+		return true
+	}
+	lower := strings.ToLower(cleaned)
+	for _, kw := range avAdKeywords {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
+// avSubLangRegex 字幕语言标记（.chs/.cht/.eng 等）
+var avSubLangRegex = regexp.MustCompile(`\.(chs|cht|eng|chi|jap)\b`)
+
+// avCarriesNumber 正片文件名（清洗后）应携带番号，不带番号的多为引流视频；
+// FC2 文件名常省略 PPV 段（FC2-1234567 / FC2-PPV-1234567 两种写法都认），
+// 连字符差异（START622 / START-622）也容忍
+func avCarriesNumber(cleanedBase, avNum string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "-")) }
+	lc := norm(cleanedBase)
+	lcc := strings.ReplaceAll(lc, "-", "")
+	for _, c := range []string{norm(avNum), strings.ReplaceAll(norm(avNum), "-ppv", "")} {
+		if c != "" && (strings.Contains(lc, c) || strings.Contains(lcc, strings.ReplaceAll(c, "-", ""))) {
+			return true
+		}
+	}
+	return false
+}
+
 // processAVDirectory 处理 AV 目录（跳过 TMDB，直接用番号入库）
 func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir dirEntry, files []remoteFile, onLog func(string), results []OrganizeResult) []OrganizeResult {
 	// AV 目录结构：/AV/分类/番号/（分类 = 无码/有码，按番号前缀匹配）
 	category := classifyAVNumber(media.Title)
 	avDir := category + "/" + media.Title
 
-	onLog(fmt.Sprintf("▣ AV 目标目录: %s（分类: %s）", avDir, category))
+	// 分流：正片视频（含多分卷）/ 字幕 / 元数据 / 广告垃圾
+	var videos, subs, metas []remoteFile
+	var junkFids []string
+	minBytes := int64(cfg.MinSize) * 1024 * 1024
+	for _, f := range files {
+		switch classifyFile(f.Name) {
+		case FileTypeVideo:
+			cleanedBase := baseName(sanitizeAVFilename(f.Name))
+			switch {
+			case isAVAdFile(f.Name):
+				junkFids = append(junkFids, f.Fid)
+				onLog(fmt.Sprintf("○ %s - 广告/引流视频，移到冗余", f.Name))
+			case !avCarriesNumber(cleanedBase, media.Title):
+				junkFids = append(junkFids, f.Fid)
+				onLog(fmt.Sprintf("○ %s - 清洗后不含番号 %s，疑似引流视频，移到冗余", f.Name, media.Title))
+			case minBytes > 0 && f.Size > 0 && f.Size < minBytes:
+				junkFids = append(junkFids, f.Fid)
+				onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），移到冗余",
+					f.Name, float64(f.Size)/1024/1024, cfg.MinSize))
+			default:
+				videos = append(videos, f)
+			}
+		case FileTypeSubtitle:
+			subs = append(subs, f)
+		case FileTypeNFO, FileTypeStdImage:
+			metas = append(metas, f)
+		default:
+			junkFids = append(junkFids, f.Fid)
+			onLog(fmt.Sprintf("○ %s - 垃圾文件，移到冗余", f.Name))
+		}
+	}
 
+	// 正片全被过滤（整包都是广告）→ 整目录进冗余
+	if len(videos) == 0 {
+		if err := ops.moveFiles(cfg.Redundant, []string{dir.Fid}); err != nil {
+			onLog(fmt.Sprintf("✗ %s/ - 移动到冗余失败: %v", dir.Name, err))
+		} else {
+			onLog(fmt.Sprintf("○ %s/ - 无有效视频（全部为广告/垃圾），已移到冗余", dir.Name))
+		}
+		return results
+	}
+
+	// 广告/垃圾先行移到冗余
+	if len(junkFids) > 0 {
+		if err := ops.moveFiles(cfg.Redundant, junkFids); err != nil {
+			onLog(fmt.Sprintf("○ %s/ - 垃圾文件移到冗余失败: %v", dir.Name, err))
+		}
+	}
+
+	onLog(fmt.Sprintf("▣ AV 目标目录: %s（分类: %s）", avDir, category))
 	targetCid, err := ops.ensurePath(cfg.Library, avDir)
 	if err != nil {
 		onLog(fmt.Sprintf("✗ AV 创建目录失败: %v", err))
 		return results
 	}
 
-	// 先清洗广告前缀并重命名（"4k688.com@START-622.mp4" → "START-622.mp4"）
-	for _, f := range files {
-		cleanName := sanitizeAVFilename(f.Name)
-		ext := pathExt(f.Name)
-		// 视频文件重命名为 "番号.ext"，字幕/封面保留后缀部分
-		var newName string
-		if classifyFile(f.Name) == FileTypeVideo {
-			newName = media.Title + ext
-		} else if classifyFile(f.Name) == FileTypeSubtitle {
-			// 字幕：番号.后缀部分.ext
-			subSuffix := ""
-			if cleaned := sanitizeAVFilename(baseName(f.Name)); cleaned != baseName(f.Name) {
-				// 有广告前缀被清除了
-			}
-			// 尝试提取 .chs / .cht 等语言标记
-			base := baseName(f.Name)
-			if m := regexp.MustCompile(`\.(chs|cht|eng|chi|jap)\b`).FindStringSubmatch(base); m != nil {
-				subSuffix = m[0]
-			}
-			newName = media.Title + subSuffix + ext
+	// 重命名：正片按体积降序，主片 = 番号.ext，其余分卷 = 番号-CDn.ext
+	// （广告包里常见"引流视频+正片"，过去全部重命名为番号导致同名冲突）
+	sort.Slice(videos, func(i, j int) bool { return videos[i].Size > videos[j].Size })
+	renameTo := func(fid, oldName, newName string) {
+		if newName == oldName {
+			return
+		}
+		if err := ops.rename(fid, newName); err != nil {
+			onLog(fmt.Sprintf("○ AV 重命名失败保持原名 %s: %v", oldName, err))
 		} else {
-			// 其他文件（封面/nfo）：番号.ext
-			newName = media.Title + ext
+			onLog(fmt.Sprintf("✓ AV 清洗重命名 %s → %s", oldName, newName))
 		}
-		_ = cleanName
-		if newName != f.Name {
-			if err := ops.rename(f.Fid, newName); err != nil {
-				onLog(fmt.Sprintf("○ AV 重命名失败保持原名 %s: %v", f.Name, err))
-			} else {
-				onLog(fmt.Sprintf("✓ AV 清洗重命名 %s → %s", f.Name, newName))
-			}
+	}
+	var moveFids []string
+	for i, v := range videos {
+		newName := media.Title + pathExt(v.Name)
+		if i > 0 {
+			newName = fmt.Sprintf("%s-CD%d%s", media.Title, i+1, pathExt(v.Name))
 		}
+		renameTo(v.Fid, v.Name, newName)
+		moveFids = append(moveFids, v.Fid)
+	}
+	for _, s := range subs {
+		subSuffix := ""
+		if m := avSubLangRegex.FindStringSubmatch(baseName(s.Name)); m != nil {
+			subSuffix = m[0]
+		}
+		newName := media.Title + subSuffix + pathExt(s.Name)
+		renameTo(s.Fid, s.Name, newName)
+		moveFids = append(moveFids, s.Fid)
+	}
+	for _, m := range metas {
+		newName := media.Title + pathExt(m.Name)
+		renameTo(m.Fid, m.Name, newName)
+		moveFids = append(moveFids, m.Fid)
 	}
 
-	// 移动所有文件
-	var fids []string
-	for _, f := range files {
-		fids = append(fids, f.Fid)
-	}
-	if err := ops.moveFiles(targetCid, fids); err != nil {
+	if err := ops.moveFiles(targetCid, moveFids); err != nil {
 		onLog(fmt.Sprintf("✗ AV 移动失败: %v", err))
 		return results
 	}
@@ -1887,15 +2098,13 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	ops.moveFiles(cfg.Redundant, []string{dir.Fid})
 
 	onLog(fmt.Sprintf("✓ AV 入库: %s → %s", dir.Name, avDir))
-	for _, f := range files {
-		if classifyFile(f.Name) == FileTypeVideo {
-			results = append(results, OrganizeResult{
-				FileName: f.Name, Status: "success",
-				Title: media.Title, MediaType: "av",
-				Category: category, TargetDir: avDir,
-				Message: fmt.Sprintf("AV %s/%s", category, media.Title),
-			})
-		}
+	for _, v := range videos {
+		results = append(results, OrganizeResult{
+			FileName: v.Name, Status: "success",
+			Title: media.Title, MediaType: "av",
+			Category: category, TargetDir: avDir,
+			Message: fmt.Sprintf("AV %s/%s", category, media.Title),
+		})
 	}
 	return results
 }

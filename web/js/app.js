@@ -1492,12 +1492,43 @@ function setTags(containerId, values) {
   });
 }
 
+// warnDirOverlap 检查路径与媒体库目录的包含关系（相等或互为前缀），
+// 提示用户自动整理可能误处理库内文件（如把库里的分类目录搬进冗余）
+function dirOverlapWarn(a, b) {
+  const norm = p => (p || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb || na === '/') return false;
+  return na === nb || na.startsWith(nb + '/') || nb.startsWith(na + '/');
+}
+function warnShareDirOverlap() {
+  const lib = document.getElementById('full-cid');
+  const share = document.getElementById('share-folder');
+  if (lib && share && dirOverlapWarn(lib.value, share.value)) {
+    toast('⚠ 转存目录与媒体库目录存在包含关系，自动整理会跳过以防误搬库内容，请修正目录配置');
+    appendLog('⚠ 转存目录与媒体库存在包含关系：' + share.value + ' vs ' + lib.value);
+  }
+}
+function warnPendingDirOverlap() {
+  const lib = document.getElementById('full-cid');
+  const pending = document.getElementById('org-pending');
+  // 待整理目录本就允许建在媒体库内部（常见布局），只警告"覆盖整个库"的危险方向
+  if (lib && pending && pending.value) {
+    const norm = p => (p || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const np = norm(pending.value), nl = norm(lib.value);
+    if (np && nl && np !== '/' && (np === nl || nl.startsWith(np + '/'))) {
+      toast('⚠ 待整理目录覆盖到媒体库，库内条目会被跳过（不会被误整理），建议待整理与媒体库平级或建在库内');
+    }
+  }
+}
+
 async function saveConfig(key) {
   const value = collectConfig(key);
   if (value === null) { toast('该配置暂未支持保存'); return; }
   try {
     await api('/config/setting', { method: 'POST', body: JSON.stringify({ key, value: JSON.stringify(value) }) });
     toast('保存成功');
+    if (key === 'share') warnShareDirOverlap();
+    if (key === 'org-basic') warnPendingDirOverlap();
   } catch (e) { toast(e.message); }
 }
 
