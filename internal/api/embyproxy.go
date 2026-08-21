@@ -135,24 +135,35 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			return nil
 		}
 		sources, _ := root["MediaSources"].([]interface{})
-		changed := false
+		changed, rewritten := false, 0
 		for _, s := range sources {
 			ms, ok := s.(map[string]interface{})
 			if !ok {
 				continue
 			}
 			strmPath, _ := ms["Path"].(string)
-			if strmPath == "" || !strings.HasSuffix(strings.ToLower(strmPath), ".strm") {
+			if strmPath == "" {
 				continue
 			}
-			// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查
-			//（按 strm 文件名查 pick_code 拼 URL，不依赖文件系统）
-			directURL := readStrmDirectURL(db, cfg, strmPath)
-			if directURL == "" {
-				directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+			var directURL string
+			isStrm := strings.HasSuffix(strings.ToLower(strmPath), ".strm")
+			if strings.HasPrefix(strmPath, "http://") || strings.HasPrefix(strmPath, "https://") {
+				// 部分 Emby 版本已把 strm 展开成 URL 放在 Path，直接使用
+				directURL = strmPath
+			} else if isStrm {
+				// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查
+				//（按 strm 文件名查 pick_code 拼 URL，不依赖文件系统）
+				directURL = readStrmDirectURL(db, cfg, strmPath)
+				if directURL == "" {
+					directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+				}
 			}
 			if directURL == "" {
-				log.Printf("[Emby直连] ○ 无法解析 strm（文件不可读且台账未命中，检查 Emby/StrmHub 的媒体路径映射与同步台账）: %s", strmPath)
+				if isStrm {
+					log.Printf("[Emby直连] ○ 无法解析 strm（文件不可读且台账未命中，检查媒体路径映射与同步台账）: %s", strmPath)
+				} else {
+					log.Printf("[Emby直连] ○ 媒体源非 strm/URL（Path=%s），不改写", truncateStr(strmPath, 90))
+				}
 				continue
 			}
 			ms["Path"] = directURL
@@ -164,9 +175,12 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			if c := directURLContainer(directURL); c != "" {
 				ms["Container"] = c
 			}
-			log.Printf("[Emby直连] 改写播放信息: %s → 直连播放（绕过服务器转码）", filepath.Base(strmPath))
+			log.Printf("[Emby直连] ✦ 改写播放信息: %s → 直连播放（绕过服务器转码）", truncateStr(strmPath, 70))
 			changed = true
+			rewritten++
 		}
+		// 拦截摘要：无论是否改写都留痕，排查"改写没生效"时一眼可见
+		log.Printf("[Emby直连] PlaybackInfo 拦截: 媒体源 %d 个，改写 %d 个", len(sources), rewritten)
 		if !changed {
 			restore()
 			return nil
