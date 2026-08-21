@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"strmhub/internal/config"
+	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -144,8 +145,14 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			if strmPath == "" || !strings.HasSuffix(strings.ToLower(strmPath), ".strm") {
 				continue
 			}
+			// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查
+			//（按 strm 文件名查 pick_code 拼 URL，不依赖文件系统）
 			directURL := readStrmDirectURL(db, cfg, strmPath)
 			if directURL == "" {
+				directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+			}
+			if directURL == "" {
+				log.Printf("[Emby直连] ○ 无法解析 strm（文件不可读且台账未命中，检查 Emby/StrmHub 的媒体路径映射与同步台账）: %s", strmPath)
 				continue
 			}
 			ms["Path"] = directURL
@@ -230,6 +237,77 @@ func directURLContainer(u string) string {
 		return strings.ToLower(e)
 	}
 	return ""
+}
+
+// directURLFromLedger 同步台账反查直链：按 strm 文件名（xxx.mkv.strm）
+// 查 SyncedFile 的 pick_code，按 STRM 直链配置拼 URL。
+// Emby 与 StrmHub 容器的媒体路径不一致导致文件读不到时的兜底
+func directURLFromLedger(db *gorm.DB, cfg *config.Config, strmBase string) string {
+	if db == nil || strmBase == "" {
+		return ""
+	}
+	var sf model.SyncedFile
+	if err := db.Where("rel_path = ? OR rel_path LIKE ?", strmBase, "%/"+strmBase).First(&sf).Error; err != nil {
+		return ""
+	}
+	if sf.PickCode == "" {
+		return ""
+	}
+	domain, format, keepExt := readStrmLinkConfig(db, cfg)
+	if domain == "" {
+		return ""
+	}
+	// rel_path 形如 "俱乐部/…/xxx.mkv.strm"，原文件名 = 去掉 .strm
+	origName := strings.TrimSuffix(strmBase, ".strm")
+	ext := strings.ToLower(filepath.Ext(origName))
+	idPart := sf.PickCode
+	if keepExt {
+		idPart += ext
+	}
+	base := strings.TrimRight(domain, "/")
+	if format == "pick_code" {
+		return base + "/d/" + idPart
+	}
+	return base + "/d/" + idPart + "?/" + origName
+}
+
+// readStrmLinkConfig 读取 STRM 直链配置（域名/格式/保留后缀；yaml 优先 DB 回退）
+func readStrmLinkConfig(db *gorm.DB, cfg *config.Config) (domain, format string, keepExt bool) {
+	domain, format, keepExt = "http://172.17.0.1:6086", "pick_code_name", true
+	raw := ""
+	if cfg != nil {
+		raw = cfg.GetSetting("strm")
+	}
+	if raw == "" && db != nil {
+		var s model.Setting
+		if err := db.Where("`key` = ?", "strm").First(&s).Error; err == nil {
+			raw = s.Value
+		}
+	}
+	if raw == "" {
+		return
+	}
+	var c struct {
+		Domain  string `json:"domain"`
+		Format  string `json:"format"`
+		KeepExt any    `json:"keep_ext"`
+	}
+	if json.Unmarshal([]byte(raw), &c) != nil {
+		return
+	}
+	if c.Domain != "" {
+		domain = c.Domain
+	}
+	if c.Format != "" {
+		format = c.Format
+	}
+	switch v := c.KeepExt.(type) {
+	case bool:
+		keepExt = v
+	case string:
+		keepExt = v == "true"
+	}
+	return
 }
 
 // registerEmbyProxy 在 gin 引擎上注册 Emby 反代路由

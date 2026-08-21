@@ -418,7 +418,7 @@ func rename115(cookie, fid, newName string) error {
 
 // getStrmConfig 读取 STRM 直链配置
 func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
-	domain = "http://172.17.0.1:6060"
+	domain = "http://172.17.0.1:6086"
 	format = "pick_code_name"
 	keepExt = true
 	exist = false // false=覆盖
