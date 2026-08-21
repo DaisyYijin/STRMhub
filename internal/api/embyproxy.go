@@ -128,6 +128,10 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			return nil
 		}
 		restore := func() { resp.Body = io.NopCloser(bytes.NewReader(body)) }
+		clientHost := ""
+		if resp.Request != nil {
+			clientHost = resp.Request.Header.Get("X-Original-Host")
+		}
 
 		var root map[string]interface{}
 		if json.Unmarshal(body, &root) != nil {
@@ -166,8 +170,8 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 				}
 				continue
 			}
-			// 旧域名（端口/主机不对）规范化成当前配置的直链域名
-			directURL = normalizeDirectURL(db, cfg, directURL)
+			// 直链地址按客户端访问地址改写（strm 里的旧域名/端口不影响播放）
+			directURL = normalizeDirectURL(db, cfg, directURL, clientHost)
 			ms["Path"] = directURL
 			ms["Protocol"] = "Http"
 			ms["SupportsDirectPlay"] = true
@@ -326,15 +330,22 @@ func readStrmLinkConfig(db *gorm.DB, cfg *config.Config) (domain, format string,
 	return
 }
 
-// normalizeDirectURL 把直链 URL 的协议+主机规范成当前配置的直链域名。
-// 存量 strm 可能带着生成时的旧域名（如历史默认 172.17.0.1:6060——
-// 管理端口无 /d/ 路由且容器网关外部不可达），改写播放信息时统一替换，
-// 播放器才能取到流，存量 strm 无需全部重新生成
-func normalizeDirectURL(db *gorm.DB, cfg *config.Config, u string) string {
-	domain, _, _ := readStrmLinkConfig(db, cfg)
-	base, err := url.Parse(strings.TrimRight(domain, "/"))
-	if err != nil || base.Host == "" {
-		return u
+// normalizeDirectURL 把直链 URL 的协议+主机替换成播放器可达的地址。
+// 优先用客户端访问 6086 时的 Host（X-Original-Host，Director 记录）——
+// 客户端怎么连上的 Emby 就怎么取流，公网/内网/localhost 访问都能播，
+// strm 里残留任何旧域名（如 172.17.0.1:6060）都无所谓；
+// 无 Host 信息时回退到 STRM 配置的直链域名
+func normalizeDirectURL(db *gorm.DB, cfg *config.Config, u, clientHost string) string {
+	var base *url.URL
+	if clientHost != "" {
+		base = &url.URL{Scheme: "http", Host: clientHost}
+	} else {
+		domain, _, _ := readStrmLinkConfig(db, cfg)
+		var err error
+		base, err = url.Parse(strings.TrimRight(domain, "/"))
+		if err != nil || base.Host == "" {
+			return u
+		}
 	}
 	parsed, err := url.Parse(u)
 	if err != nil {
@@ -346,7 +357,7 @@ func normalizeDirectURL(db *gorm.DB, cfg *config.Config, u string) string {
 	parsed.Scheme = base.Scheme
 	parsed.Host = base.Host
 	out := parsed.String()
-	log.Printf("[Emby直连] ○ 直链域名规范化: %s → %s", truncateStr(u, 60), truncateStr(out, 60))
+	log.Printf("[Emby直连] ○ 直链地址改写: %s → %s", truncateStr(u, 60), truncateStr(out, 60))
 	return out
 }
 
@@ -379,6 +390,9 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				}
 				// 直连改写需要读取 JSON 响应体，禁用压缩传输
 				req.Header.Del("Accept-Encoding")
+				// 记录客户端访问 6086 用的地址（含端口），直连改写用它拼 URL——
+				// 客户端能连上这个地址访问 Emby，就一定能连上它取直链流
+				req.Header.Set("X-Original-Host", c.Request.Host)
 			},
 			FlushInterval: -1, // 流式响应立即刷新（视频播放需要）
 			ModifyResponse: rewritePlaybackInfo(db, cfg),
