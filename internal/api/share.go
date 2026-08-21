@@ -66,10 +66,13 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[上传] ▶ 分享转存开始: %s（提取码 %q）", truncateStr(req.URL, 70), req.Code)
+
 	// 1. 分享信息（校验链接与提取码）
 	infoBody, err := httpPostForm115("https://webapi.115.com/share/info",
 		url.Values{"share_code": {shareCode}}, cookie, 15*time.Second)
 	if err != nil {
+		log.Printf("[上传] ✗ 获取分享信息失败: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "获取分享信息失败: " + err.Error()})
 		return
 	}
@@ -81,6 +84,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		} `json:"data"`
 	}
 	if json.Unmarshal(infoBody, &info) != nil || !info.State {
+		log.Printf("[上传] ✗ 分享信息校验失败: %s", truncateStr(string(infoBody), 120))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "分享信息校验失败: " + truncateStr(string(infoBody), 120)})
 		return
 	}
@@ -113,6 +117,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		} `json:"data"`
 	}
 	if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
+		log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120)})
 		return
 	}
@@ -120,6 +125,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "分享为空", "count": 0})
 		return
 	}
+	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", info.Data.ShareTitle, len(snap.Data.List))
 
 	// 3. sharepost 拿 pick_code
 	form := url.Values{
@@ -146,6 +152,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		} `json:"data"`
 	}
 	if json.Unmarshal(postBody, &post) != nil || !post.State {
+		log.Printf("[上传] ✗ sharepost 被拒: %s", truncateStr(string(postBody), 120))
 		c.JSON(http.StatusBadGateway, gin.H{"error": "sharepost 被拒: " + truncateStr(string(postBody), 120)})
 		return
 	}
@@ -163,6 +170,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		rBody, err := httpPostForm115("https://webapi.115.com/files/receive", rForm, cookie, 20*time.Second)
 		if err != nil {
 			fail++
+			log.Printf("[上传] ✗ 转存失败: %s: %v", item.FileName, err)
 			continue
 		}
 		var r struct {
@@ -172,8 +180,10 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		_ = json.Unmarshal(rBody, &r)
 		if r.State {
 			success++
+			log.Printf("[上传] ✓ 转存: %s", item.FileName)
 		} else {
 			fail++
+			log.Printf("[上传] ✗ 转存被拒: %s: %s", item.FileName, r.Error)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
