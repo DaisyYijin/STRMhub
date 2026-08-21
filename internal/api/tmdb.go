@@ -293,6 +293,9 @@ type ParsedName struct {
 var (
 	// 季集模式：S01E02, s01e02, 1x02
 	reSeasonEpisode = regexp.MustCompile(`[Ss](\d{1,2})[Ee](\d{1,3})`)
+	// 仅集数模式：EP01 / E01 / 第01集（无季信息，季缺省为 1）
+	// 前后必须有分隔符或边界，避免误吃 "WALL.E.2008" 这类片名
+	reEpisodeOnly = regexp.MustCompile(`(?:^|[\.\s_-])(?:[Ee][Pp]?|第)(\d{1,3})(?:[集話话])?(?:$|[\.\s_-])`)
 	// 仅季：Season 1, 第一季
 	reSeasonOnly = regexp.MustCompile(`[Ss](\d{1,2})\b`)
 	// 年份：(2023) 或 .2023. 或空格2023空格
@@ -340,6 +343,11 @@ func parseFileName(filename string) *ParsedName {
 		result.IsTV = true
 		result.Season, _ = strconv.Atoi(m[1])
 		result.Episode, _ = strconv.Atoi(m[2])
+	} else if m := reEpisodeOnly.FindStringSubmatch(name); m != nil {
+		// EP01 / E01 / 第01集：无季信息，缺省第 1 季
+		result.IsTV = true
+		result.Season = 1
+		result.Episode, _ = strconv.Atoi(m[1])
 	} else if m := reSeasonOnly.FindStringSubmatch(name); m != nil {
 		result.IsTV = true
 		result.Season, _ = strconv.Atoi(m[1])
@@ -364,6 +372,10 @@ func parseFileName(filename string) *ParsedName {
 
 	// 在季集标记处截断
 	if idx := reSeasonEpisode.FindStringIndex(title); idx != nil {
+		title = title[:idx[0]]
+	}
+	// 在仅集数标记（EP01/E01/第01集）处截断，避免集号污染标题搜索
+	if idx := reEpisodeOnly.FindStringIndex(title); idx != nil {
 		title = title[:idx[0]]
 	}
 	if !result.IsTV {

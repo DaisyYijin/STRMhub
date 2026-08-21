@@ -78,3 +78,32 @@ func TestIsAdOnlyVideo(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEpisodeOnly(t *testing.T) {
+	cases := []struct {
+		name             string
+		title            string
+		season, episode  int
+		isTV             bool
+	}{
+		// 用户实测的剧集命名：EP 编号
+		{"Baby.Walkure.Everyday.EP08.1080p.MAX.WEB-DL.DDP2.0.H.264-MagicStar.mkv", "Baby Walkure Everyday", 1, 8, true},
+		{"Baby.Walkure.Everyday.EP12.1080p.MAX.WEB-DL.DDP2.0.H.264-MagicStar.mkv", "Baby Walkure Everyday", 1, 12, true},
+		// E01 简写与中文集数
+		{"Some.Show.E01.720p.mkv", "Some Show", 1, 1, true},
+		{"某剧.第01集.1080p.mkv", "某剧", 1, 1, true},
+		// S01E02 优先且不受影响
+		{"Show.S02E03.1080p.mkv", "Show", 2, 3, true},
+		// 电影防误伤：WALL.E / E.T 等含 E 的片名不得命中
+		{"WALL.E.2008.1080p.BluRay.x264.mkv", "WALL E", 0, 0, false},
+		{"E.T.1982.720p.BluRay.mkv", "E T", 0, 0, false},
+		{"Edge.of.Tomorrow.2014.1080p.mkv", "Edge of Tomorrow", 0, 0, false},
+	}
+	for _, c := range cases {
+		p := parseFileName(c.name)
+		if p.Title != c.title || p.Season != c.season || p.Episode != c.episode || p.IsTV != c.isTV {
+			t.Errorf("parseFileName(%q) = (title=%q S=%d E=%d TV=%v), want (%q S=%d E=%d TV=%v)",
+				c.name, p.Title, p.Season, p.Episode, p.IsTV, c.title, c.season, c.episode, c.isTV)
+		}
+	}
+}
