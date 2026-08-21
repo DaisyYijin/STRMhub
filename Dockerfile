@@ -6,6 +6,8 @@ FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
 
 # buildx 多架构构建时自动注入目标架构（amd64/arm64）
 ARG TARGETARCH
+# CI 注入提交号（版本标识，启动日志里可确认运行的是哪个提交）
+ARG BUILD_SHA=dev
 
 WORKDIR /build
 
@@ -16,8 +18,8 @@ RUN go mod download
 # 复制源码
 COPY . .
 
-# 编译（CGO 禁用，按目标架构交叉编译）
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o strmhub .
+# 编译（CGO 禁用，按目标架构交叉编译；注入版本标识）
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -X main.BuildSHA=${BUILD_SHA}" -o strmhub .
 
 # 运行阶段：最小镜像
 FROM alpine:latest

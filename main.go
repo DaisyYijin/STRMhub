@@ -14,6 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// BuildSHA 构建时由 CI 注入（-ldflags "-X main.BuildSHA=xxx"），
+// 用于日志/UI 确认运行的是哪个提交（排查"更新没生效"类问题）
+var BuildSHA = "dev"
+
 func main() {
 	// 初始化配置
 	cfg := config.Load()
@@ -28,7 +32,7 @@ func main() {
 		return
 	}
 
-	log.Printf("StrmHub 启动中... 管理端口:%d 代理端口:%d", cfg.Port, cfg.ProxyPort)
+	log.Printf("StrmHub 启动中... 版本:%s 管理端口:%d 代理端口:%d", BuildSHA, cfg.Port, cfg.ProxyPort)
 
 	// 确保配置目录存在
 	if err := cfg.EnsureConfigDir(); err != nil {
