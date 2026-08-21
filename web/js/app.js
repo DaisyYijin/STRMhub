@@ -1360,12 +1360,14 @@ function updateStrmExample() {
   if (!ex) return;
   const domain = (document.getElementById('strm-domain')?.value || '').replace(/\/+$/, '');
   if (!domain) { ex.textContent = ''; return; }
-  const fid = 'abc123';
-  const name = '钢铁侠';
-  const ext = strmExtVal ? '.mkv' : '';
+  const pickcode = 'abchrb6gnrw0hhh80';
+  const name = '钢铁侠.2008.1080p.BluRay.X264.DTS-TnT.mkv';
+  const id = strmExtVal ? pickcode + '.mkv' : pickcode;
+  // pick_code:      /d/{pickcode}[.ext]
+  // pick_code_name: /d/{pickcode}[.ext]?/{原文件名}（?/ 后的名字供播放器识别）
   ex.textContent = strmFormatVal === 'pick_code'
-    ? `${domain}/d/${fid}`
-    : `${domain}/d/${fid}/${name}${ext}`;
+    ? `${domain}/d/${id}`
+    : `${domain}/d/${id}?/${name}`;
 }
 
 function setStrmFormat(val) {

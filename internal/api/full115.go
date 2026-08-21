@@ -453,20 +453,22 @@ func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
 }
 
 // writeStrm 生成单个 .strm 文件
+// URL 形态（CMS 同款，代理端按 pickcode 查文件）：
+//   pick_code      {domain}/d/{pickcode}[.ext]
+//   pick_code_name {domain}/d/{pickcode}[.ext]?/{原文件名}
+// 「保留文件后缀」= pickcode 段是否带 .ext（播放器据 URL 后缀识别容器格式）；
+// ?/ 之后的文件名仅供播放器展示与识别，代理忽略查询串
 func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remoteFile) error {
+	base := strings.TrimRight(domain, "/")
+	idPart := f.PickCode
+	if keepExt {
+		idPart += pathExt(f.Name)
+	}
 	var streamURL string
 	if format == "pick_code" {
-		streamURL = fmt.Sprintf("%s/d/%s", strings.TrimRight(domain, "/"), f.Fid)
+		streamURL = fmt.Sprintf("%s/d/%s", base, idPart)
 	} else {
-		if keepExt {
-			streamURL = fmt.Sprintf("%s/d/%s/%s", strings.TrimRight(domain, "/"), f.Fid, f.Name)
-		} else {
-			name := f.Name
-			if ext := path.Ext(name); ext != "" {
-				name = strings.TrimSuffix(name, ext)
-			}
-			streamURL = fmt.Sprintf("%s/d/%s/%s", strings.TrimRight(domain, "/"), f.Fid, name)
-		}
+		streamURL = fmt.Sprintf("%s/d/%s?/%s", base, idPart, f.Name)
 	}
 
 	// 本地目录：保持网盘目录结构

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"strmhub/internal/config"
+	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -77,6 +78,18 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	if pickcode == "" {
 		c.String(http.StatusBadRequest, "missing pickcode")
 		return
+	}
+	// 兼容 /d/{pickcode}.{ext}?/{name} 形态：pickcode 段可能带文件后缀，
+	// 115 pickcode 为纯字母数字，剥掉最后一个 "." 之后的部分即可
+	if i := strings.LastIndex(pickcode, "."); i > 0 {
+		pickcode = pickcode[:i]
+	}
+	// 旧版 STRM 用数字 fid 生成 /d/{fid}/...，查台账换回 pick_code
+	if isAllDigits(pickcode) {
+		var sf model.SyncedFile
+		if err := db.Where("file_id = ?", pickcode).First(&sf).Error; err == nil && sf.PickCode != "" {
+			pickcode = sf.PickCode
+		}
 	}
 
 	reqUA := c.Request.UserAgent()
