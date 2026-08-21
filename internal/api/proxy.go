@@ -139,12 +139,13 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	c.Redirect(http.StatusFound, downloadURL)
 }
 
-// streamVia 服务端中转拉流：用统一 UA 向 115 取直链并转发字节流。
+// streamVia 服务端中转拉流：取直链并转发字节流。
 // 仅用于不发 User-Agent 的播放器（302 对它们无效），透传 Range 支持拖动。
-// CDN 取流按 Cookie 组合矩阵重试（downloadAssetBytes 同款）：
-// 直链下发 Cookie → 直链+登录 Cookie → 仅登录 Cookie → 无 Cookie
+// 签发 UA 用浏览器 UA（ua115Download）：实测浏览器 UA 拿到的直链免 Cookie
+//（f=1/2 型）；ua115Unified 拿到的是 f=3 型（强绑 Set-Cookie，矩阵也过不去）。
+// 仍保留 Cookie 组合矩阵兜底，且免 Cookie 组合优先（快，避免播放器超时）
 func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string) {
-	rawURL, hdrs, err := proxyDownloadURLFull(db, cfg, pickcode, ua115Unified())
+	rawURL, hdrs, err := proxyDownloadURLFull(db, cfg, pickcode, ua115Download)
 	if err != nil || rawURL == "" {
 		log.Printf("302代理中转取链失败: %v", err)
 		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)
@@ -170,7 +171,7 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 		return (&http.Client{}).Do(outReq) // 无整体超时：长视频流式传输
 	}
 
-	// 组合去重后依次尝试
+	// 组合去重：免 Cookie 优先（浏览器型直链直接命中，不等重试）
 	var combos []string
 	add := func(s string) {
 		for _, e := range combos {
@@ -180,12 +181,12 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 		}
 		combos = append(combos, s)
 	}
+	add("")
 	if setCookie != "" {
 		add(setCookie)
 		add(setCookie + "; " + loginCookie)
 	}
 	add(loginCookie)
-	add("")
 
 	var resp *http.Response
 	var lastErr error
