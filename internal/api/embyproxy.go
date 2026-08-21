@@ -13,11 +13,17 @@ package api
 // 需要「系统配置 → EMBY管理」里填写 Emby 服务器地址（如 http://192.168.1.100:8096）
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +102,136 @@ func parseJSON(data string, out interface{}) error {
 	return json.Unmarshal([]byte(data), out)
 }
 
+// playbackInfoPathRe 匹配 Emby 播放信息接口（/Items/{id}/PlaybackInfo）
+var playbackInfoPathRe = regexp.MustCompile(`(?i)^/items/[^/]+/playbackinfo$`)
+
+// rewritePlaybackInfo 直连改写中间件（MediaWarp/CMS 同款思路）：
+// 拦截 PlaybackInfo 响应，把 strm 媒体源从本地文件改写成其内容指向的
+// 直链 URL 并强制直连播放——播放器直接从 115 CDN 取流，彻底绕开
+// Emby 服务器转码（转码需要服务器从 strm 拉流重编码，容器网络/码率
+// 限制等问题都会让它失败）
+func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) error {
+	return func(resp *http.Response) error {
+		if resp.Request == nil || resp.StatusCode != http.StatusOK {
+			return nil
+		}
+		if !playbackInfoPathRe.MatchString(resp.Request.URL.Path) {
+			return nil
+		}
+		if !strings.Contains(resp.Header.Get("Content-Type"), "json") {
+			return nil
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil
+		}
+		restore := func() { resp.Body = io.NopCloser(bytes.NewReader(body)) }
+
+		var root map[string]interface{}
+		if json.Unmarshal(body, &root) != nil {
+			restore()
+			return nil
+		}
+		sources, _ := root["MediaSources"].([]interface{})
+		changed := false
+		for _, s := range sources {
+			ms, ok := s.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			strmPath, _ := ms["Path"].(string)
+			if strmPath == "" || !strings.HasSuffix(strings.ToLower(strmPath), ".strm") {
+				continue
+			}
+			directURL := readStrmDirectURL(db, cfg, strmPath)
+			if directURL == "" {
+				continue
+			}
+			ms["Path"] = directURL
+			ms["Protocol"] = "Http"
+			ms["SupportsDirectPlay"] = true
+			ms["SupportsDirectStream"] = true
+			ms["SupportsTranscoding"] = false
+			delete(ms, "TranscodingUrl")
+			if c := directURLContainer(directURL); c != "" {
+				ms["Container"] = c
+			}
+			log.Printf("[Emby直连] 改写播放信息: %s → 直连播放（绕过服务器转码）", filepath.Base(strmPath))
+			changed = true
+		}
+		if !changed {
+			restore()
+			return nil
+		}
+		out, err := json.Marshal(&root)
+		if err != nil {
+			restore()
+			return nil
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(out))
+		resp.ContentLength = int64(len(out))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
+		resp.Header.Del("Content-Encoding")
+		return nil
+	}
+}
+
+// readStrmDirectURL 读取 strm 文件内容（第一行的直链 URL）。
+// PlaybackInfo 里的 Path 是 Emby 侧路径，先按「本地路径映射」换算再读
+func readStrmDirectURL(db *gorm.DB, cfg *config.Config, embyPath string) string {
+	local := embyPath
+	if cfg != nil {
+		var embyCfg struct {
+			PathMapping string `json:"path_mapping"`
+		}
+		if json.Unmarshal([]byte(cfg.GetSetting("emby")), &embyCfg) == nil && embyCfg.PathMapping != "" {
+			parts := strings.SplitN(embyCfg.PathMapping, "#", 2)
+			if len(parts) == 2 {
+				localPart, embyPart := strings.TrimRight(parts[0], "/"), strings.TrimRight(parts[1], "/")
+				if embyPart != "" && strings.HasPrefix(embyPath, embyPart+"/") {
+					local = localPart + embyPath[len(embyPart):]
+				}
+			}
+		}
+	}
+	for _, cand := range []string{local, embyPath} {
+		if cand == "" {
+			continue
+		}
+		data, err := os.ReadFile(cand)
+		if err != nil {
+			continue
+		}
+		line := strings.TrimSpace(string(data))
+		if i := strings.IndexAny(line, "\r\n"); i > 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			return line
+		}
+	}
+	return ""
+}
+
+// directURLContainer 从直链 URL 提取容器格式：
+// /d/{pc}.mkv?/名字.mkv → mkv；?/ 后的文件名兜底
+func directURLContainer(u string) string {
+	pathPart := u
+	if i := strings.Index(u, "?"); i >= 0 {
+		if q := u[i:]; strings.HasPrefix(q, "?/") && len(q) > 2 {
+			if e := strings.TrimPrefix(filepath.Ext(q[2:]), "."); e != "" {
+				return strings.ToLower(e)
+			}
+		}
+		pathPart = u[:i]
+	}
+	if e := strings.TrimPrefix(filepath.Ext(pathPart), "."); e != "" {
+		return strings.ToLower(e)
+	}
+	return ""
+}
+
 // registerEmbyProxy 在 gin 引擎上注册 Emby 反代路由
 func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	r.Any("/emby/*path", func(c *gin.Context) {
@@ -123,8 +259,11 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				if !strings.HasPrefix(req.URL.Path, "/") {
 					req.URL.Path = "/" + req.URL.Path
 				}
+				// 直连改写需要读取 JSON 响应体，禁用压缩传输
+				req.Header.Del("Accept-Encoding")
 			},
 			FlushInterval: -1, // 流式响应立即刷新（视频播放需要）
+			ModifyResponse: rewritePlaybackInfo(db, cfg),
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				log.Printf("[Emby反代] 转发失败: %v", err)
 				http.Error(w, "Emby 服务器无法连接: "+err.Error(), http.StatusBadGateway)
