@@ -95,6 +95,15 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	reqUA := c.Request.UserAgent()
 	log.Printf("302代理请求: pickcode=%s, UA=%s", pickcode, reqUA)
 
+	// UA 缺失的播放器（部分安卓内核不发自定义 UA）：115 直链与 UA 绑定，
+	// 空 UA 客户端拿到 302 后去 CDN 取流会被拒（浏览器正常、这类手机播不动）。
+	// 改为服务端中转：用统一 UA 签发直链，把字节流转发给客户端（透传 Range）
+	if strings.TrimSpace(reqUA) == "" {
+		log.Printf("302代理: %s UA 为空，转服务端中转拉流", pickcode)
+		streamVia(c, db, cfg, pickcode)
+		return
+	}
+
 	// 缓存键含 UA：115 直链与签发 UA 绑定，Emby(Lavf) 与浏览器链不可混用
 	cacheKey := pickcode + "|" + reqUA
 	downloadCacheMu.Lock()
@@ -128,6 +137,57 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 
 	log.Printf("302代理重定向: %s -> %s", pickcode, downloadURL[:min(80, len(downloadURL))]+"...")
 	c.Redirect(http.StatusFound, downloadURL)
+}
+
+// streamVia 服务端中转拉流：用统一 UA 向 115 取直链并转发字节流。
+// 仅用于不发 User-Agent 的播放器（302 对它们无效），透传 Range 支持拖动
+func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string) {
+	rawURL, hdrs, err := proxyDownloadURLFull(db, cfg, pickcode, ua115Unified())
+	if err != nil || rawURL == "" {
+		log.Printf("302代理中转取链失败: %v", err)
+		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)
+		return
+	}
+	outReq, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, rawURL, nil)
+	if err != nil {
+		c.String(http.StatusBadGateway, "构建拉流请求失败")
+		return
+	}
+	if ua := hdrs["User-Agent"]; ua != "" {
+		outReq.Header.Set("User-Agent", ua)
+	}
+	if rng := c.Request.Header.Get("Range"); rng != "" {
+		outReq.Header.Set("Range", rng)
+	}
+	resp, err := (&http.Client{}).Do(outReq) // 无整体超时：长视频流式传输
+	if err != nil {
+		log.Printf("302代理中转拉流失败: %v", err)
+		c.String(http.StatusBadGateway, "上游拉流失败: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition"} {
+		if v := resp.Header.Get(h); v != "" {
+			c.Writer.Header().Set(h, v)
+		}
+	}
+	c.Writer.WriteHeader(resp.StatusCode)
+	flusher, _ := c.Writer.(http.Flusher)
+	buf := make([]byte, 64*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := c.Writer.Write(buf[:n]); werr != nil {
+				return // 客户端断开
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if rerr != nil {
+			return
+		}
+	}
 }
 
 // ua115Download 下载链路专用 UA（openStrm defaultUA 同款，浏览器 UA 签发的直链

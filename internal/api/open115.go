@@ -961,9 +961,20 @@ func (o *pan115Ops) cookieForDL() string {
 
 // proxyDownloadURL 302 代理专用：不依赖 Handler，直接从 DB+配置构造通道
 func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode, ua string) (string, error) {
+	u, _, err := proxyDownloadURLFull(db, cfg, pickcode, ua)
+	return u, err
+}
+
+// proxyDownloadURLFull 同 proxyDownloadURL，但一并返回直链要求的请求头
+//（含必须绑定的 User-Agent，服务端中转拉流时使用）
+func proxyDownloadURLFull(db *gorm.DB, cfg *config.Config, pickcode, ua string) (string, map[string]string, error) {
 	// OpenAPI 通道
 	if oc := open115FromDB(db, cfg); oc != nil && oc.authorized() {
-		return oc.downloadURL(pickcode)
+		u, err := oc.downloadURL(pickcode)
+		if err != nil {
+			return "", nil, err
+		}
+		return u, map[string]string{"User-Agent": ua}, nil
 	}
 	// Cookie 通道（文件优先，回退 DB）
 	cookie := ""
@@ -973,10 +984,9 @@ func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode, ua string) (str
 	if cookie == "" {
 		var storage model.Storage
 		if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-			return "", fmt.Errorf("115 账号未绑定")
+			return "", nil, fmt.Errorf("115 账号未绑定")
 		}
 		cookie = storage.Cookie
 	}
-	u, _, err := get115DownloadURL(pickcode, cookie, ua)
-	return u, err
+	return get115DownloadURL(pickcode, cookie, ua)
 }
