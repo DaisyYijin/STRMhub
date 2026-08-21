@@ -926,8 +926,8 @@ func (h *Handler) SaveSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }
 
-// GetSystemLogs 读取系统日志文件最后 200 行
-// GET /system/logs
+// GetSystemLogs 读取系统日志文件最后 500 行
+// GET /system/logs（日志页唯一数据源：整理/同步/转存等任务动作的实时输出）
 func (h *Handler) GetSystemLogs(c *gin.Context) {
 	logPath := "/logs/app.log"
 	data, err := os.ReadFile(logPath)
@@ -936,10 +936,10 @@ func (h *Handler) GetSystemLogs(c *gin.Context) {
 		return
 	}
 	lines := strings.Split(string(data), "\n")
-	// 只返回最后 200 行
+	// 只返回最后 500 行（一轮整理/同步动辄上百行，200 行看不全一个完整动作）
 	start := 0
-	if len(lines) > 200 {
-		start = len(lines) - 200
+	if len(lines) > 500 {
+		start = len(lines) - 500
 	}
 	c.JSON(http.StatusOK, gin.H{"logs": strings.Join(lines[start:], "\n")})
 }

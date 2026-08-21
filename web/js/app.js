@@ -1734,17 +1734,11 @@ async function loadConfigs() {
 
 // ==================== 日志 ====================
 let logPollTimer = null;
-function appendLog(line) {
-  const viewer = document.getElementById('client-log');
-  if (!viewer) return;
-  const time = new Date().toLocaleTimeString();
-  viewer.textContent = (viewer.textContent === '暂无日志...' || viewer.textContent === '暂无操作...' ? '' : viewer.textContent) + `[${time}] ${line}\n`;
-  viewer.scrollTop = viewer.scrollHeight;
-}
+// 操作日志面板已移除（日志页只保留服务端任务日志）；
+// appendLog 保留为空操作，历史调用点无需逐一清理
+function appendLog(line) {}
 function clearLogViewer() {
-  const c = document.getElementById('client-log');
   const sv = document.getElementById('server-log-viewer');
-  if (c) c.textContent = '暂无操作...';
   if (sv) sv.textContent = '暂无日志...';
 }
 function openLog() {
