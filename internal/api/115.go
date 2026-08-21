@@ -231,6 +231,7 @@ func (h *Handler) CreateQrCode(c *gin.Context) {
 	qrMu.Lock()
 	qrSessions[token.Data.Uid] = qrSession{app: app, device: req.Device}
 	qrMu.Unlock()
+	log.Printf("[系统] ▶ 扫码登录二维码已生成（uid=%s，设备=%s，有效期约 2 分钟）", truncateStr(token.Data.Uid, 12), req.Device)
 
 	c.JSON(http.StatusOK, gin.H{
 		"qrcode": qrcodeDataURI,
@@ -277,6 +278,7 @@ func (h *Handler) QrCodeStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "scanned"})
 	case -1:
 		h.dropQrSession(req.Uid)
+		log.Printf("[系统] ○ 扫码二维码已过期（uid=%s，115 返回: %s）。二维码有效期约 2 分钟，超时未扫码即过期，前端会自动换新码", truncateStr(req.Uid, 12), st.Data.Msg)
 		c.JSON(http.StatusOK, gin.H{"status": "expired"})
 	case -2:
 		h.dropQrSession(req.Uid)

@@ -860,7 +860,9 @@ function genDirTree() { toast('目录树生成工具开发中'); }
 // ==================== 115 扫码登录 ====================
 let qrcodeTimer = null;
 let qrPollApi = '/storage/qrcode';  // 当前轮询接口（OpenAPI 启用时切换）
-async function openQrCode() {
+let qrAutoRefresh = 0;              // 二维码过期自动刷新次数（手动打开弹窗时清零）
+async function openQrCode(isAuto) {
+  if (!isAuto) qrAutoRefresh = 0;
   document.getElementById('qrcode-modal').style.display = 'flex';
   document.getElementById('qrcode-img').innerHTML = '二维码加载中...';
   // OPENAPI 启用且填了 AppID → 走开放平台授权；否则走 Cookie 扫码
@@ -927,7 +929,14 @@ function startQrCodePolling(uid, time, sign) {
         document.getElementById('acc-capacity').textContent = '已绑定';
         setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); checkCookie(); }, 1200);
       } else if (status === 'expired' || status === 'cancelled') {
-        document.getElementById('qrcode-status').textContent = status === 'expired' ? '二维码已过期，请重新获取' : '已取消登录';
+        if (status === 'expired' && qrAutoRefresh < 3) {
+          // 二维码有效期约 2 分钟，过期自动换新码重试（最多 3 次），不用手动关开弹窗
+          qrAutoRefresh++;
+          document.getElementById('qrcode-status').textContent = '二维码已过期，正在自动刷新（第 ' + qrAutoRefresh + '/3 次），请稍候重新扫码...';
+          openQrCode(true);
+          return;
+        }
+        document.getElementById('qrcode-status').textContent = status === 'expired' ? '二维码已过期，请关闭后重新获取' : '已取消登录';
       } else {
         poll();  // waiting，继续长轮询
       }

@@ -534,7 +534,16 @@ func (h *Handler) OpenQrCodeStatus(c *gin.Context) {
 		// 同步更新 Storage 表（标记 OpenAPI 已授权）
 		h.upsertOpenStorage(sess.AppID)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	case -1:
+		openQrSessions.Delete(req.Uid)
+		log.Printf("[系统] ○ 开放平台授权二维码已过期（uid=%s），前端会自动换新码", truncateStr(req.Uid, 12))
+		c.JSON(http.StatusOK, gin.H{"status": "expired"})
+	case -2:
+		openQrSessions.Delete(req.Uid)
+		c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 	default:
+		log.Printf("[系统] ○ 开放平台扫码状态异常: %d（按过期处理，uid=%s）", st.Data.Status, truncateStr(req.Uid, 12))
+		openQrSessions.Delete(req.Uid)
 		c.JSON(http.StatusOK, gin.H{"status": "expired"})
 	}
 }
