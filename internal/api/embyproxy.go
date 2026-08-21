@@ -141,7 +141,7 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB) {
 		target := getEmbyTarget(db)
 		if target == "" {
 			c.Header("Content-Type", "text/html; charset=utf-8")
-			c.String(http.StatusOK, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StrmHub</title></head><body style="font-family:system-ui;max-width:640px;margin:60px auto;padding:0 20px"><h2>StrmHub 302 代理</h2><p style="color:#e74c3c">未配置 Emby 服务器地址</p><p>请在「系统配置 → EMBY管理」填写 Emby 服务器地址（如 http://192.168.1.100:8096）后刷新本页。</p></body></html>`)
+			c.String(http.StatusOK, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StrmHub</title></head><body style="font-family:system-ui;max-width:640px;margin:60px auto;padding:0 20px"><h2>StrmHub 302 代理</h2><p style="color:#e74c3c">未配置 Emby 服务器地址，暂无法反代</p><p>请在「系统配置 → EMBY管理」填写 Emby 服务器地址（如 http://192.168.1.100:8096）后刷新本页。</p><hr style="border:none;border-top:1px solid #eee"><p>本端口提供两个服务：</p><ul><li><b>Emby 反代</b>：<code>http://本机IP:6086/</code> 与 <code>/emby</code> — 配置后直接打开即 Emby</li><li><b>302 直连</b>：<code>http://本机IP:6086/d/文件ID</code> — strm 播放地址（自动生成）</li></ul><p>管理后台在 <code>http://本机IP:6060</code></p></body></html>`)
 			return
 		}
 		targetURL, _ := url.Parse(target)
@@ -158,22 +158,5 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB) {
 			},
 		}
 		proxy.ServeHTTP(c.Writer, c.Request)
-	})
-
-	// 友好状态页（仅当 Emby 未配置时的备选，被 NoRoute 覆盖后实际不触发）
-	r.GET("/", func(c *gin.Context) {
-		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>StrmHub 302 代理</title>
-<style>body{font-family:system-ui;max-width:640px;margin:60px auto;padding:0 20px;color:#333}code{background:#f0f0f0;padding:2px 6px;border-radius:3px}</style>
-</head><body>
-<h2>StrmHub 302 代理运行中</h2>
-<p>本端口提供两个服务：</p>
-<ul>
-<li><b>Emby 反代</b>：<code>http://本机IP:6086/emby</code> — Emby 客户端填这个地址</li>
-<li><b>302 直连</b>：<code>http://本机IP:6086/d/文件ID</code> — strm 播放地址（自动生成）</li>
-</ul>
-<p>管理后台在 <a href=":6060">http://本机IP:6060</a></p>
-</body></html>`)
 	})
 }
