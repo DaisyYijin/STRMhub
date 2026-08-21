@@ -153,8 +153,9 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 		c.String(http.StatusBadGateway, "构建拉流请求失败")
 		return
 	}
-	if ua := hdrs["User-Agent"]; ua != "" {
-		outReq.Header.Set("User-Agent", ua)
+	// 直链要求的请求头全部带上（UA 绑定，可能还有其他必需头）
+	for k, v := range hdrs {
+		outReq.Header.Set(k, v)
 	}
 	if rng := c.Request.Header.Get("Range"); rng != "" {
 		outReq.Header.Set("Range", rng)
@@ -166,6 +167,15 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 		return
 	}
 	defer resp.Body.Close()
+	log.Printf("302代理中转: 上游状态=%d ContentLength=%d Range=%q", resp.StatusCode, resp.ContentLength, c.Request.Header.Get("Range"))
+	// 上游异常（直链失效/UA 校验失败等）：读错误体辅助定位，原样回错误状态
+	if resp.StatusCode >= 400 {
+		snippet := make([]byte, 200)
+		n, _ := resp.Body.Read(snippet)
+		log.Printf("302代理中转: 上游 %d，响应片段: %s", resp.StatusCode, truncateStr(string(snippet[:n]), 180))
+		c.String(resp.StatusCode, "上游返回 %d", resp.StatusCode)
+		return
+	}
 	for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition"} {
 		if v := resp.Header.Get(h); v != "" {
 			c.Writer.Header().Set(h, v)
@@ -174,17 +184,23 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 	c.Writer.WriteHeader(resp.StatusCode)
 	flusher, _ := c.Writer.(http.Flusher)
 	buf := make([]byte, 64*1024)
+	sent := int64(0)
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := c.Writer.Write(buf[:n]); werr != nil {
+				log.Printf("302代理中转: 客户端断开（已转发 %d 字节）", sent)
 				return // 客户端断开
 			}
+			sent += int64(n)
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 		if rerr != nil {
+			if rerr != io.EOF {
+				log.Printf("302代理中转: 上游读取结束（已转发 %d 字节）: %v", sent, rerr)
+			}
 			return
 		}
 	}
