@@ -175,7 +175,10 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			ms["Path"] = directURL
 			ms["Protocol"] = "Http"
 			ms["SupportsDirectPlay"] = true
-			ms["SupportsDirectStream"] = true
+			// DirectStream 必须关闭：它是"Emby 服务器拉流再转发"模式，
+			// 服务器容器访问 CDN 受限时必挂（App 还会因此退回转码 500）。
+			// 只留 DirectPlay，逼播放器自己直连 115 CDN
+			ms["SupportsDirectStream"] = false
 			ms["SupportsTranscoding"] = false
 			delete(ms, "TranscodingUrl")
 			if c := directURLContainer(directURL); c != "" {
