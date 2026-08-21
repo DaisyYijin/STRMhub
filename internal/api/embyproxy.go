@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"strmhub/internal/config"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -33,9 +34,11 @@ var (
 	embyTargetAt   time.Time
 )
 
-// getEmbyTarget 获取 Emby 服务器地址（从 EMBY管理 配置读取，5 分钟缓存）
-// 读取顺序：yaml 配置优先，DB settings 表回退
-func getEmbyTarget(db *gorm.DB) string {
+// getEmbyTarget 获取 Emby 服务器地址（EMBY管理 配置，5 分钟缓存）。
+// 读取顺序：yaml 配置文件（saveConfig 的实际落盘位置）→ 内存缓存 → 旧版 DB 表。
+// 此前只认内存缓存+DB：容器重启后缓存清空、配置又在 yaml 里没人读，
+// 导致已配置也显示"未配置"（测试连接走 Handler 的 yaml 感知读取所以正常）
+func getEmbyTarget(db *gorm.DB, cfg *config.Config) string {
 	embyTargetMu.RLock()
 	if time.Since(embyTargetAt) < 5*time.Minute && embyTargetURL != "" {
 		v := embyTargetURL
@@ -45,26 +48,27 @@ func getEmbyTarget(db *gorm.DB) string {
 	embyTargetMu.RUnlock()
 
 	target := ""
-	var cfg struct {
+	var cfgRaw struct {
 		ServerURL string `json:"server_url"`
 	}
-
-	// 先从 yaml 读（前端 saveConfig 写这里）
-	// SettingMap 需要通过 config 加载，这里直接走 DB + yaml 两条路
-	// yaml 路径：通过全局 config 实例不方便拿，改为同时查 DB 并由调用方传 yaml 值
-	// 简化：直接读 DB，同时检查 yaml（通过 Handler 不在这里做）
-	if embyConfigYAML != "" {
-		if parseJSON(embyConfigYAML, &cfg) == nil && cfg.ServerURL != "" {
-			target = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+	// 1) yaml 配置文件（前端保存 emby 配置的实际位置）
+	if cfg != nil {
+		if v := cfg.GetSetting("emby"); v != "" && parseJSON(v, &cfgRaw) == nil && cfgRaw.ServerURL != "" {
+			target = strings.TrimRight(strings.TrimSpace(cfgRaw.ServerURL), "/")
 		}
 	}
-
-	// DB 回退
+	// 2) 保存时的内存缓存
+	if target == "" && embyConfigYAML != "" {
+		if parseJSON(embyConfigYAML, &cfgRaw) == nil && cfgRaw.ServerURL != "" {
+			target = strings.TrimRight(strings.TrimSpace(cfgRaw.ServerURL), "/")
+		}
+	}
+	// 3) 旧版 DB 表回退
 	if target == "" {
 		var s struct{ Value string }
 		if err := db.Raw("SELECT value FROM settings WHERE `key` = 'emby' LIMIT 1").Scan(&s).Error; err == nil && s.Value != "" {
-			if parseJSON(s.Value, &cfg) == nil && cfg.ServerURL != "" {
-				target = strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/")
+			if parseJSON(s.Value, &cfgRaw) == nil && cfgRaw.ServerURL != "" {
+				target = strings.TrimRight(strings.TrimSpace(cfgRaw.ServerURL), "/")
 			}
 		}
 	}
@@ -93,9 +97,9 @@ func parseJSON(data string, out interface{}) error {
 }
 
 // registerEmbyProxy 在 gin 引擎上注册 Emby 反代路由
-func registerEmbyProxy(r *gin.Engine, db *gorm.DB) {
+func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	r.Any("/emby/*path", func(c *gin.Context) {
-		target := getEmbyTarget(db)
+		target := getEmbyTarget(db, cfg)
 		if target == "" {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "未配置 Emby 服务器地址，请在「系统配置 → EMBY管理」填写"})
 			return
@@ -138,7 +142,7 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB) {
 			return
 		}
 		// 反代到 Emby
-		target := getEmbyTarget(db)
+		target := getEmbyTarget(db, cfg)
 		if target == "" {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(http.StatusOK, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StrmHub</title></head><body style="font-family:system-ui;max-width:640px;margin:60px auto;padding:0 20px"><h2>StrmHub 302 代理</h2><p style="color:#e74c3c">未配置 Emby 服务器地址，暂无法反代</p><p>请在「系统配置 → EMBY管理」填写 Emby 服务器地址（如 http://192.168.1.100:8096）后刷新本页。</p><hr style="border:none;border-top:1px solid #eee"><p>本端口提供两个服务：</p><ul><li><b>Emby 反代</b>：<code>http://本机IP:6086/</code> 与 <code>/emby</code> — 配置后直接打开即 Emby</li><li><b>302 直连</b>：<code>http://本机IP:6086/d/文件ID</code> — strm 播放地址（自动生成）</li></ul><p>管理后台在 <code>http://本机IP:6060</code></p></body></html>`)
