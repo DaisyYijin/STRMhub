@@ -296,6 +296,9 @@ var (
 	// 仅集数模式：EP01 / E01 / 第01集（无季信息，季缺省为 1）
 	// 前后必须有分隔符或边界，避免误吃 "WALL.E.2008" 这类片名
 	reEpisodeOnly = regexp.MustCompile(`(?:^|[\.\s_-])(?:[Ee][Pp]?|第)(\d{1,3})(?:[集話话])?(?:$|[\.\s_-])`)
+	// 动漫字幕组命名的方括号集数：[01] / [01v2]（vN=修正版）。
+	// 限 1-3 位数字：4 位会被 "[2001]" 这类年份方括号误伤
+	reBracketEpisode = regexp.MustCompile(`(?:^|[\.\s_-])\[(\d{1,3})(?:[vV]\d+)?\]`)
 	// 仅季：Season 1, 第一季
 	reSeasonOnly = regexp.MustCompile(`[Ss](\d{1,2})\b`)
 	// 年份：(2023) 或 .2023. 或空格2023空格
@@ -348,6 +351,14 @@ func parseFileName(filename string) *ParsedName {
 		result.IsTV = true
 		result.Season = 1
 		result.Episode, _ = strconv.Atoi(m[1])
+	} else if m := reBracketEpisode.FindStringSubmatch(name); m != nil {
+		// 动漫字幕组命名 [01] / [01v2]：无季信息，缺省第 1 季。
+		// 同时剥离开头的 [字幕组] 前缀——仅在确认是这种命名形态时才剥，
+		// 防止误伤 "[REC].2007" 这类以方括号开头的电影名
+		result.IsTV = true
+		result.Season = 1
+		result.Episode, _ = strconv.Atoi(m[1])
+		name = regexp.MustCompile(`^\[[^\]]*\]\s*`).ReplaceAllString(name, "")
 	} else if m := reSeasonOnly.FindStringSubmatch(name); m != nil {
 		result.IsTV = true
 		result.Season, _ = strconv.Atoi(m[1])
@@ -376,6 +387,10 @@ func parseFileName(filename string) *ParsedName {
 	}
 	// 在仅集数标记（EP01/E01/第01集）处截断，避免集号污染标题搜索
 	if idx := reEpisodeOnly.FindStringIndex(title); idx != nil {
+		title = title[:idx[0]]
+	}
+	// 在方括号集数（[01]/[01v2]）处截断，同时去掉后面的编码/语言标签
+	if idx := reBracketEpisode.FindStringIndex(title); idx != nil {
 		title = title[:idx[0]]
 	}
 	if !result.IsTV {

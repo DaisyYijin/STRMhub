@@ -770,6 +770,8 @@ var standardImageNames = map[string]bool{
 	"poster": true, "fanart": true, "backdrop": true, "banner": true,
 	"thumb": true, "landscape": true, "logo": true, "logo-clear": true,
 	"clearart": true, "clearlogo": true, "disc": true, "discart": true,
+	// 常见中文命名（动漫资源包自带的海报/封面）
+	"海报": true, "封面": true,
 }
 
 // FileType 文件分类类型
@@ -1451,6 +1453,27 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name)
 		if err == nil {
 			ops.moveFiles(junkCid, junkFids)
+		}
+	}
+
+	// 海报/封面 → poster.ext（Emby 只认 poster/folder 等标准名，
+	// 动漫资源包自带的 海报.png/封面.jpg 不改名不会被刮削器使用）
+	for _, f := range files {
+		ext := strings.ToLower(pathExt(f.Name))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+			continue
+		}
+		base := strings.ToLower(baseName(f.Name))
+		if base != "海报" && base != "封面" {
+			continue
+		}
+		newName := "poster" + pathExt(f.Name)
+		if newName != f.Name {
+			if err := ops.rename(f.Fid, newName); err != nil {
+				onLog(fmt.Sprintf("○ 海报重命名失败 %s: %v", f.Name, err))
+			} else {
+				onLog(fmt.Sprintf("✓ 海报 %s → %s", f.Name, newName))
+			}
 		}
 	}
 

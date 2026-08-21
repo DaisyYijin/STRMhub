@@ -107,3 +107,37 @@ func TestParseEpisodeOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBracketEpisode(t *testing.T) {
+	cases := []struct {
+		name             string
+		title            string
+		season, episode  int
+		isTV             bool
+	}{
+		// 用户实测的动漫字幕组命名
+		{"[Sakurato] Hamidashi Creative! [01v2][AVC-8bit 1080p AAC][CHT].mp4", "Hamidashi Creative!", 1, 1, true},
+		{"[Sakurato] Hamidashi Creative! [12v2][AVC-8bit 1080p AAC][CHT].mp4", "Hamidashi Creative!", 1, 12, true},
+		// 方括号裸集数
+		{"[Sub] Some Anime [05][1080p].mkv", "Some Anime", 1, 5, true},
+		// 防误伤：方括号年份不是集数；[REC] 电影名不剥前缀
+		{"Some Movie [2001] Remastered.mkv", "", 0, 0, false},
+		{"[REC].2007.720p.BluRay.mkv", "", 0, 0, false},
+	}
+	for _, c := range cases {
+		p := parseFileName(c.name)
+		if c.title != "" { // 只校验有预期标题的用例（防误伤用例只看季集）
+			if p.Title != c.title {
+				t.Errorf("parseFileName(%q).Title = %q, want %q", c.name, p.Title, c.title)
+			}
+		}
+		if p.Season != c.season || p.Episode != c.episode || p.IsTV != c.isTV {
+			t.Errorf("parseFileName(%q) = S=%d E=%d TV=%v, want S=%d E=%d TV=%v",
+				c.name, p.Season, p.Episode, p.IsTV, c.season, c.episode, c.isTV)
+		}
+	}
+	// 海报.png 应识别为标准图片（入库保留）而非垃圾
+	if classifyFile("海报.png") != FileTypeStdImage {
+		t.Errorf("classifyFile(海报.png) 应为标准图片")
+	}
+}
