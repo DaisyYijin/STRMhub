@@ -140,7 +140,9 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 }
 
 // streamVia 服务端中转拉流：用统一 UA 向 115 取直链并转发字节流。
-// 仅用于不发 User-Agent 的播放器（302 对它们无效），透传 Range 支持拖动
+// 仅用于不发 User-Agent 的播放器（302 对它们无效），透传 Range 支持拖动。
+// CDN 取流按 Cookie 组合矩阵重试（downloadAssetBytes 同款）：
+// 直链下发 Cookie → 直链+登录 Cookie → 仅登录 Cookie → 无 Cookie
 func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string) {
 	rawURL, hdrs, err := proxyDownloadURLFull(db, cfg, pickcode, ua115Unified())
 	if err != nil || rawURL == "" {
@@ -148,34 +150,69 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 		c.String(http.StatusBadGateway, "获取下载链接失败: %v", err)
 		return
 	}
-	outReq, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, rawURL, nil)
-	if err != nil {
-		c.String(http.StatusBadGateway, "构建拉流请求失败")
+	loginCookie := proxyLoginCookie(db, cfg)
+	setCookie := hdrs["Cookie"]
+
+	fetch := func(cookie string) (*http.Response, error) {
+		outReq, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range hdrs {
+			outReq.Header.Set(k, v)
+		}
+		if cookie != "" {
+			outReq.Header.Set("Cookie", cookie)
+		}
+		if rng := c.Request.Header.Get("Range"); rng != "" {
+			outReq.Header.Set("Range", rng)
+		}
+		return (&http.Client{}).Do(outReq) // 无整体超时：长视频流式传输
+	}
+
+	// 组合去重后依次尝试
+	var combos []string
+	add := func(s string) {
+		for _, e := range combos {
+			if e == s {
+				return
+			}
+		}
+		combos = append(combos, s)
+	}
+	if setCookie != "" {
+		add(setCookie)
+		add(setCookie + "; " + loginCookie)
+	}
+	add(loginCookie)
+	add("")
+
+	var resp *http.Response
+	var lastErr error
+	for _, ck := range combos {
+		resp, lastErr = fetch(ck)
+		if lastErr != nil {
+			break // 网络层错误重试无意义
+		}
+		if resp.StatusCode < 400 {
+			break
+		}
+		log.Printf("302代理中转: 上游 %d（换 Cookie 组合重试）", resp.StatusCode)
+		resp.Body.Close()
+		resp = nil
+	}
+	if lastErr != nil {
+		log.Printf("302代理中转拉流失败: %v", lastErr)
+		c.String(http.StatusBadGateway, "上游拉流失败: %v", lastErr)
 		return
 	}
-	// 直链要求的请求头全部带上（UA 绑定，可能还有其他必需头）
-	for k, v := range hdrs {
-		outReq.Header.Set(k, v)
-	}
-	if rng := c.Request.Header.Get("Range"); rng != "" {
-		outReq.Header.Set("Range", rng)
-	}
-	resp, err := (&http.Client{}).Do(outReq) // 无整体超时：长视频流式传输
-	if err != nil {
-		log.Printf("302代理中转拉流失败: %v", err)
-		c.String(http.StatusBadGateway, "上游拉流失败: %v", err)
+	if resp == nil {
+		log.Printf("302代理中转: 所有 Cookie 组合均被上游拒绝（no cookie value 等）")
+		c.String(http.StatusBadGateway, "上游拒绝拉流")
 		return
 	}
 	defer resp.Body.Close()
 	log.Printf("302代理中转: 上游状态=%d ContentLength=%d Range=%q", resp.StatusCode, resp.ContentLength, c.Request.Header.Get("Range"))
-	// 上游异常（直链失效/UA 校验失败等）：读错误体辅助定位，原样回错误状态
-	if resp.StatusCode >= 400 {
-		snippet := make([]byte, 200)
-		n, _ := resp.Body.Read(snippet)
-		log.Printf("302代理中转: 上游 %d，响应片段: %s", resp.StatusCode, truncateStr(string(snippet[:n]), 180))
-		c.String(resp.StatusCode, "上游返回 %d", resp.StatusCode)
-		return
-	}
 	for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition"} {
 		if v := resp.Header.Get(h); v != "" {
 			c.Writer.Header().Set(h, v)
@@ -204,6 +241,19 @@ func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string)
 			return
 		}
 	}
+}
+
+// proxyLoginCookie 取登录 Cookie（配置文件优先，回退 Storage 表），
+// 与 proxyDownloadURLFull 的 Cookie 通道同一套解析
+func proxyLoginCookie(db *gorm.DB, cfg *config.Config) string {
+	if ck, err := cfg.LoadCookie(); err == nil && ck != "" {
+		return ck
+	}
+	var storage model.Storage
+	if err := db.Where("type = ?", "115").First(&storage).Error; err == nil {
+		return storage.Cookie
+	}
+	return ""
 }
 
 // ua115Download 下载链路专用 UA（openStrm defaultUA 同款，浏览器 UA 签发的直链
