@@ -12,6 +12,7 @@ function esc(s) {
 }
 
 // ==================== 工具 ====================
+let authRedirecting = false; // 401 只引导一次，避免多个轮询同时触发重复跳转
 async function api(path, options = {}) {
   const token = localStorage.getItem('token');
   const res = await fetch(API + '/api' + path, {
@@ -22,6 +23,18 @@ async function api(path, options = {}) {
       ...options.headers,
     },
   });
+  // 登录过期：清令牌回登录页（一次），后续调用自然静默
+  if (res.status === 401) {
+    if (!authRedirecting) {
+      authRedirecting = true;
+      localStorage.removeItem('token');
+      stopLogPoll();
+      showAuth('login');
+      toast('登录已过期，请重新登录');
+      setTimeout(() => { authRedirecting = false; }, 1000);
+    }
+    throw new Error('登录已过期');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || '请求失败');
   return data;

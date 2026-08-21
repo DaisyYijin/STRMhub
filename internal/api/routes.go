@@ -246,7 +246,9 @@ func (h *Handler) generateToken(userID uint, username string) string {
 	claims := jwt.MapClaims{
 		"user_id":  userID,
 		"username": username,
-		"exp":      time.Now().Add(72 * time.Hour).Unix(),
+		// 自托管工具常用场景：30 天有效期（此前 72 小时，三天没操作就会被
+		// 全站 401 轰炸着赶去重新登录，体验差且无安全收益——密码仍可随时改）
+		"exp": time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	t, _ := token.SignedString([]byte(h.Config.JWTSecret))
