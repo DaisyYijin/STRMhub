@@ -122,16 +122,42 @@ func ruleMatch(name string, r washRule) bool {
 		matchField(name, r.ResourceEffect, extractEffect(name))
 }
 
-// matchField 单字段匹配：空=不限；!xxx=不含；xxx=包含
+// matchField 单字段匹配（CMS 语义）：逗号分隔多值——
+//   "2160p,4k"    = 命中任一正值即通过（正值间 OR）
+//   "!DV,!DV.HDR" = 任一排除词命中即不通过（负值间 AND NOT）
+//   混合时：先看排除（命中即否），再看正值（命中任一即是），全未命中且存在正值则否
 func matchField(name, cond, value string) bool {
 	cond = strings.TrimSpace(cond)
 	if cond == "" {
 		return true
 	}
-	neg := strings.HasPrefix(cond, "!")
-	want := strings.TrimPrefix(cond, "!")
-	hit := strings.Contains(strings.ToLower(name), strings.ToLower(want)) || strings.Contains(strings.ToLower(value), strings.ToLower(want))
-	return neg != hit
+	lname := strings.ToLower(name)
+	lvalue := strings.ToLower(value)
+	parts := strings.Split(cond, ",")
+	hasPositive := false
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		want := strings.ToLower(strings.TrimPrefix(part, "!"))
+		if want == "" {
+			continue
+		}
+		hit := strings.Contains(lname, want) || strings.Contains(lvalue, want)
+		if strings.HasPrefix(part, "!") {
+			if hit {
+				return false // 命中排除词
+			}
+			continue
+		}
+		hasPositive = true
+		if hit {
+			return true // 命中任一正值
+		}
+	}
+	// 只有排除词且都未命中 → 通过；有正值但一个没中 → 不通过
+	return !hasPositive
 }
 
 
