@@ -184,11 +184,31 @@ func washDecision(newName string, libraryNames []string, rules []washRule) bool 
 }
 
 // libraryFilesOf 从台账取某片目录下的现有文件（含大小，max/min_size 模式用）
-func libraryFilesOf(targetDir string) []model.SyncedFile {
+// libraryFilesOf 从台账取某片目录下的现有文件（含大小，max/min_size 模式用）。
+// 台账 rel_path 带库名层（如 "俱乐部/电影/…"），而 MediaLibrary.TargetPath
+// 不带——必须拼上 ledgerPrefix 才查得到，此前缺失前缀导致洗版永远查空、
+// 判定恒为跳过（从未真正应用）；无前缀回退兼容旧记录
+func libraryFilesOf(targetDir, ledgerPrefix string) []model.SyncedFile {
 	var sfs []model.SyncedFile
-	prefix := strings.TrimSuffix(targetDir, "/") + "/"
-	model.DB.Where("rel_path LIKE ?", prefix+"%").Limit(20).Find(&sfs)
+	base := strings.TrimSuffix(targetDir, "/")
+	if ledgerPrefix != "" {
+		model.DB.Where("rel_path LIKE ?", strings.TrimSuffix(ledgerPrefix, "/")+"/"+base+"/%").Limit(20).Find(&sfs)
+	}
+	if len(sfs) == 0 {
+		model.DB.Where("rel_path LIKE ?", base+"/%").Limit(20).Find(&sfs)
+	}
 	return sfs
+}
+
+// ledgerPrefixOf 取同步台账的库名前缀（库根目录名，如 "俱乐部"）
+func ledgerPrefixOf(ops *pan115Ops, cfg *OrgConfig) string {
+	if ops == nil || cfg == nil || ops.cookie == "" || cfg.Library == "" {
+		return ""
+	}
+	if info, err := get115DirInfo(ops.cookie, cfg.Library); err == nil {
+		return info.n
+	}
+	return ""
 }
 
 // washStrategyCache YAML 解析结果缓存（1 分钟），避免每个文件都重新解析
@@ -244,7 +264,7 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	if oldTarget == "" {
 		oldTarget = "redundant"
 	}
-	libFiles := libraryFilesOf(targetDir)
+	libFiles := libraryFilesOf(targetDir, ledgerPrefixOf(ops, cfg))
 	if len(libFiles) == 0 {
 		return washSkip // 库内无该片的文件
 	}
@@ -312,32 +332,44 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本（mode=%s），按已存在处理", truncateStr(newName, 60), mode))
 		return washNotBetter
 	}
-	// 新版更好：旧版按配置的去向迁移（统一放「洗版-旧版本/片名」子目录便于辨认）
+	// 新版更好：旧版按配置的去向迁移（统一放「洗版-旧版本/片名」子目录便于辨认）。
+	// 台账查询同样要拼库名前缀（与 libraryFilesOf 一致）
 	var sfs []model.SyncedFile
-	prefix := strings.TrimSuffix(targetDir, "/") + "/"
-	model.DB.Where("rel_path LIKE ?", prefix+"%").Find(&sfs)
+	base := strings.TrimSuffix(targetDir, "/")
+	lp := strings.TrimSuffix(ledgerPrefixOf(ops, cfg), "/")
+	if lp != "" {
+		model.DB.Where("rel_path LIKE ?", lp+"/"+base+"/%").Find(&sfs)
+	}
+	if len(sfs) == 0 {
+		model.DB.Where("rel_path LIKE ?", base+"/%").Find(&sfs)
+	}
 	fids := make([]string, 0, len(sfs))
 	for _, sf := range sfs {
 		fids = append(fids, sf.FileID)
 	}
-	if len(fids) > 0 {
-		oldDir := path.Dir(targetDir)
-		destCid := cfg.Redundant
-		switch oldTarget {
-		case "existing":
-			destCid = cfg.Existing
-		case "delete":
-			onLog("○ 洗版旧版去向配置为「删除」，暂不支持网盘删除，按冗余处理")
-		}
-		junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
-		if err == nil {
-			if err := ops.moveFiles(junkCid, fids); err != nil {
-				onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
-				return washSkip
+		if len(fids) > 0 {
+			oldDir := path.Dir(targetDir)
+			destCid := cfg.Redundant
+			switch oldTarget {
+			case "existing":
+				destCid = cfg.Existing
+			case "delete":
+				onLog("○ 洗版旧版去向配置为「删除」，暂不支持网盘删除，按冗余处理")
 			}
+			junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
+			if err == nil {
+				if err := ops.moveFiles(junkCid, fids); err != nil {
+					onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
+					return washSkip
+				}
+			}
+			// 按查到的行精确清理台账（避免前缀字符串推导）
+			ids := make([]uint, 0, len(sfs))
+			for _, sf := range sfs {
+				ids = append(ids, sf.ID)
+			}
+			model.DB.Where("id IN ?", ids).Delete(&model.SyncedFile{})
 		}
-		model.DB.Where("rel_path LIKE ?", prefix+"%").Delete(&model.SyncedFile{})
-	}
 	model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
 	destLabel := "冗余"
 	if oldTarget == "existing" {
