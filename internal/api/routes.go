@@ -50,6 +50,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动转存目录守望者（下载完成后 ~1 分钟自动整理）
 	StartTransferWatcher(h)
 
+	// 启动离线任务监视器（完成即触发整理；失败告警——磁力不是百分百成功）
+	StartOfflineTaskMonitor(h)
+
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 

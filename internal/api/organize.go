@@ -1205,6 +1205,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 分流视频：正片 vs 广告/引流（清洗后无有效内容名、仍含域名、或小于
 	// 最小体积的"视频"是广告载体，不能重命名成正片名混入库）
 	var videoFiles []remoteFile
+	var adFids []string // 广告/超小视频：循环后合并一次移动（逐个移动每个要过写限流）
 	minBytes := int64(cfg.MinSize) * 1024 * 1024
 	for _, f := range files {
 		if classifyFile(f.Name) != FileTypeVideo {
@@ -1213,16 +1214,18 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		switch {
 		case isAdOnlyVideo(f.Name):
 			onLog(fmt.Sprintf("○ %s - 广告/引流视频，移到冗余", f.Name))
-			if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
-				ops.moveFiles(junkCid, []string{f.Fid})
-			}
+			adFids = append(adFids, f.Fid)
 		case minBytes > 0 && f.Size > 0 && f.Size < minBytes:
 			onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），移到冗余", f.Name, float64(f.Size)/1024/1024, cfg.MinSize))
-			if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
-				ops.moveFiles(junkCid, []string{f.Fid})
-			}
+			adFids = append(adFids, f.Fid)
 		default:
 			videoFiles = append(videoFiles, f)
+		}
+	}
+
+	if len(adFids) > 0 {
+		if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
+			ops.moveFiles(junkCid, adFids)
 		}
 	}
 

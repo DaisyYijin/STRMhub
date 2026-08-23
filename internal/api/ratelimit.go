@@ -52,19 +52,54 @@ func isThrottledHost(api string) bool {
 		strings.Contains(api, "proapi.115.com")
 }
 
+// isWriteAPI 写操作接口（改名/移动/建目录/删除/转存）——风控敏感，
+// 保持完整间隔；其余（列目录/查信息/取直链/事件流）为读操作，
+// 用更短的读间隔：同步与整理的目录遍历占调用大头，读提速最直接
+func isWriteAPI(api string) bool {
+	return strings.Contains(api, "/files/batch_rename") ||
+		strings.Contains(api, "/files/move") ||
+		strings.Contains(api, "/files/add") ||
+		strings.Contains(api, "/files/delete") ||
+		strings.Contains(api, "/files/receive") ||
+		strings.Contains(api, "/files/upload")
+}
+
+// readGap 读间隔：不超过 1 秒（用户间隔更大时按 1 秒走读通道）
+func readGap() time.Duration {
+	throttleMu.Lock()
+	gap := throttleMinGap
+	throttleMu.Unlock()
+	if gap > time.Second {
+		return time.Second
+	}
+	return gap
+}
+
+// writeGap 写间隔：不低于 3 秒（防风控底线，用户设置更大时从其设置）
+func writeGap() time.Duration {
+	throttleMu.Lock()
+	gap := throttleMinGap
+	throttleMu.Unlock()
+	if gap < 3*time.Second {
+		return 3 * time.Second
+	}
+	return gap
+}
+
 // throttle115 在发起 115 文件类 API 请求前调用，确保与上一请求【完成时刻】
-// 的间隔不小于设置值（完成一个之后等待 N 秒再发下一个）
+// 的间隔不小于设置值（读写分级：写=设置值且≥3s，读=≤1s）
 func throttle115(api string) {
 	if !isThrottledHost(api) {
 		return
 	}
+	gap := readGap()
+	if isWriteAPI(api) {
+		gap = writeGap()
+	}
 	throttleMu.Lock()
 	var waited time.Duration
-	if elapsed := time.Since(throttleLast); elapsed < throttleMinGap {
-		waited = throttleMinGap - elapsed
-		// 明显拥堵（排队超过 3 个间隔）才提示
-		if waited > 3*throttleMinGap {
-		}
+	if elapsed := time.Since(throttleLast); elapsed < gap {
+		waited = gap - elapsed
 		time.Sleep(waited)
 	}
 	throttleMu.Unlock()

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"strmhub/internal/model"
@@ -122,8 +123,40 @@ func findSubDir115(cookie, parentCid, name string) (string, error) {
 	return "", nil
 }
 
+// ensurePathCache parent+路径→最终 cid 缓存：整理每部影视都要 ensure
+// 目标目录与季目录（逐级 find+mkdir，每层至少一次 API），重复入库同分类
+// 时全是重复劳动；TTL 10 分钟，mkdir 失败时清除该键重试
+var (
+	ensurePathMu    sync.Mutex
+	ensurePathCache = map[string]ensurePathEntry{}
+)
+
+type ensurePathEntry struct {
+	cid string
+	at  time.Time
+}
+
 // ensure115Path 在 parentCid 下逐级创建目录路径（如 "电影/华语电影/A"），返回最终目录 cid
 func ensure115Path(cookie, parentCid, dirPath string) (string, error) {
+	cacheKey := parentCid + "|" + dirPath
+	ensurePathMu.Lock()
+	if e, ok := ensurePathCache[cacheKey]; ok && time.Since(e.at) < 10*time.Minute {
+		cid := e.cid
+		ensurePathMu.Unlock()
+		return cid, nil
+	}
+	ensurePathMu.Unlock()
+
+	cid, err := ensure115PathUncached(cookie, parentCid, dirPath)
+	if err == nil && cid != "" {
+		ensurePathMu.Lock()
+		ensurePathCache[cacheKey] = ensurePathEntry{cid: cid, at: time.Now()}
+		ensurePathMu.Unlock()
+	}
+	return cid, err
+}
+
+func ensure115PathUncached(cookie, parentCid, dirPath string) (string, error) {
 	parts := strings.Split(dirPath, "/")
 	currentCid := parentCid
 	for _, part := range parts {

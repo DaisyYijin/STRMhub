@@ -280,8 +280,11 @@ func StartTransferWatcher(h *Handler) {
 			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
 			log.Printf("[守望] ⚑ 转存目录有 %d 个条目，触发自动整理+增量", len(entries))
 			ran := h.triggerOrganizeAndSync()
-			lastTrigger = time.Now()
+			// 成功清空后冷却只要 60 秒（连续多个下载先后完成时快速接续）；
+			// 失败仍 5 分钟（在下方复查处设置）
+			lastTrigger = time.Now().Add(4 * time.Minute)
 			if !ran {
+				lastTrigger = time.Now()
 				continue // 其他任务占用，本轮不计成败
 			}
 			// 整理后复查：目录清空 = 成功；仍有条目 = 一轮失败。
@@ -290,6 +293,7 @@ func StartTransferWatcher(h *Handler) {
 			if remaining, _, rerr := ops.listEntries(cid, 0); rerr == nil && len(remaining) == 0 {
 				failCount = 0
 			} else {
+				lastTrigger = time.Now() // 失败：恢复 5 分钟冷却
 				failCount++
 				log.Printf("[守望] ○ 整理后转存目录仍有内容（第 %d 次未清空）", failCount)
 				if failCount >= 3 {
@@ -300,6 +304,122 @@ func StartTransferWatcher(h *Handler) {
 			}
 		}
 	}()
+}
+
+// StartOfflineTaskMonitor 离线任务监视器：30 秒轮询 115 离线任务列表。
+// 磁力下载不是百分百成功（资源失效/任务报错都常见），且完成时间不可控：
+//   - 任务完成（status=2）→ 立即触发整理（不等 60 秒目录轮询）
+//   - 任务失败（status=-1）→ 日志告警（此前静默失败，用户永远等不到）
+// 状态码语义与 LitePan/openapi 一致：-1 失败 / 0 排队 / 1 下载中 / 2 完成
+func StartOfflineTaskMonitor(h *Handler) {
+	go func() {
+		lastStatus := map[string]int{} // info_hash/url → 上次状态
+		notified := map[string]bool{}  // 已处理过的终态任务（避免重复告警/触发）
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(30 * time.Second):
+			}
+			cookie, err := h.get115Cookie()
+			if err != nil {
+				continue
+			}
+			tasks, err := fetchOfflineTaskList(cookie)
+			if err != nil {
+				continue // 网络抖动/接口拒绝：下轮再看
+			}
+			for _, t := range tasks {
+				key := t.key
+				prev, seen := lastStatus[key]
+				lastStatus[key] = t.status
+				if !seen || prev == t.status || notified[key] {
+					continue
+				}
+				switch t.status {
+				case 2: // 完成
+					log.Printf("[离线] ✓ 下载完成: %s（触发整理）", truncateStr(t.name, 60))
+					notified[key] = true
+					go h.triggerOrganizeAndSync()
+				case -1: // 失败
+					log.Printf("[离线] ✗ 磁力下载失败: %s（115 离线任务报错，请检查资源或重新提交）", truncateStr(t.name, 60))
+					notified[key] = true
+				}
+			}
+			// 终态表防膨胀：只保留最近一轮见到的任务
+			if len(notified) > 500 {
+				notified = map[string]bool{}
+			}
+			if len(lastStatus) > 1000 {
+				lastStatus = map[string]int{}
+			}
+		}
+	}()
+}
+
+// offlineTaskInfo 离线任务摘要
+type offlineTaskInfo struct {
+	key    string // info_hash 优先，空则 name
+	name   string
+	status int
+}
+
+// fetchOfflineTaskList 拉取离线任务列表（web lixian 加密接口，防御式解析）
+func fetchOfflineTaskList(cookie string) ([]offlineTaskInfo, error) {
+	ver := getAppVerCached()
+	ua := fmt.Sprintf("Mozilla/5.0 115disk/%s 115Browser/%s 115wangpan_android/%s", ver, ver, ver)
+	payload, _ := json.Marshal(map[string]string{})
+	form := url.Values{"data": {encrypt115(payload)}}
+	body, err := post115Form("https://clouddownload.115.com/lixianssp/?ac=task_lists", form, cookie, ua, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		State bool            `json:"state"`
+		Data  json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &resp) != nil || !resp.State {
+		return nil, fmt.Errorf("任务列表响应异常: %s", truncateStr(string(body), 80))
+	}
+	// data 可能是数组，也可能是 {tasks: [...]} 或 {list: [...]}，逐形态尝试
+	var raws []map[string]interface{}
+	if err := json.Unmarshal(resp.Data, &raws); err != nil {
+		var wrapper struct {
+			Tasks []map[string]interface{} `json:"tasks"`
+			List  []map[string]interface{} `json:"list"`
+		}
+		if err2 := json.Unmarshal(resp.Data, &wrapper); err2 != nil {
+			return nil, fmt.Errorf("任务列表结构无法解析")
+		}
+		raws = append(wrapper.Tasks, wrapper.List...)
+	}
+	tasks := make([]offlineTaskInfo, 0, len(raws))
+	for _, m := range raws {
+		name := firstStr(m, "name", "task_name")
+		if name == "" {
+			continue
+		}
+		status := 0
+		switch v := m["status"].(type) {
+		case float64:
+			status = int(v)
+		case string:
+			switch {
+			case strings.Contains(strings.ToLower(v), "fail") || strings.Contains(v, "失败"):
+				status = -1
+			case strings.Contains(v, "完成") || strings.Contains(strings.ToLower(v), "done"):
+				status = 2
+			case strings.Contains(v, "下载"):
+				status = 1
+			}
+		}
+		key := firstStr(m, "info_hash", "infoHash")
+		if key == "" {
+			key = name
+		}
+		tasks = append(tasks, offlineTaskInfo{key: key, name: name, status: status})
+	}
+	return tasks, nil
 }
 
 // shareFolderCid 读取分享同步配置的转存目录 cid（未配置返回空）
