@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,12 +37,17 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 	// 可能扑空），手动/定时整理时顺带扫一遍转存目录，保证迟到内容最终被整理。
 	// 转存目录在待整理子树内（会被上面的扫描覆盖）或与媒体库重叠时跳过
 	if shareCid := h.shareFolderCid(); shareCid != "" && shareCid != orgCfg.Pending && !h.dirOverlapWithLibrary(shareCid, orgCfg.Library) && !h.dirInside(shareCid, orgCfg.Pending) {
-		log.Printf("[整理] ▶ 顺带扫描转存目录...")
-		shareCfg := *orgCfg
-		shareCfg.Pending = shareCid
-		shareResults, shareOK := runOrganizeEngineWithConfig(ops, &shareCfg, logFn)
-		orgResults = append(orgResults, shareResults...)
-		successCount += shareOK
+		// 只在转存目录有内容时才扫描并打日志（空转静默；非空时引擎会打"发现 N 个条目"）
+		if ops2, err := h.newPan115Ops(); err == nil {
+			if entries, _, lerr := ops2.listEntries(shareCid, 0); lerr == nil && len(entries) > 0 {
+				log.Printf("[整理] ▶ 顺带扫描转存目录（%d 个条目）", len(entries))
+				shareCfg := *orgCfg
+				shareCfg.Pending = shareCid
+				shareResults, shareOK := runOrganizeEngineWithConfig(ops, &shareCfg, logFn)
+				orgResults = append(orgResults, shareResults...)
+				successCount += shareOK
+			}
+		}
 	}
 
 	totalFiles := len(orgResults)
@@ -61,47 +65,21 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 	steps = append(steps, gin.H{"step": "整理", "status": "完成", "message": fmt.Sprintf("共 %d 个文件，成功 %d，已存在 %d，失败 %d", totalFiles, successCount, existsCount, failedCount)})
 	strmTotal, strmCreated := 0, 0
 
-	// 整理后对影视库执行全量同步生成 STRM
+	// 整理后同步：走增量（入库产生的移动事件会精确触发新目录遍历）。
+	// 此前这里做全库遍历——手动整理收尾要重走整棵媒体库树（3 秒/目录），
+	// 全库重建本就是全量同步的职责，日常入库用增量足够且秒级完成
 	if syncAfter {
-		var syncCfg struct {
-			LocalPath string   `json:"local_path"`
-			VideoExt  []string `json:"video_ext"`
-			ImageExt  []string `json:"image_ext"`
-			DataExt   []string `json:"data_ext"`
-		}
-		if v := h.getSettingValue("full"); v != "" {
-			json.Unmarshal([]byte(v), &syncCfg)
-		}
-		if syncCfg.LocalPath == "" {
-			syncCfg.LocalPath = defaultLocalPath
-		}
-
-		domain, format, keepExt, skipExist := h.getStrmConfig()
-		filter := &syncFilter{
-			videoExts: buildExtSet([]string{"mp4", "mkv", "ts", "avi", "mov", "rmvb", "webm", "flv", "m2ts", "wmv", "mpg", "iso"}),
-			assetExts: map[string]bool{},
-		}
-		if len(syncCfg.VideoExt) > 0 {
-			filter.videoExts = buildExtSet(syncCfg.VideoExt)
-		}
-		// 获取库名作为 STRM 路径第一层
-		orgLibName := ""
-		if cookie, err := h.get115Cookie(); err == nil {
-			if info, err := get115DirInfo(cookie, orgCfg.Library); err == nil {
-				orgLibName = info.n
-			}
-		}
-		var videos, assets []remoteFile
-		skipCids, _ := h.orgSkipCids(orgCfg.Library)
-		if err := walk115Dir(ops, orgCfg.Library, orgLibName, &videos, &assets, filter, skipCids); err != nil {
-			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": "遍历目录失败: " + err.Error()})
+		p := h.incrParamsFromConfig()
+		sum, err := h.executeIncrementalSync(p)
+		if err != nil {
+			steps = append(steps, gin.H{"step": "STRM 同步", "status": "失败", "message": err.Error()})
 			return steps, orgResults, nil
 		}
-		sc, dl, _, _ := applySyncResults(h.DB, ops, videos, assets, syncCfg.LocalPath, domain, format, keepExt, skipExist, "")
-		strmTotal, strmCreated = len(videos), sc
-		steps = append(steps, gin.H{"step": "STRM 同步", "status": "完成", "message": fmt.Sprintf("共 %d 个视频，生成 %d 个 STRM，附属下载 %d", len(videos), sc, dl)})
-		if sc+dl > 0 {
-			h.notifyEmbyRefresh(syncCfg.LocalPath)
+		strmTotal, strmCreated = sum.Videos, sum.StrmCreated
+		steps = append(steps, gin.H{"step": "STRM 同步", "status": "完成",
+			"message": fmt.Sprintf("新事件 %d，视频 %d（生成 STRM %d），附属下载 %d", sum.EventsFresh, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)})
+		if sum.StrmCreated+sum.AssetsDownloaded > 0 {
+			h.notifyEmbyRefresh(p.LocalPath)
 		}
 	}
 
@@ -144,11 +122,12 @@ func (h *Handler) executeOrganize(syncAfter bool) ([]gin.H, []OrganizeResult, er
 		log.Printf("[整理] 本次入库 %d 部:\n  %s", len(showLines), strings.Join(showLines, "\n  "))
 	}
 
-	log.Printf("[整理] ✅ 整理完成（耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
-		time.Since(orgStart).Truncate(time.Second), totalFiles, successCount, existsCount, failedCount,
-		map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
-	_ = strmTotal
-	_ = strmCreated
+	// 空转静默：无任何产出时不打完成汇总（定时任务每 10 分钟一轮）
+	if totalFiles > 0 {
+		log.Printf("[整理] ✅ 整理完成（耗时 %s · 共 %d 项（成功 %d，已存在 %d，失败 %d），STRM 同步 %s",
+			time.Since(orgStart).Truncate(time.Second), totalFiles, successCount, existsCount, failedCount,
+			map[bool]string{true: fmt.Sprintf("已执行（%d 视频，生成 %d STRM）", strmTotal, strmCreated), false: "未执行"}[syncAfter])
+	}
 	return steps, orgResults, nil
 }
 

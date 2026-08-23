@@ -930,6 +930,17 @@ func (o *pan115Ops) rename(fid, newName string) error {
 	return rename115(o.cookie, fid, newName)
 }
 
+// renameBatch 批量重命名（一次调用；OpenAPI 通道暂不支持）
+func (o *pan115Ops) renameBatch(names map[string]string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	if o.open != nil {
+		return fmt.Errorf("OpenAPI 通道暂不支持批量重命名")
+	}
+	return rename115Batch(o.cookie, names)
+}
+
 // moveFiles 移动文件
 func (o *pan115Ops) moveFiles(targetCid string, fids []string) error {
 	if o.open != nil {

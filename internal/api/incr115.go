@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"strmhub/internal/model"
@@ -388,7 +389,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 		}
 		sum.EventsFresh += fresh
-		log.Printf("[同步] 拉取事件: 本页 %d 条，新 %d 条", len(events), fresh)
+		if fresh > 0 {
+			log.Printf("[同步] 拉取事件: 本页 %d 条，新 %d 条", len(events), fresh)
+		}
 		if fresh == 0 || sum.EventsFresh >= p.Limit {
 			break // 已追平或达到单次上限
 		}
@@ -495,7 +498,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 			sum.Structural++
 		case evFolderRename:
-			// 目录改名：重遍历父目录重建；旧名子树可能残留，交由后续清理功能
+			// 目录改名：目录结构已变，路径缓存整体失效
+			invalidateDirAbsCache()
+			// 重遍历父目录重建；旧名子树可能残留，交由后续清理功能
 			if ev.Cid != "" {
 				if sc := scopeOf(ev.Cid); sc == "excluded" || sc == "other" {
 					sum.Ignored++
@@ -585,16 +590,47 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		h.notifyEmbyRefresh(p.LocalPath)
 	}
 	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
+	if sum.EventsFresh == 0 && sum.StrmCreated == 0 && sum.AssetsDownloaded == 0 && sum.Deleted == 0 && sum.Moved == 0 {
+		return sum, nil // 空转静默：无新事件无动作不打完成汇总
+	}
 	log.Printf("[同步] ✅ 增量同步完成（耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
 		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Ignored, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
 	return sum, nil
 }
 
-// absPathOf 爬到网盘根，返回目录绝对路径（如 /整理/已存在），失败返回空
+// dirAbsCache cid→绝对路径缓存：守卫/作用域每轮都要爬目录链
+//（每层一次 API × 3 秒限流），冷启动一趟就是十来秒。TTL 10 分钟；
+// 目录改名/移动事件发生时整体失效（见 invalidateDirAbsCache）
+var (
+	dirAbsMu    sync.Mutex
+	dirAbsCache = map[string]dirAbsEntry{}
+)
+
+type dirAbsEntry struct {
+	path string
+	at   time.Time
+}
+
+// invalidateDirAbsCache 目录结构变化后调用（目录改名/移动），清空缓存
+func invalidateDirAbsCache() {
+	dirAbsMu.Lock()
+	dirAbsCache = map[string]dirAbsEntry{}
+	dirAbsMu.Unlock()
+}
+
+// absPathOf 爬到网盘根，返回目录绝对路径（如 /整理/已存在），失败返回空。
+// 结果进 dirAbsCache（命中免爬链）
 func absPathOf(cookie, cid string, memo map[string]dirInfo) string {
 	if cid == "" || cid == "0" {
 		return ""
 	}
+	dirAbsMu.Lock()
+	if e, ok := dirAbsCache[cid]; ok && time.Since(e.at) < 10*time.Minute {
+		p := e.path
+		dirAbsMu.Unlock()
+		return p
+	}
+	dirAbsMu.Unlock()
 	var parts []string
 	cur := cid
 	for i := 0; i < 64; i++ {
@@ -616,7 +652,11 @@ func absPathOf(cookie, cid string, memo map[string]dirInfo) string {
 	for l, r := 0, len(parts)-1; l < r; l, r = l+1, r-1 {
 		parts[l], parts[r] = parts[r], parts[l]
 	}
-	return "/" + strings.Join(parts, "/")
+	result := "/" + strings.Join(parts, "/")
+	dirAbsMu.Lock()
+	dirAbsCache[cid] = dirAbsEntry{path: result, at: time.Now()}
+	dirAbsMu.Unlock()
+	return result
 }
 
 // removeSyncedFile 按文件 id 从台账定位并删除本地文件（仅删除本工具生成过的文件）

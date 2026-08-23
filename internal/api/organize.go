@@ -211,10 +211,12 @@ func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 	}
 }
 
-// renameBeforeMove 在源目录中先重命名文件（带画质信息），再移动到目标
-// 顺序：重命名 → 移动（而非 移动 → 重命名，减少目标目录的中间状态）
+// renameBeforeMove 在源目录中先重命名文件（带画质信息），再移动到目标。
+// 全目录的重命名（视频+字幕）合并为一次 batch_rename 调用：
+// 逐个调用时每个文件过一遍 API 限流，24 集仅等待就要 70+ 秒
 func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, onLog func(string)) {
-	for _, vf := range videoFiles {
+	// 计算单个视频的新名（保持原命名规则）
+	videoNewName := func(vf remoteFile) (string, bool) {
 		ext := pathExt(vf.Name)
 		p := parseFileName(vf.Name)
 		ri := ParseResourceInfo(vf.Name)
@@ -226,7 +228,7 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		} else if p.Season > 0 && p.Episode > 0 {
 			newName = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
 		} else {
-			continue
+			return "", false
 		}
 		if quality != "" {
 			newName += "." + quality
@@ -234,13 +236,16 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		if ri.Team != "" {
 			newName += "-" + ri.Team
 		}
-		newName += ext
+		return newName + ext, newName != vf.Name
+	}
 
-		if newName != vf.Name {
-			if err := ops.rename(vf.Fid, newName); err != nil {
-				onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", vf.Name, err))
-			} else {
-				onLog(fmt.Sprintf("✓ 重命名 %s → %s", vf.Name, newName))
+	names := map[string]string{} // fid -> 新名
+	example := ""
+	for _, vf := range videoFiles {
+		if n, changed := videoNewName(vf); changed {
+			names[vf.Fid] = n
+			if example == "" {
+				example = fmt.Sprintf("%s → %s", vf.Name, n)
 			}
 		}
 	}
@@ -254,30 +259,36 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		fb := baseName(f.Name)
 		for _, vf := range videoFiles {
 			vfBase := baseName(vf.Name)
-			if fb == vfBase || strings.HasPrefix(fb, vfBase+".") {
-				p := parseFileName(vf.Name)
-				suffix := strings.TrimPrefix(fb, vfBase)
-				var newSub string
-				if media.MediaType == "movie" {
-					newSub = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
-				} else {
-					newSub = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
-					if q := ParseResourceInfo(vf.Name).QualityString(); q != "" {
-						newSub += "." + q
-					}
-				}
-				newSubName := newSub + suffix + ext
-				if newSubName != f.Name {
-					if err := ops.rename(f.Fid, newSubName); err != nil {
-						onLog(fmt.Sprintf("○ 字幕重命名失败 %s: %v", f.Name, err))
-					} else {
-						onLog(fmt.Sprintf("✓ 字幕 %s → %s", f.Name, newSubName))
-					}
-				}
-				break
+			if fb != vfBase && !strings.HasPrefix(fb, vfBase+".") {
+				continue
 			}
+			p := parseFileName(vf.Name)
+			suffix := strings.TrimPrefix(fb, vfBase)
+			var newSub string
+			if media.MediaType == "movie" {
+				newSub = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
+			} else {
+				newSub = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
+				if q := ParseResourceInfo(vf.Name).QualityString(); q != "" {
+					newSub += "." + q
+				}
+			}
+			newSubName := newSub + suffix + ext
+			if newSubName != f.Name {
+				names[f.Fid] = newSubName
+			}
+			break
 		}
 	}
+
+	if len(names) == 0 {
+		return
+	}
+	if err := ops.renameBatch(names); err != nil {
+		onLog(fmt.Sprintf("✗ 批量重命名失败（%d 个文件保持原名）: %v", len(names), err))
+		return
+	}
+	onLog(fmt.Sprintf("✓ 批量重命名 %d 个文件（例: %s）", len(names), example))
 }
 
 // moveQuietly 移动并记录失败（失败不再被吞掉）
@@ -1063,8 +1074,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	}
 	topEntries = filtered
 	if len(topEntries) == 0 {
-		onLog("○ 待整理目录为空（仅剩整理工作区目录）")
-		return results, 0
+		return results, 0 // 空转静默：定时任务每 10 分钟一轮，不为空目录刷日志
 	}
 
 	onLog(fmt.Sprintf("发现 %d 个条目，开始整理...", len(topEntries)))
@@ -1866,8 +1876,7 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 		return results, 0
 	}
 	if len(topEntries) == 0 {
-		onLog("○ 转存目录为空")
-		return results, 0
+		return results, 0 // 空转静默
 	}
 
 	// 五个工作区根目录自身永不被当作条目处理（与 runOrganizeEngine 一致）
@@ -2097,9 +2106,33 @@ func avCarriesNumber(cleanedBase, avNum string) bool {
 
 // processAVDirectory 处理 AV 目录（跳过 TMDB，直接用番号入库）
 func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir dirEntry, files []remoteFile, onLog func(string), results []OrganizeResult) []OrganizeResult {
-	// AV 目录结构：/AV/分类/番号/（分类 = 无码/有码，按番号前缀匹配）
+	// AV 目录结构：/AV/分类/<AVFolder 模板>/（分类 = 无码/有码，按番号前缀匹配）。
+	// 目录与文件名走重命名模板（AVFolder/AVFile，UI 可配）；模板缺省时
+	// 降级为番号直命名（旧行为）
 	category := classifyAVNumber(media.Title)
-	avDir := category + "/" + media.Title
+	// 模板变量（画质/制作组等）取自体积最大的视频
+	mainName, mainSize := "", int64(-1)
+	for _, f := range files {
+		if classifyFile(f.Name) == FileTypeVideo && f.Size > mainSize {
+			mainSize, mainName = f.Size, f.Name
+		}
+	}
+	avFolder, baseFile := "", ""
+	if rel := buildNewNameWithTemplate(media, &ParsedName{Title: media.Title}, mainName); rel != "" {
+		parts := strings.SplitN(rel, "/", 2)
+		if parts[0] != "" {
+			avFolder = parts[0]
+		}
+		if len(parts) == 2 && parts[1] != "" {
+			baseFile = parts[1]
+		}
+	}
+	if avFolder == "" || baseFile == "" {
+		avFolder = media.Title
+		baseFile = media.Title + pathExt(mainName)
+	}
+	avDir := category + "/" + avFolder
+	baseNoExt := strings.TrimSuffix(baseFile, pathExt(baseFile))
 
 	// 分流：正片视频（含多分卷）/ 字幕 / 元数据 / 广告垃圾
 	var videos, subs, metas []remoteFile
@@ -2157,41 +2190,46 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 		return results
 	}
 
-	// 重命名：正片按体积降序，主片 = 番号.ext，其余分卷 = 番号-CDn.ext
-	// （广告包里常见"引流视频+正片"，过去全部重命名为番号导致同名冲突）
+	// 重命名：正片按体积降序，主片 = AVFile 模板名，其余分卷 = 基名-CDn.ext
+	//（广告包里常见"引流视频+正片"，过去全部重命名为番号导致同名冲突）。
+	// 全部重命名合并为一次 batch_rename（逐个调用要过 3 秒/次的 API 限流）
 	sort.Slice(videos, func(i, j int) bool { return videos[i].Size > videos[j].Size })
-	renameTo := func(fid, oldName, newName string) {
-		if newName == oldName {
-			return
-		}
-		if err := ops.rename(fid, newName); err != nil {
-			onLog(fmt.Sprintf("○ AV 重命名失败保持原名 %s: %v", oldName, err))
-		} else {
-			onLog(fmt.Sprintf("✓ AV 清洗重命名 %s → %s", oldName, newName))
-		}
-	}
+	names := map[string]string{}
 	var moveFids []string
 	for i, v := range videos {
-		newName := media.Title + pathExt(v.Name)
+		newName := baseNoExt + pathExt(v.Name)
 		if i > 0 {
-			newName = fmt.Sprintf("%s-CD%d%s", media.Title, i+1, pathExt(v.Name))
+			newName = fmt.Sprintf("%s-CD%d%s", baseNoExt, i+1, pathExt(v.Name))
 		}
-		renameTo(v.Fid, v.Name, newName)
+		if newName != v.Name {
+			names[v.Fid] = newName
+		}
 		moveFids = append(moveFids, v.Fid)
 	}
-	for _, s := range subs {
+	for _, sub := range subs {
 		subSuffix := ""
-		if m := avSubLangRegex.FindStringSubmatch(baseName(s.Name)); m != nil {
+		if m := avSubLangRegex.FindStringSubmatch(baseName(sub.Name)); m != nil {
 			subSuffix = m[0]
 		}
-		newName := media.Title + subSuffix + pathExt(s.Name)
-		renameTo(s.Fid, s.Name, newName)
-		moveFids = append(moveFids, s.Fid)
+		newName := baseNoExt + subSuffix + pathExt(sub.Name)
+		if newName != sub.Name {
+			names[sub.Fid] = newName
+		}
+		moveFids = append(moveFids, sub.Fid)
 	}
 	for _, m := range metas {
-		newName := media.Title + pathExt(m.Name)
-		renameTo(m.Fid, m.Name, newName)
+		newName := baseNoExt + pathExt(m.Name)
+		if newName != m.Name {
+			names[m.Fid] = newName
+		}
 		moveFids = append(moveFids, m.Fid)
+	}
+	if len(names) > 0 {
+		if err := ops.renameBatch(names); err != nil {
+			onLog(fmt.Sprintf("✗ AV 批量重命名失败（%d 个文件保持原名）: %v", len(names), err))
+		} else {
+			onLog(fmt.Sprintf("✓ AV 批量重命名 %d 个文件（例: %s → %s）", len(names), videos[0].Name, baseNoExt+pathExt(videos[0].Name)))
+		}
 	}
 
 	if err := ops.moveFiles(targetCid, moveFids); err != nil {

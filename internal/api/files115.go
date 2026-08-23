@@ -201,10 +201,11 @@ func walk115Dir(ops *pan115Ops, cid, basePath string, videos, assets *[]remoteFi
 		if err != nil {
 			return err
 		}
-		// 同步与等待分行显示（等待为该次列表请求因 API 间隔的实际睡眠）
-		log.Printf("[同步] 同步%s", dirLabel)
+		// 等待时长并入目录行（单独一行把日志量翻倍且零信息量）
 		if w := throttle115LastWait(); w > 0 {
-			log.Printf("[同步]   ⏳ API 等待 %.1f 秒", w.Seconds())
+			log.Printf("[同步] 同步%s（等 %.1fs）", dirLabel, w.Seconds())
+		} else {
+			log.Printf("[同步] 同步%s", dirLabel)
 		}
 		for _, d := range entries {
 			isDir := fmt.Sprint(d["f"]) == "0"

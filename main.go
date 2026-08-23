@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"strmhub/internal/api"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
@@ -17,6 +18,40 @@ import (
 // BuildSHA 构建时由 CI 注入（-ldflags "-X main.BuildSHA=xxx"），
 // 用于日志/UI 确认运行的是哪个提交（排查"更新没生效"类问题）
 var BuildSHA = "dev"
+
+// rotatingWriter 大小轮转日志写入器：超过 maxBytes 时切割
+//（app.log → app.log.1 → .2 → .3，最旧的丢弃）
+type rotatingWriter struct {
+	mu       sync.Mutex
+	f        *os.File
+	path     string
+	size     int64
+	maxBytes int64
+	keep     int
+}
+
+func (w *rotatingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.size+int64(len(p)) > w.maxBytes {
+		w.rotate()
+	}
+	n, err := w.f.Write(p)
+	w.size += int64(n)
+	return n, err
+}
+
+func (w *rotatingWriter) rotate() {
+	w.f.Close()
+	for i := w.keep - 1; i >= 1; i-- {
+		os.Rename(fmt.Sprintf("%s.%d", w.path, i), fmt.Sprintf("%s.%d", w.path, i+1))
+	}
+	os.Rename(w.path, w.path+".1")
+	if f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		w.f = f
+		w.size = 0
+	}
+}
 
 func main() {
 	// 初始化配置
@@ -46,15 +81,21 @@ func main() {
 
 	log.Println(cfg.ConfigSummary())
 
-	// 确保日志目录存在
+	// 确保日志目录存在（app.log 大小轮转：超 10MB 切割，保留最近 3 份，
+	// 防止长期运行无限追加撑爆磁盘）
 	logDir := "/logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		log.Printf("创建日志目录失败: %v，日志仅输出到控制台", err)
 	} else {
-		logFile, err := os.OpenFile(filepath.Join(logDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		logPath := filepath.Join(logDir, "app.log")
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
 			defer logFile.Close()
-			log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+			rw := &rotatingWriter{f: logFile, path: logPath, maxBytes: 10 << 20, keep: 3}
+			if st, serr := logFile.Stat(); serr == nil {
+				rw.size = st.Size()
+			}
+			log.SetOutput(io.MultiWriter(os.Stdout, rw))
 		}
 	}
 

@@ -133,8 +133,10 @@ func StartIncrScheduler(h *Handler) {
 				log.Printf("[定时] ○ 整理跳过: %v", orgErr)
 			} else {
 				for _, st := range orgSteps {
-					msg, _ := st["message"].(string)
-					log.Printf("[定时] 整理: %v", msg)
+					if st["status"] == "失败" {
+						msg, _ := st["message"].(string)
+						log.Printf("[定时] ✗ 整理失败: %v", msg)
+					}
 				}
 			}
 			// 2) 增量同步（整理产生的 move 事件会被精确应用）
@@ -142,11 +144,26 @@ func StartIncrScheduler(h *Handler) {
 			sum, err := h.executeIncrementalSync(p)
 			if err != nil {
 				log.Printf("[定时] 增量同步失败: %v", err)
-			} else if sum != nil {
-				log.Printf("[定时] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",
-					sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
 			}
-			log.Printf("[定时] ✅ 定时任务完成，耗时 %.2f 秒", time.Since(start).Seconds())
+			// 空转判定：无整理产出且增量无新事件 → 整轮只留一行（此前每轮 ~10 行噪音）
+			idle := orgErr == nil
+			for _, st := range orgSteps {
+				if st["status"] == "失败" {
+					idle = false
+				}
+			}
+			if sum != nil && sum.EventsFresh > 0 {
+				idle = false
+			}
+			if idle {
+				log.Printf("[定时] ○ 空转（无待整理内容，无新事件）")
+			} else {
+				if sum != nil {
+					log.Printf("[定时] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",
+						sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
+				}
+				log.Printf("[定时] ✅ 定时任务完成，耗时 %.2f 秒", time.Since(start).Seconds())
+			}
 			endTask()
 			fullSyncMu.Unlock()
 		}

@@ -398,11 +398,23 @@ func (h *Handler) markEventsCoveredByFullSync(cookie string) (int, error) {
 	return count, nil
 }
 
-// rename115 重命名网盘文件（webapi files/batch_rename；字幕随视频新名对齐用）
+// rename115 重命名网盘文件（单个；批量场景用 rename115Batch）
 func rename115(cookie, fid, newName string) error {
+	return rename115Batch(cookie, map[string]string{fid: newName})
+}
+
+// rename115Batch 批量重命名：一次接口调用改多个文件。
+// 逐个调用时每个文件都要过一遍 API 限流（3 秒/次），24 集的重命名
+// 仅等待就要 70+ 秒；batch_rename 本就支持多文件表单，合并为一次调用
+func rename115Batch(cookie string, names map[string]string) error {
+	if len(names) == 0 {
+		return nil
+	}
 	form := url.Values{}
-	form.Set("files_new_name["+fid+"]", newName)
-	body, err := httpPostForm115("https://webapi.115.com/files/batch_rename", form, cookie, 15*time.Second)
+	for fid, name := range names {
+		form.Set("files_new_name["+fid+"]", name)
+	}
+	body, err := httpPostForm115("https://webapi.115.com/files/batch_rename", form, cookie, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -411,7 +423,7 @@ func rename115(cookie, fid, newName string) error {
 		Error string `json:"error"`
 	}
 	if json.Unmarshal(body, &r) == nil && !r.State {
-		return fmt.Errorf("重命名被拒: %s", r.Error)
+		return fmt.Errorf("批量重命名被拒: %s", r.Error)
 	}
 	return nil
 }
