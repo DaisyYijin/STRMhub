@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -118,7 +119,48 @@ func (tc *TmdbClient) get(endpoint string, params map[string]string) ([]byte, er
 }
 
 // SearchMovie 搜索电影
+// tmdbSearchCache 搜索结果缓存（同 query+year 5 分钟内不重复外呼）。
+// 识别链有 movie→TV→目录名→清洗→拆分多轮重试，同一标题会被搜多次
+var (
+	tmdbSearchMu    sync.Mutex
+	tmdbSearchCache = map[string]tmdbCacheEntry{}
+)
+
+type tmdbCacheEntry struct {
+	media *TmdbMedia
+	err   error
+	at    time.Time
+}
+
+func tmdbCacheGet(kind, q, year string) (*TmdbMedia, error, bool) {
+	tmdbSearchMu.Lock()
+	defer tmdbSearchMu.Unlock()
+	e, ok := tmdbSearchCache[kind+"|"+q+"|"+year]
+	if ok && time.Since(e.at) < 5*time.Minute {
+		return e.media, e.err, true
+	}
+	return nil, nil, false
+}
+
+func tmdbCachePut(kind, q, year string, media *TmdbMedia, err error) {
+	tmdbSearchMu.Lock()
+	defer tmdbSearchMu.Unlock()
+	if len(tmdbSearchCache) > 2000 {
+		tmdbSearchCache = map[string]tmdbCacheEntry{}
+	}
+	tmdbSearchCache[kind+"|"+q+"|"+year] = tmdbCacheEntry{media: media, err: err, at: time.Now()}
+}
+
 func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error) {
+	if m, e, ok := tmdbCacheGet("movie", query, year); ok {
+		return m, e
+	}
+	m, e := tc.searchMovieUncached(query, year)
+	tmdbCachePut("movie", query, year, m, e)
+	return m, e
+}
+
+func (tc *TmdbClient) searchMovieUncached(query string, year string) (*TmdbMedia, error) {
 	params := map[string]string{"query": query}
 	if year != "" {
 		params["year"] = year
@@ -146,7 +188,7 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
-		log.Printf("[整理] 搜索 %q（年份=%s）无结果", query, year)
+		vlog("[整理] 搜索 %q（年份=%s）无结果", query, year)
 		return nil, nil
 	}
 	// 候选列表（CMS 同款：识别错片时可从候选看出原因）
@@ -161,7 +203,7 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 		}
 		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Title, cy, c.ID, c.VoteAverage))
 	}
-	log.Printf("[整理] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
+	vlog("[整理] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	yr := ""
 	if len(r.ReleaseDate) >= 4 {
@@ -200,6 +242,15 @@ func (tc *TmdbClient) getMovieDetails(id int) ([]string, error) {
 
 // SearchTV 搜索电视剧
 func (tc *TmdbClient) SearchTV(query string, year string) (*TmdbMedia, error) {
+	if m, e, ok := tmdbCacheGet("tv", query, year); ok {
+		return m, e
+	}
+	m, e := tc.searchTVUncached(query, year)
+	tmdbCachePut("tv", query, year, m, e)
+	return m, e
+}
+
+func (tc *TmdbClient) searchTVUncached(query string, year string) (*TmdbMedia, error) {
 	params := map[string]string{"query": query}
 	if year != "" {
 		params["first_air_date_year"] = year // TMDB 剧集搜索的年份参数
@@ -227,7 +278,7 @@ func (tc *TmdbClient) SearchTV(query string, year string) (*TmdbMedia, error) {
 		return nil, err
 	}
 	if result.TotalResults == 0 || len(result.Results) == 0 {
-		log.Printf("[整理] 搜索 %q（TV，年份=%s）无结果", query, year)
+		vlog("[整理] 搜索 %q（TV，年份=%s）无结果", query, year)
 		return nil, nil
 	}
 	cands := make([]string, 0, 3)
@@ -241,7 +292,7 @@ func (tc *TmdbClient) SearchTV(query string, year string) (*TmdbMedia, error) {
 		}
 		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Name, cy, c.ID, c.VoteAverage))
 	}
-	log.Printf("[整理] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
+	vlog("[整理] 搜索 %q（TV）候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
 	r := result.Results[0]
 	resultYear := ""
 	if len(r.FirstAirDate) >= 4 {

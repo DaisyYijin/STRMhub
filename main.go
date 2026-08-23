@@ -120,6 +120,8 @@ func main() {
 		log.Printf("初始化默认洗版策略失败: %v", err)
 	}
 
+	api.SetVersion(BuildSHA)
+
 	// 启动 Gin（不用 gin.Default：其自带的请求访问日志每个 HTTP 请求一行，噪音大）
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -127,10 +129,11 @@ func main() {
 
 	// CORS
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"*"},
-		AllowCredentials: true,
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		// 收紧请求头白名单：API 只用 Authorization + JSON；
+		// 通配 * 会放行任意自定义头
+		AllowHeaders: []string{"Authorization", "Content-Type"},
 	}))
 
 	// API 路由

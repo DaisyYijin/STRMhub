@@ -155,11 +155,23 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 				// 部分 Emby 版本已把 strm 展开成 URL 放在 Path，直接使用
 				directURL = strmPath
 			} else if isStrm {
-				// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查
-				//（按 strm 文件名查 pick_code 拼 URL，不依赖文件系统）
-				directURL = readStrmDirectURL(db, cfg, strmPath)
-				if directURL == "" {
-					directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+				// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查。
+				// 结果进 60 秒缓存（每次播放都触发，重复读文件/查台账浪费）
+				strmURLCacheMu.Lock()
+				if e, ok := strmURLCache[strmPath]; ok && time.Since(e.at) < 60*time.Second {
+					directURL = e.url
+					strmURLCacheMu.Unlock()
+				} else {
+					strmURLCacheMu.Unlock()
+					directURL = readStrmDirectURL(db, cfg, strmPath)
+					if directURL == "" {
+						directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+					}
+					if directURL != "" {
+						strmURLCacheMu.Lock()
+						strmURLCache[strmPath] = strmURLCacheEntry{url: directURL, at: time.Now()}
+						strmURLCacheMu.Unlock()
+					}
 				}
 			}
 			if directURL == "" {
@@ -184,12 +196,12 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			if c := directURLContainer(directURL); c != "" {
 				ms["Container"] = c
 			}
-			log.Printf("[Emby直连] ✦ 改写播放信息: %s → 直连播放（绕过服务器转码）", truncateStr(strmPath, 70))
+			vlog("[Emby直连] ✦ 改写播放信息: %s → 直连播放（绕过服务器转码）", truncateStr(strmPath, 70))
 			changed = true
 			rewritten++
 		}
 		// 拦截摘要：无论是否改写都留痕，排查"改写没生效"时一眼可见
-		log.Printf("[Emby直连] PlaybackInfo 拦截: 媒体源 %d 个，改写 %d 个", len(sources), rewritten)
+		vlog("[Emby直连] PlaybackInfo 拦截: 媒体源 %d 个，改写 %d 个", len(sources), rewritten)
 		if !changed {
 			restore()
 			return nil
@@ -205,6 +217,18 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 		resp.Header.Del("Content-Encoding")
 		return nil
 	}
+}
+
+// strmURLCache strm 路径→直链解析缓存（每次播放都会触发 PlaybackInfo
+// 改写，重复读文件/查台账浪费；strm 内容极少变化，60 秒 TTL 足够）
+var (
+	strmURLCacheMu sync.Mutex
+	strmURLCache   = map[string]strmURLCacheEntry{}
+)
+
+type strmURLCacheEntry struct {
+	url string
+	at  time.Time
 }
 
 // readStrmDirectURL 读取 strm 文件内容（第一行的直链 URL）。
@@ -360,7 +384,7 @@ func normalizeDirectURL(db *gorm.DB, cfg *config.Config, u, clientHost string) s
 	parsed.Scheme = base.Scheme
 	parsed.Host = base.Host
 	out := parsed.String()
-	log.Printf("[Emby直连] ○ 直链地址改写: %s → %s", truncateStr(u, 60), truncateStr(out, 60))
+	vlog("[Emby直连] ○ 直链地址改写: %s → %s", truncateStr(u, 60), truncateStr(out, 60))
 	return out
 }
 

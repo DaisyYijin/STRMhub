@@ -174,6 +174,8 @@ function showAuth(mode) {
 function showMain() {
   document.getElementById('auth-page').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
+  loadVersion();
+  loadLogLevel();
   // 恢复上次停留的页面
   const saved = localStorage.getItem('current-page');
   if (saved) showPage(saved);
@@ -1754,6 +1756,50 @@ async function loadConfigs() {
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
   }));
+}
+
+// ==================== 孤儿 STRM 清理 ====================
+async function cleanupOrphanStrm() {
+  try {
+    const dry = await api('/strm/cleanup', { method: 'POST', body: JSON.stringify({ confirm: false }) });
+    if (!dry.count) { toast('没有发现孤儿文件'); return; }
+    const sample = (dry.sample || []).slice(0, 5).join('\n');
+    if (!confirm(`发现 ${dry.count} 个孤儿文件（云端已删/移走的本地残留）\n\n${sample}${dry.count > 5 ? '\n...' : ''}\n\n确定删除？`)) return;
+    const res = await api('/strm/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+    toast(`已删除 ${res.deleted} 个孤儿文件`);
+    appendLog && appendLog(`孤儿清理: 删除 ${res.deleted} 个文件`);
+  } catch (e) { toast(e.message); }
+}
+
+// ==================== 日志级别 ====================
+let logLevelVal = 'verbose';
+function setLogLevel(v) {
+  logLevelVal = v;
+  document.querySelectorAll('#log-level-switch .seg-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.value === v);
+  });
+}
+async function saveLogLevel() {
+  try {
+    await api('/system/log-level', { method: 'POST', body: JSON.stringify({ level: logLevelVal }) });
+    toast('保存成功');
+  } catch (e) { toast(e.message); }
+}
+async function loadLogLevel() {
+  try {
+    const data = await api('/config/setting?key=log-level');
+    const v = data.value || 'verbose';
+    setLogLevel(v === 'simple' ? 'simple' : 'verbose');
+  } catch (e) {}
+}
+
+// 版本号（侧边栏显示，对照 GitHub 最新提交确认是否已更新）
+async function loadVersion() {
+  try {
+    const data = await api('/version');
+    const el = document.getElementById('sidebar-version');
+    if (el && data.version) el.textContent = '版本 ' + String(data.version).slice(0, 7);
+  } catch (e) {}
 }
 
 // ==================== 日志 ====================

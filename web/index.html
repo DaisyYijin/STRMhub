@@ -51,6 +51,7 @@
       <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
       <div class="menu-item" data-page="logs"><span class="icon">▤</span><span>实时日志</span></div>
+      <div id="sidebar-version" style="padding:10px 16px;font-size:11px;color:rgba(255,255,255,.35);border-top:1px solid rgba(255,255,255,.06);margin-top:8px"></div>
     </div>
     <div class="footer">StrmHub v1.0</div>
   </aside>
@@ -129,7 +130,7 @@
           <div class="form-row"><div class="label">增量同步 Cron</div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *" oninput="previewCron()"></div></div>
           <div class="form-row"><div class="label">最近 5 次运行时间</div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
 
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-outline" onclick="cleanupOrphanStrm()">清理孤儿</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
       </div>
@@ -465,6 +466,8 @@ av:
       <div class="tab-panel" data-panel="wash">
       <div class="card">
         <textarea id="wash-yaml" rows="20" style="width:100%"># 洗版模式：coexist共存 / skip跳过 / replace替换 / max_size最大 / min_size最小
+# scope：all=全局只留一个最优 / group=按分辨率分组各留一个（如1080p/2160p各一）
+# old_version_target：旧版去向 redundant冗余 / existing已存在（默认冗余）
 # 优先级字段说明：
 #   resource_pix: 分辨率（2160p, 1080p, 720p）
 #   resource_type: 资源质量（BluRay, WEB-DL, HDTV）
@@ -762,6 +765,13 @@ av:
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('strm')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('strm', this)" style="position:relative">重置配置</button></div></div>
           <div class="form-row"><div class="label">STRM 直链示例</div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);word-break:break-all;display:block;line-height:38px"></code></div></div>
         </div>
+      <div class="card">
+        <div class="form-row"><div class="label">日志级别</div><div class="control"><div class="segmented-control" id="log-level-switch">
+          <div class="seg-item active" data-value="verbose" onclick="setLogLevel('verbose')">详细</div>
+          <div class="seg-item" data-value="simple" onclick="setLogLevel('simple')">简洁</div>
+        </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">简洁模式隐藏目录遍历/搜索/302/播放改写等过程日志</span></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveLogLevel()">保存</button></div></div>
+        </div>
       </div>
 
       <!-- TMDB 配置 -->
@@ -903,6 +913,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=58"></script>
+<script src="/js/app.js?v=59"></script>
 </body>
 </html>

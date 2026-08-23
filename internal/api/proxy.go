@@ -93,7 +93,7 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	}
 
 	reqUA := c.Request.UserAgent()
-	log.Printf("302代理请求: pickcode=%s, UA=%s", pickcode, reqUA)
+	vlog("302代理请求: pickcode=%s, UA=%s", pickcode, reqUA)
 
 	// UA 缺失的播放器（部分安卓内核不发自定义 UA）：115 直链与 UA 绑定，
 	// 空 UA 客户端拿到 302 后去 CDN 取流会被拒（浏览器正常、这类手机播不动）。
@@ -135,7 +135,7 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 	}
 	downloadCacheMu.Unlock()
 
-	log.Printf("302代理重定向: %s -> %s", pickcode, downloadURL[:min(80, len(downloadURL))]+"...")
+	vlog("302代理重定向: %s -> %s", pickcode, downloadURL[:min(80, len(downloadURL))]+"...")
 	c.Redirect(http.StatusFound, downloadURL)
 }
 

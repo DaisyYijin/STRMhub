@@ -20,8 +20,26 @@ import (
 	"gorm.io/gorm"
 )
 
+// buildVersion 构建版本号（main 注入，侧边栏/日志确认运行版本）
+var buildVersion = "dev"
+
+// loginGuardEntry 登录防爆破计数
+type loginGuardEntry struct {
+	fails     int
+	lockUntil time.Time
+}
+
+var (
+	loginGuard   = map[string]loginGuardEntry{}
+	loginGuardMu sync.Mutex
+)
+
+// SetVersion 注入构建版本号
+func SetVersion(v string) { buildVersion = v }
+
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	h := &Handler{DB: db, Config: cfg}
+	cfgGlobal = cfg
 
 	// 应用用户设置的 115 API 请求间隔（数据库 > 环境变量 > 默认 1s）
 	Apply115Interval(db)
@@ -145,6 +163,31 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/scrape/rules", h.SaveScrapeRules)
 		protected.GET("/scrape/categories", h.ListCategories)
 		protected.POST("/scrape/categories", h.SaveCategories)
+		protected.POST("/strm/cleanup", h.OrphanCleanup)
+
+		// 版本号与日志级别
+		protected.GET("/version", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"version": buildVersion})
+		})
+		protected.POST("/system/log-level", func(c *gin.Context) {
+			var req struct {
+				Level string `json:"level"` // simple / verbose
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || (req.Level != "simple" && req.Level != "verbose") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+				return
+			}
+			if err := cfg.SaveSetting("log-level", req.Level); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 立即刷新缓存
+			logVerboseMu.Lock()
+			logVerboseAt = time.Time{}
+			logVerboseMu.Unlock()
+			c.JSON(http.StatusOK, gin.H{"message": "已保存"})
+		})
+
 		protected.GET("/scrape/wash", h.ListWashRules)
 		protected.POST("/scrape/wash", h.SaveWashRules)
 
@@ -229,10 +272,33 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// 防爆破：同 IP 连续 5 次失败锁定 10 分钟
+	ip := c.ClientIP()
+	loginGuardMu.Lock()
+	g, ok := loginGuard[ip]
+	if ok && time.Now().Before(g.lockUntil) {
+		remain := time.Until(g.lockUntil).Truncate(time.Second)
+		loginGuardMu.Unlock()
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("失败次数过多，已锁定，请 %s 后再试", remain)})
+		return
+	}
+	loginGuardMu.Unlock()
 	if !h.Config.VerifyAuth(req.Username, req.Password) {
+		loginGuardMu.Lock()
+		g := loginGuard[ip]
+		g.fails++
+		if g.fails >= 5 {
+			g.lockUntil = time.Now().Add(10 * time.Minute)
+			g.fails = 0
+		}
+		loginGuard[ip] = g
+		loginGuardMu.Unlock()
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
+	loginGuardMu.Lock()
+	delete(loginGuard, ip)
+	loginGuardMu.Unlock()
 
 	token := h.generateToken(1, req.Username)
 	c.JSON(http.StatusOK, gin.H{

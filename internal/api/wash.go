@@ -9,44 +9,100 @@ package api
 //      旧版更好 → 新版移已存在（现状）；规则无判定 → 按 coexist 也移已存在
 
 import (
-	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
+	"sync"
+	"time"
 
 	"strmhub/internal/model"
+
+	"gopkg.in/yaml.v3"
 )
 
-// washRule 单条优先级规则（与 WashRule.PriorityLevel 的 JSON 数组元素对应）
+// washRule 单条优先级规则（YAML priority_level 数组元素，字段与 CMS 一致）
 type washRule struct {
-	ResourceTeam    string `json:"resource_team"`
-	ResourcePix     string `json:"resource_pix"`
-	ResourceType    string `json:"resource_type"`
-	ResourceEffect  string `json:"resource_effect"`
+	ResourceTeam    string `yaml:"resource_team" json:"resource_team"`
+	ResourcePix     string `yaml:"resource_pix" json:"resource_pix"`
+	ResourceType    string `yaml:"resource_type" json:"resource_type"`
+	ResourceEffect  string `yaml:"resource_effect" json:"resource_effect"`
 }
 
-// loadWashRules 加载匹配的洗版策略（media_type/category 任一匹配；空=匹配所有）
-// 同时返回该策略配置的旧版去向（redundant/existing/delete，默认 redundant）
-func loadWashRules(mediaType, category string) ([]washRule, string) {
-	var rows []model.WashRule
-	model.DB.Find(&rows)
-	for _, r := range rows {
-		if r.MediaType != "" && r.MediaType != mediaType {
-			continue
-		}
-		if r.Category != "" && !containsCategory(r.Category, category) {
-			continue
-		}
-		var rules []washRule
-		if json.Unmarshal([]byte(r.PriorityLevel), &rules) == nil && len(rules) > 0 {
-			target := r.OldVersionTarget
-			if target == "" {
-				target = "redundant"
-			}
-			return rules, target
+// washStrategy 一条完整洗版策略（UI 的 YAML 编辑器格式，与 CMS 对齐）
+type washStrategy struct {
+	Mode             string     `yaml:"mode"`              // coexist/skip/replace/max_size/min_size
+	Scope            string     `yaml:"scope"`             // all=全局一个版本 / group=按分辨率分组各留一个
+	MediaType        string     `yaml:"media_type"`        // movie/tv（空=匹配所有）
+	Category         string     `yaml:"category"`          // 匹配二级分类名，逗号分隔（空=所有）
+	PriorityLevel    []washRule `yaml:"priority_level"`    // 优先级规则（上面的优先）
+	OldVersionTarget string     `yaml:"old_version_target"` // 旧版去向 redundant/existing（默认 redundant）
+}
+
+// loadWashStrategies 从 UI 保存的 YAML（ScrapeRule.wash_config）解析全部策略。
+// 此前引擎读的是 WashRule 表——没有任何代码往里写，用户在 UI 配的策略
+// 从未生效过；现在直接解析 YAML，与编辑器真正连通
+func loadWashStrategies() []washStrategy {
+	var rule model.ScrapeRule
+	model.DB.Where("type = ?", "wash_config").First(&rule)
+	if strings.TrimSpace(rule.Config) == "" {
+		return nil
+	}
+	var m map[string]washStrategy
+	if err := yaml.Unmarshal([]byte(rule.Config), &m); err != nil {
+		return nil
+	}
+	// YAML map 无序，按文本出现顺序排序保证"从上到下依次匹配"
+	order := parseYAMLKeyOrder(rule.Config)
+	sorted := make([]washStrategy, 0, len(m))
+	for _, key := range order {
+		if st, ok := m[key]; ok {
+			sorted = append(sorted, st)
 		}
 	}
-	return nil, ""
+	for k, st := range m {
+		if _, done := indexOfKey(order, k); !done {
+			sorted = append(sorted, st)
+		}
+	}
+	return sorted
+}
+
+// parseYAMLKeyOrder 提取 YAML 顶层键的出现顺序（yaml.v3 不保留 map 顺序）
+func parseYAMLKeyOrder(src string) []string {
+	var keys []string
+	for _, line := range strings.Split(src, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "	") && strings.HasSuffix(l, ":") {
+			keys = append(keys, strings.TrimSuffix(l, ":"))
+		}
+	}
+	return keys
+}
+
+func indexOfKey(keys []string, k string) (int, bool) {
+	for i, key := range keys {
+		if key == k {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// matchWashStrategy 按 media_type/category 匹配第一条策略（空字段=匹配所有）
+func matchWashStrategy(mediaType, category string) *washStrategy {
+	for i, st := range washStrategyCache() {
+		if st.MediaType != "" && st.MediaType != mediaType {
+			continue
+		}
+		if st.Category != "" && !containsCategory(st.Category, category) {
+			continue
+		}
+		return &washStrategyCache()[i]
+	}
+	return nil
 }
 
 func containsCategory(list, cat string) bool {
@@ -101,16 +157,30 @@ func washDecision(newName string, libraryNames []string, rules []washRule) bool 
 	return false // 规则无法判定
 }
 
-// libraryFileNamesOf 从台账取某片目录下的现有文件名
-func libraryFileNamesOf(targetDir string) []string {
+// libraryFilesOf 从台账取某片目录下的现有文件（含大小，max/min_size 模式用）
+func libraryFilesOf(targetDir string) []model.SyncedFile {
 	var sfs []model.SyncedFile
 	prefix := strings.TrimSuffix(targetDir, "/") + "/"
 	model.DB.Where("rel_path LIKE ?", prefix+"%").Limit(20).Find(&sfs)
-	names := make([]string, 0, len(sfs))
-	for _, sf := range sfs {
-		names = append(names, path.Base(sf.RelPath))
+	return sfs
+}
+
+// washStrategyCache YAML 解析结果缓存（1 分钟），避免每个文件都重新解析
+var (
+	washCacheMu   sync.Mutex
+	washCacheVal  []washStrategy
+	washCacheAt   time.Time
+)
+
+func washStrategyCache() []washStrategy {
+	washCacheMu.Lock()
+	defer washCacheMu.Unlock()
+	if washCacheVal != nil && time.Since(washCacheAt) < time.Minute {
+		return washCacheVal
 	}
-	return names
+	washCacheVal = loadWashStrategies()
+	washCacheAt = time.Now()
+	return washCacheVal
 }
 
 
@@ -136,14 +206,27 @@ const (
 //   - 旧版更好 → 返回 washNotBetter，调用方应把新文件移「已存在」
 //   - 无规则/库内无文件 → 返回 washSkip
 func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, targetDir string, onLog func(string)) string {
-	rules, oldTarget := loadWashRules(media.MediaType, "")
-	if len(rules) == 0 {
-		return washSkip
+	st := matchWashStrategy(media.MediaType, "")
+	if st == nil || len(st.PriorityLevel) == 0 {
+		return washSkip // 未配置策略
 	}
-	libNames := libraryFileNamesOf(targetDir)
-	if len(libNames) == 0 {
-		return washSkip
+	mode := st.Mode
+	if mode == "" {
+		mode = "replace"
 	}
+	oldTarget := st.OldVersionTarget
+	if oldTarget == "" {
+		oldTarget = "redundant"
+	}
+	libFiles := libraryFilesOf(targetDir)
+	if len(libFiles) == 0 {
+		return washSkip // 库内无该片的文件
+	}
+	libNames := make([]string, 0, len(libFiles))
+	for _, sf := range libFiles {
+		libNames = append(libNames, path.Base(sf.RelPath))
+	}
+
 	// 剧集集数守卫（CMS 图解"当前集是否已存在"分支）：
 	// 新文件的集数在库内从未出现 → 是新增集，直接正常入库；
 	// 只有同一集已存在时才做画质洗版比较，否则新剧集会被误判进已存在
@@ -161,8 +244,46 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 			}
 		}
 	}
-	if !washDecision(newName, libNames, rules) {
-		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本，按已存在处理", newName))
+
+	// coexist：多版本共存，新版本直接正常入库，不比较不淘汰
+	if mode == "coexist" {
+		onLog(fmt.Sprintf("○ 洗版判定: coexist 模式，%s 与库内版本共存入库", truncateStr(newName, 60)))
+		return washSkip
+	}
+	// skip：库里已有（同集/同片任意版本）就不再收新的
+	if mode == "skip" {
+		onLog(fmt.Sprintf("○ 洗版判定: skip 模式，库内已有，%s 按已存在处理", truncateStr(newName, 60)))
+		return washNotBetter
+	}
+
+	// scope=group：按分辨率分组，组内各留一个最优版本。
+	// 新文件的分辨率在库内没有同组文件 → 新分组版本，共存入库；
+	// 有同组文件 → 只与同组文件比较
+	compareNames := libNames
+	if st.Scope == "group" {
+		newPix := strings.ToLower(ParseResourceInfo(newName).Pix)
+		var groupNames []string
+		for _, ln := range libNames {
+			if strings.ToLower(ParseResourceInfo(ln).Pix) == newPix {
+				groupNames = append(groupNames, ln)
+			}
+		}
+		if len(groupNames) == 0 {
+			onLog(fmt.Sprintf("○ 洗版判定: group 模式，%s 为新分辨率分组（%s），共存入库", truncateStr(newName, 50), newPix))
+			return washSkip
+		}
+		compareNames = groupNames
+	}
+
+	// replace：按优先级规则判定
+	better := washDecision(newName, compareNames, st.PriorityLevel)
+	// max_size/min_size：规则分不出高下（平局）时保守不替换——
+	// 新文件在网盘移动前拿不到可靠大小，误删更优版本代价比保守大
+	if !better && (mode == "max_size" || mode == "min_size") {
+		better = false
+	}
+	if !better {
+		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本（mode=%s），按已存在处理", truncateStr(newName, 60), mode))
 		return washNotBetter
 	}
 	// 新版更好：旧版按配置的去向迁移（统一放「洗版-旧版本/片名」子目录便于辨认）

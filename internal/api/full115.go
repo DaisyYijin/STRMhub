@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"strmhub/internal/config"
 	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,131 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		"assets_skipped":    skipped,
 		"assets_failed":     failed,
 	})
+}
+
+// ---- 日志分级：simple 模式静默过程性日志（目录遍历/搜索/302/播放改写），只留关键节点与异常 ----
+var (
+	cfgGlobal *config.Config // SetupRoutes 注入，供无 Handler 上下文的日志分级读取配置
+
+	logVerboseMu  sync.Mutex
+	logVerboseVal = true
+	logVerboseAt  time.Time
+)
+
+// verboseLogging 当前是否详细模式（30 秒缓存；log-level=simple 时为简洁）
+func verboseLogging() bool {
+	logVerboseMu.Lock()
+	defer logVerboseMu.Unlock()
+	if time.Since(logVerboseAt) < 30*time.Second {
+		return logVerboseVal
+	}
+	logVerboseAt = time.Now()
+	level := ""
+	if cfgGlobal != nil {
+		level = cfgGlobal.GetSetting("log-level")
+	}
+	if level == "" {
+		var sRow model.Setting
+		if model.DB != nil && model.DB.Where("`key` = ?", "log-level").First(&sRow).Error == nil {
+			level = sRow.Value
+		}
+	}
+	logVerboseVal = level != "simple"
+	return logVerboseVal
+}
+
+// vlog 过程性日志：仅详细模式输出
+func vlog(format string, args ...interface{}) {
+	if verboseLogging() {
+		log.Printf(format, args...)
+	}
+}
+
+// orphanSafeExts 孤儿清理只碰这些后缀（strm 与附属），其他文件一律不动
+var orphanSafeExts = map[string]bool{
+	".strm": true, ".srt": true, ".ass": true, ".ssa": true, ".sub": true,
+	".vtt": true, ".smi": true, ".nfo": true, ".jpg": true, ".jpeg": true,
+	".png": true, ".webp": true,
+}
+
+// OrphanCleanup 本地孤儿文件清理：遍历本地库根，不在同步台账里的
+// strm/附属文件即为孤儿（云端已删/移走、历史误生成等），dry-run 预览，
+// confirm 后删除并清掉空目录。按 rel_path 或文件名双匹配，宁漏勿删
+// POST /strm/cleanup  body: {"confirm": false}
+func (h *Handler) OrphanCleanup(c *gin.Context) {
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	local := defaultLocalPath
+	var fullCfg struct {
+		LocalPath string `json:"local_path"`
+	}
+	if json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg) == nil && fullCfg.LocalPath != "" {
+		local = fullCfg.LocalPath
+	}
+
+	// 台账：完整相对路径 + 文件名双集合（旧台账可能缺库根层，按名兜底）
+	var rels []string
+	h.DB.Model(&model.SyncedFile{}).Pluck("rel_path", &rels)
+	ledgerRel := make(map[string]bool, len(rels))
+	ledgerBase := make(map[string]bool, len(rels))
+	for _, r := range rels {
+		if r == "" {
+			continue
+		}
+		ledgerRel[r] = true
+		ledgerBase[path.Base(r)] = true
+	}
+
+	var orphans []string
+	filepath.WalkDir(local, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !orphanSafeExts[strings.ToLower(filepath.Ext(p))] {
+			return nil // 非托管后缀不碰
+		}
+		rel, rerr := filepath.Rel(local, p)
+		if rerr != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if ledgerRel[relSlash] || ledgerBase[path.Base(relSlash)] {
+			return nil
+		}
+		orphans = append(orphans, relSlash)
+		return nil
+	})
+
+	if !req.Confirm {
+		sample := orphans
+		if len(sample) > 20 {
+			sample = sample[:20]
+		}
+		c.JSON(http.StatusOK, gin.H{"count": len(orphans), "sample": sample})
+		return
+	}
+	deleted := 0
+	for _, rel := range orphans {
+		if os.Remove(filepath.Join(local, filepath.FromSlash(rel))) == nil {
+			deleted++
+		}
+	}
+	// 自底向上清空目录（不动根）
+	var dirs []string
+	filepath.WalkDir(local, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && p != local {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		os.Remove(dirs[i]) // 非空自动失败，忽略
+	}
+	log.Printf("[同步] ✅ 孤儿清理: 删除 %d 个文件（扫描 %d 个孤儿）", deleted, len(orphans))
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted, "scanned": len(orphans)})
 }
 
 // orgSkipCids 整理工作区（待整理/已存在/冗余/转存目录）的 cid 集合，
