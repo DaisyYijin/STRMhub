@@ -116,11 +116,22 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 
 	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(req.URL, 60), linkType)
 
-	// 离线下载是异步的：提交后启动一个延迟检查协程，60 秒后触发增量
-	// （如果 115 秒传命中则文件已就位；否则等下载完成后的下一轮 cron 接管）
+	// 离线下载是异步的：提交后 10 秒先试探一轮（115 秒传命中时文件已就位，
+	// CMS 同款极速响应——秒传场景 ~15 秒即开始整理）；未命中则 60 秒后再试，
+	// 仍没好就交给守望者/离线任务监视器（下载完成时触发）
 	if req.Organize {
 		go func() {
-			time.Sleep(60 * time.Second)
+			time.Sleep(10 * time.Second)
+			if cid := h.shareFolderCid(); cid != "" {
+				if ops, err := h.newPan115Ops(); err == nil {
+					if entries, _, lerr := ops.listEntries(cid, 0); lerr == nil && len(entries) > 0 {
+						log.Printf("[上传] ⚡ 秒传命中（转存目录已有 %d 个条目），立即整理", len(entries))
+						h.triggerOrganizeAndSync()
+						return
+					}
+				}
+			}
+			time.Sleep(50 * time.Second)
 			h.triggerOrganizeAndSync()
 		}()
 	}

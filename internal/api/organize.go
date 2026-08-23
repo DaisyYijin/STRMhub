@@ -13,6 +13,8 @@ import (
 
 	"strmhub/internal/model"
 
+	"gorm.io/gorm/clause"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/mozillazg/go-pinyin"
@@ -1205,7 +1207,8 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 分流视频：正片 vs 广告/引流（清洗后无有效内容名、仍含域名、或小于
 	// 最小体积的"视频"是广告载体，不能重命名成正片名混入库）
 	var videoFiles []remoteFile
-	var adFids []string // 广告/超小视频：循环后合并一次移动（逐个移动每个要过写限流）
+	var adFids []string   // 广告/超小视频：循环后合并一次移动（逐个移动每个要过写限流）
+	var adFiles []remoteFile // 同批文件的指纹登记用
 	minBytes := int64(cfg.MinSize) * 1024 * 1024
 	for _, f := range files {
 		if classifyFile(f.Name) != FileTypeVideo {
@@ -1215,15 +1218,18 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		case isAdOnlyVideo(f.Name):
 			onLog(fmt.Sprintf("○ %s - 广告/引流视频，移到冗余", f.Name))
 			adFids = append(adFids, f.Fid)
+			adFiles = append(adFiles, f)
 		case minBytes > 0 && f.Size > 0 && f.Size < minBytes:
 			onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），移到冗余", f.Name, float64(f.Size)/1024/1024, cfg.MinSize))
 			adFids = append(adFids, f.Fid)
+			adFiles = append(adFiles, f)
 		default:
 			videoFiles = append(videoFiles, f)
 		}
 	}
 
 	if len(adFids) > 0 {
+		recordSeenSha1s(adFiles, "redundant")
 		if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
 			ops.moveFiles(junkCid, adFids)
 		}
@@ -1252,17 +1258,27 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	// 网盘去重前置（CMS 图解第一步）：主视频 SHA1 已在同步台账里
-	// （以前同步过同一文件）→ 直接进已存在，省一次 TMDB 识别
-	if mainVideo.Sha1 != "" && sha1ExistsInLibrary(mainVideo.Sha1) {
-		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
-		} else {
-			onLog(fmt.Sprintf("○ %s/ - SHA1 命中同步台账，已移到已存在目录", dir.Name))
+	// （以前同步过同一文件）→ 直接进已存在，省一次 TMDB 识别；
+	// 台账未命中再查指纹历史库（广告/冗余内容的免疫记忆，重复投放零成本秒判）
+	if mainVideo.Sha1 != "" {
+		hit := sha1ExistsInLibrary(mainVideo.Sha1)
+		if !hit {
+			if _, seen := sha1SeenBefore(mainVideo.Sha1); seen {
+				hit = true
+			}
 		}
-		for _, vf := range videoFiles {
-			results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中同步台账"})
+		if hit {
+			recordSeenSha1s(videoFiles, "existing")
+			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+			} else {
+				onLog(fmt.Sprintf("○ %s/ - SHA1 命中历史记录，已移到已存在目录", dir.Name))
+			}
+			for _, vf := range videoFiles {
+				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中历史记录"})
+			}
+			return results
 		}
-		return results
 	}
 
 	// 应用替换规则
@@ -1345,6 +1361,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			if err != nil {
 				msg = "TMDB 识别失败: " + err.Error()
 			}
+			recordSeenSha1s(videoFiles, "redundant")
 			moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
 			onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
 			return results
@@ -1356,6 +1373,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 直接查网盘去重（不依赖本地缓存表，不会过期）
 	// 检查网盘目标目录里是否有相同 SHA1 的文件
 	if checkByCloudSHA1(ops, media, cfg, libAbs, mainVideo.Sha1) {
+		recordSeenSha1s(videoFiles, "existing")
 		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 		} else {
@@ -1375,6 +1393,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			// 旧版已让位，落入下方正常入库
 		case washNotBetter:
 			// 库内版本更优：新文件按「已存在」处理，不再重复入库
+			recordSeenSha1s(videoFiles, "existing")
 			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 			} else {
@@ -2077,6 +2096,33 @@ func isAVAdFile(name string) bool {
 	return false
 }
 
+// recordSeenSha1s 登记文件指纹与去向（广告/冗余/已存在），重复内容
+// 二次出现时前置秒判（CMS 的 sha1 历史库同款免疫机制）
+func recordSeenSha1s(files []remoteFile, dest string) {
+	if model.DB == nil {
+		return
+	}
+	for _, f := range files {
+		if f.Sha1 == "" {
+			continue
+		}
+		row := model.SeenSha1{Sha1: f.Sha1, Dest: dest}
+		model.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
+	}
+}
+
+// sha1SeenBefore 指纹是否在历史库中（去向冗余/已存在均算）
+func sha1SeenBefore(sha1 string) (string, bool) {
+	if model.DB == nil || sha1 == "" {
+		return "", false
+	}
+	var row model.SeenSha1
+	if err := model.DB.Where("sha1 = ?", sha1).First(&row).Error; err != nil {
+		return "", false
+	}
+	return row.Dest, true
+}
+
 // isAdOnlyVideo 判断视频文件是否为纯广告/引流载体：
 // 清洗发布站广告（【…】块/域名）后连片名都没剩下（文件名整体是广告），
 // 或清洗后仍残留域名。"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4"
@@ -2140,6 +2186,7 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	// 分流：正片视频（含多分卷）/ 字幕 / 元数据 / 广告垃圾
 	var videos, subs, metas []remoteFile
 	var junkFids []string
+	var junkFiles []remoteFile // 指纹登记用
 	minBytes := int64(cfg.MinSize) * 1024 * 1024
 	for _, f := range files {
 		switch classifyFile(f.Name) {
@@ -2148,12 +2195,15 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 			switch {
 			case isAVAdFile(f.Name):
 				junkFids = append(junkFids, f.Fid)
+				junkFiles = append(junkFiles, f)
 				onLog(fmt.Sprintf("○ %s - 广告/引流视频，移到冗余", f.Name))
 			case !avCarriesNumber(cleanedBase, media.Title):
 				junkFids = append(junkFids, f.Fid)
+				junkFiles = append(junkFiles, f)
 				onLog(fmt.Sprintf("○ %s - 清洗后不含番号 %s，疑似引流视频，移到冗余", f.Name, media.Title))
 			case minBytes > 0 && f.Size > 0 && f.Size < minBytes:
 				junkFids = append(junkFids, f.Fid)
+				junkFiles = append(junkFiles, f)
 				onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），移到冗余",
 					f.Name, float64(f.Size)/1024/1024, cfg.MinSize))
 			default:
@@ -2165,6 +2215,7 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 			metas = append(metas, f)
 		default:
 			junkFids = append(junkFids, f.Fid)
+			junkFiles = append(junkFiles, f)
 			onLog(fmt.Sprintf("○ %s - 垃圾文件，移到冗余", f.Name))
 		}
 	}
@@ -2179,8 +2230,9 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 		return results
 	}
 
-	// 广告/垃圾先行移到冗余
-	if len(junkFids) > 0 {
+	// 广告/垃圾先行移到冗余（登记指纹：重复投放的引流内容秒判）
+	if len(junkFiles) > 0 {
+		recordSeenSha1s(junkFiles, "redundant")
 		if err := ops.moveFiles(cfg.Redundant, junkFids); err != nil {
 			onLog(fmt.Sprintf("○ %s/ - 垃圾文件移到冗余失败: %v", dir.Name, err))
 		}

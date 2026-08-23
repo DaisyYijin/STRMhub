@@ -50,6 +50,7 @@ type lifeEvent struct {
 	FileID   string `json:"file_id"`   // 文件 id
 	FileName string `json:"file_name"` // 文件名
 	Cid      string `json:"cid"`       // 父目录 cid
+	PickCode string `json:"-"`         // 事件自带的 pick_code（有则零遍历直推 strm）
 	Size     int64  `json:"size"`      // 文件大小
 	Time     string `json:"time"`      // 发生时间
 }
@@ -135,6 +136,7 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 			FileID:   firstStr(d, "file_id", "fid"),
 			FileName: firstStr(d, "file_name", "n", "name"),
 			Cid:      firstStr(d, "cid", "pid", "parent_id"),
+			PickCode: firstStr(d, "pick_code", "pickcode", "pc"),
 			Time:     firstStr(d, "update_time", "time", "create_time"),
 		}
 		if s, ok := d["file_size"].(float64); ok {
@@ -365,6 +367,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		return nil, lastErr
 	}
 	var pending []model.SyncEvent
+	pickByEvent := map[string]string{} // 事件 id → pick_code（落库结构不含，本轮内存携带）
 	offset := 0
 	for {
 		events, err := fetchWithRetry(offset)
@@ -386,6 +389,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			if res.Error == nil && res.RowsAffected > 0 {
 				fresh++
 				pending = append(pending, se)
+				if ev.PickCode != "" {
+					pickByEvent[ev.ID] = ev.PickCode
+				}
 			}
 		}
 		sum.EventsFresh += fresh
@@ -440,6 +446,14 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	dirSet := map[string]bool{}
+	// 零遍历清单：事件自带 pick_code 时直接用事件数据生成 strm，
+	// 不再重遍历受影响目录（CMS 同款；无 pick_code 的事件回退 dirSet 遍历）
+	type preciseFile struct {
+		ev model.SyncEvent
+	}
+	var precise []preciseFile
+	fallbackDir := func(cid string) { dirSet[cid] = true }
+
 	for _, ev := range pending {
 		switch ev.Type {
 		case evUpload, evReceive, evCopy:
@@ -451,10 +465,14 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				continue
 			}
 			if isMedia(ev.FileName) {
-				dirSet[ev.Cid] = true
 				sum.Relevant++
+				if pickByEvent[ev.EventID] != "" && ev.Cid != "" && ev.FileID != "" {
+					precise = append(precise, preciseFile{ev: ev})
+				} else {
+					fallbackDir(ev.Cid)
+				}
 			} else if ev.FileID != "" && ev.Cid == "" {
-				dirSet[ev.FileID] = true
+				fallbackDir(ev.FileID)
 				sum.Relevant++
 			}
 		case evNewFolder, evCopyFolder:
@@ -489,12 +507,16 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 			sum.Structural++
 		case evMove, evMoveImage, evRename:
-			// 移动/改名：清理旧位置（台账/路径推导），新位置由目录重遍历重建
+			// 移动/改名：清理旧位置（台账/路径推导），新位置精确重建或回退遍历
 			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
 				sum.Moved++
 			}
 			if ev.Cid != "" && scopeOf(ev.Cid) == "library" {
-				dirSet[ev.Cid] = true // 移入媒体库才重建；移入已存在/冗余只清理本地
+				if pickByEvent[ev.EventID] != "" && ev.FileID != "" && isMedia(ev.FileName) {
+					precise = append(precise, preciseFile{ev: ev}) // 移入媒体库：事件直推重建
+				} else {
+					fallbackDir(ev.Cid)
+				}
 			}
 			sum.Structural++
 		case evFolderRename:
@@ -513,6 +535,72 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		default:
 			sum.Structural++
 			log.Printf("[同步] ○ 未处理的事件: 类型=%s 文件=%s", ev.Type, ev.FileName)
+		}
+	}
+
+	// 本轮受影响的最浅目录（Emby 定向刷新用，传库根=全刷）；
+	// 零遍历直推与目录遍历两条路径共同维护
+	shallowest := ""
+	noteShallow := func(base string) {
+		if shallowest == "" || len(base) < len(shallowest) {
+			shallowest = base
+		}
+	}
+
+	// ---- 零遍历落盘：事件自带 pick_code 的精确处理（无目录遍历） ----
+	{
+		domain, format, keepExt, skipExist := h.getStrmConfig()
+		for _, pf := range precise {
+			ev := pf.ev
+			base, ok, err := get115RelPath(cookie, ev.Cid, p.Cid, memo)
+			if err != nil || !ok {
+				fallbackDir(ev.Cid) // 路径推导失败：回退目录遍历
+				continue
+			}
+			rel := path.Join(libName, base, ev.FileName)
+			f := remoteFile{
+				Fid:      ev.FileID,
+				Name:     ev.FileName,
+				Path:     path.Join(libName, base),
+				Size:     ev.Size,
+				PickCode: pickByEvent[ev.EventID],
+			}
+			ext := strings.ToLower(path.Ext(ev.FileName))
+			switch {
+			case filter.videoExts[ext]:
+				if err := writeStrm(p.LocalPath, domain, format, keepExt, skipExist, f); err != nil {
+					log.Printf("[同步] 零遍历 strm 失败 %s: %v", rel, err)
+					fallbackDir(ev.Cid)
+					continue
+				}
+				upsertSyncedFile(h.DB, f, rel+".strm", "video")
+				sum.StrmCreated++
+				sum.Videos++
+				noteShallow(path.Join(libName, base))
+			case filter.assetExts[ext]:
+				dst := filepath.Join(p.LocalPath, filepath.FromSlash(rel))
+				if _, serr := os.Stat(dst); serr == nil {
+					upsertSyncedFile(h.DB, f, rel, "asset")
+					sum.AssetsSkipped++
+				} else if u, hdrs, uerr := ops.downloadURLFull(f.PickCode, ""); uerr == nil {
+					if data, derr := downloadAssetBytes(u, hdrs, ops.cookieForDL()); derr == nil {
+						if _, werr := writeAssetBytes(f, p.LocalPath, data); werr == nil {
+							upsertSyncedFile(h.DB, f, rel, "asset")
+							sum.AssetsDownloaded++
+						} else {
+							sum.AssetsFailed++
+						}
+					} else {
+						sum.AssetsFailed++
+					}
+				} else {
+					sum.AssetsFailed++
+				}
+				noteShallow(path.Join(libName, base))
+			}
+		}
+		if len(precise) > 0 {
+			vlog("[同步] 零遍历模式: 事件直推 %d 个文件（回退目录遍历 %d 个）", len(precise), len(dirSet))
 		}
 	}
 
@@ -553,6 +641,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	// 逐目录遍历并立即落盘
 	domain, format, keepExt, skipExist := h.getStrmConfig()
 	for _, t := range uniqTargets {
+		noteShallow(t.base)
 		var videos, assets []remoteFile
 		if err := walk115Dir(ops, t.cid, path.Join(libName, t.base), &videos, &assets, filter, nil); err != nil {
 			log.Printf("[同步] 遍历目录失败 %s: %v，30 秒后重试一次", t.base, err)
@@ -587,7 +676,12 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	h.Config.SaveSetting("incr-last", fmt.Sprint(now.Unix()))
 
 	if sum.StrmCreated+sum.AssetsDownloaded+sum.Deleted+sum.Moved > 0 {
-		h.notifyEmbyRefresh(p.LocalPath)
+		// 定向刷新：传本轮受影响的最浅子目录（传库根会命中所有库=全刷）
+		refreshBase := p.LocalPath
+		if shallowest != "" {
+			refreshBase = filepath.Join(p.LocalPath, filepath.FromSlash(shallowest))
+		}
+		h.notifyEmbyRefresh(refreshBase)
 	}
 	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
 	if sum.EventsFresh == 0 && sum.StrmCreated == 0 && sum.AssetsDownloaded == 0 && sum.Deleted == 0 && sum.Moved == 0 {
