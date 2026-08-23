@@ -6,6 +6,8 @@ package api
 // 每分钟检查一次，命中且无同步任务运行时触发一次增量同步（CMS lift_sync_task 模式）。
 
 import (
+	"strmhub/internal/model"
+
 	"encoding/json"
 	"log"
 	"strconv"
@@ -113,6 +115,8 @@ func StartIncrScheduler(h *Handler) {
 			case <-stopCh:
 				return
 			}
+			h.pruneSyncEvents()
+
 			cron := h.loadIncrCron()
 			if cron == "" {
 				continue // 未配置调度
@@ -169,6 +173,22 @@ func StartIncrScheduler(h *Handler) {
 		}
 	}()
 	log.Println("[调度] 调度器已启动（cron 触发 自动整理+增量同步；全量同步仅手动）")
+}
+
+// pruneSyncEvents 清理 30 天前已应用的生活事件（每日一次）。
+// 事件表只增不减，长期运行会无限膨胀拖慢去重查询
+var lastPruneDay string
+
+func (h *Handler) pruneSyncEvents() {
+	today := time.Now().Format("2006-01-02")
+	if lastPruneDay == today {
+		return
+	}
+	lastPruneDay = today
+	res := h.DB.Where("status = ? AND created_at < ?", "applied", time.Now().AddDate(0, 0, -30)).Delete(&model.SyncEvent{})
+	if res.Error == nil && res.RowsAffected > 0 {
+		log.Printf("[系统] ○ 清理 %d 条 30 天前的已应用事件", res.RowsAffected)
+	}
 }
 
 // nextCronTime 计算给定时刻之后下一次 cron 触发时间

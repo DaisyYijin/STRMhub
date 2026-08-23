@@ -89,50 +89,59 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		return
 	}
 
-	// 2. 文件列表（顶层，收全部）
-	snapBody, err := httpPostForm115("https://webapi.115.com/share/snap",
-		url.Values{
-			"share_code":  {shareCode},
-			"receive_code": {req.Code},
-			"cid":         {"0"},
-			"offset":      {"0"},
-			"limit":       {"1150"},
-			"asc":         {"1"},
-			"fc_mix":      {"0"},
-		}, cookie, 15*time.Second)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "获取分享文件列表失败: " + err.Error()})
-		return
+	// 2. 文件列表（顶层收全部；1150/页翻页收取——此前只取第一页，
+	// 超过 1150 项的分享被静默截断收不全）
+	type snapItem struct {
+		Fid  string `json:"fid"`
+		Fn   string `json:"fn"`
+		Fc   int    `json:"fc"`
+		Cid  string `json:"cid"`
 	}
-	var snap struct {
-		State bool `json:"state"`
-		Error string `json:"error"`
-		Data  struct {
-			List []struct {
-				Fid  string `json:"fid"`
-				Fn  string `json:"fn"`
-				Fc  int    `json:"fc"`
-				Cid string `json:"cid"`
-			} `json:"list"`
-		} `json:"data"`
+	var allItems []snapItem
+	for offset := 0; ; offset += 1150 {
+		snapBody, err := httpPostForm115("https://webapi.115.com/share/snap",
+			url.Values{
+				"share_code":  {shareCode},
+				"receive_code": {req.Code},
+				"cid":         {"0"},
+				"offset":      {fmt.Sprint(offset)},
+				"limit":       {"1150"},
+				"asc":         {"1"},
+				"fc_mix":      {"0"},
+			}, cookie, 15*time.Second)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "获取分享文件列表失败: " + err.Error()})
+			return
+		}
+		var snap struct {
+			State bool `json:"state"`
+			Error string `json:"error"`
+			Data  struct {
+				List []snapItem `json:"list"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
+			log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120)})
+			return
+		}
+		allItems = append(allItems, snap.Data.List...)
+		if len(snap.Data.List) < 1150 {
+			break // 最后一页
+		}
 	}
-	if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
-		log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120)})
-		return
-	}
-	if len(snap.Data.List) == 0 {
+	if len(allItems) == 0 {
 		c.JSON(http.StatusOK, gin.H{"message": "分享为空", "count": 0})
 		return
 	}
-	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", info.Data.ShareTitle, len(snap.Data.List))
+	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", info.Data.ShareTitle, len(allItems))
 
 	// 3. sharepost 拿 pick_code
 	form := url.Values{
 		"share_code":  {shareCode},
 		"receive_code": {req.Code},
 	}
-	for i, f := range snap.Data.List {
+	for i, f := range allItems {
 		form.Set(fmt.Sprintf("file_id[%d]", i), f.Fid)
 	}
 	postBody, err := httpPostForm115("https://webapi.115.com/share/sharepost", form, cookie, 20*time.Second)

@@ -181,13 +181,14 @@ func classifyLink(raw string) string {
 	}
 }
 
-// triggerOrganizeAndSync 转存后自动「整理+增量同步」（整理优先，增量收尾）
-func (h *Handler) triggerOrganizeAndSync() {
+// triggerOrganizeAndSync 转存后自动「整理+增量同步」（整理优先，增量收尾）。
+// 返回是否真正执行（false = 因互斥锁被其他任务占用而跳过）
+func (h *Handler) triggerOrganizeAndSync() bool {
 	time.Sleep(3 * time.Second)
 
 	if !fullSyncMu.TryLock() {
 		log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中）")
-		return
+		return false
 	}
 	defer fullSyncMu.Unlock()
 	beginTask("自动整理+增量（转存触发）")
@@ -236,10 +237,11 @@ func (h *Handler) triggerOrganizeAndSync() {
 	sum, err := h.executeIncrementalSync(p)
 	if err != nil {
 		log.Printf("[上传] ✗ 自动增量同步失败: %v", err)
-		return
+		return true
 	}
 	log.Printf("[上传] ✅ 自动整理+增量完成，耗时 %s · STRM %d，附属 %d",
 		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
+	return true
 }
 
 // StartTransferWatcher 转存目录守望者：每分钟检查转存目录，发现内容且
@@ -249,11 +251,16 @@ func (h *Handler) triggerOrganizeAndSync() {
 func StartTransferWatcher(h *Handler) {
 	go func() {
 		lastTrigger := time.Time{}
+		failCount := 0    // 整理后目录仍未清空的连续次数
+		pauseUntil := time.Time{}
 		for {
 			select {
 			case <-stopCh:
 				return
 			case <-time.After(60 * time.Second):
+			}
+			if time.Now().Before(pauseUntil) {
+				continue // 熔断暂停中
 			}
 			if time.Since(lastTrigger) < 5*time.Minute {
 				continue
@@ -272,8 +279,25 @@ func StartTransferWatcher(h *Handler) {
 			}
 			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
 			log.Printf("[守望] ⚑ 转存目录有 %d 个条目，触发自动整理+增量", len(entries))
-			h.triggerOrganizeAndSync()
+			ran := h.triggerOrganizeAndSync()
 			lastTrigger = time.Now()
+			if !ran {
+				continue // 其他任务占用，本轮不计成败
+			}
+			// 整理后复查：目录清空 = 成功；仍有条目 = 一轮失败。
+			// 连续 3 次失败（如整理反复报错/内容无法处理）后暂停 30 分钟，
+			// 避免每 5 分钟无限重试刷日志
+			if remaining, _, rerr := ops.listEntries(cid, 0); rerr == nil && len(remaining) == 0 {
+				failCount = 0
+			} else {
+				failCount++
+				log.Printf("[守望] ○ 整理后转存目录仍有内容（第 %d 次未清空）", failCount)
+				if failCount >= 3 {
+					pauseUntil = time.Now().Add(30 * time.Minute)
+					log.Printf("[守望] ⚠ 连续 %d 次未能清空转存目录，暂停守望 30 分钟（请查看整理日志定位失败原因）", failCount)
+					failCount = 0
+				}
+			}
 		}
 	}()
 }
