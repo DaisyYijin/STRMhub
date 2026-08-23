@@ -389,3 +389,31 @@ tr:hover td { background: var(--fill-1); }
 .acc-line { margin: 2px 0; }
 .acc-bar-wrap { height: 6px; background: var(--bg, #f0f1f2); border-radius: 3px; overflow: hidden; margin: 6px 0 2px; }
 .acc-bar { height: 100%; background: linear-gradient(90deg, var(--primary, #4f6ef2), #6a8dff); border-radius: 3px; transition: width .4s; }
+
+/* ==================== YAML 编辑器高亮 ==================== */
+/* 透明文本域叠在着色层上：textarea 接收输入（文字透明、光标可见），
+   底层 pre 按词法着色，滚动同步。零依赖，离线可用 */
+.yaml-wrap { position: relative; }
+.yaml-wrap .yaml-ta {
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  font-size: 13px; line-height: 1.55; tab-size: 2;
+  padding: 10px 12px; white-space: pre; overflow: auto; word-wrap: normal;
+  background: transparent; color: transparent; caret-color: #7aa2f7;
+  position: relative; z-index: 2; display: block; width: 100%;
+  border: 1px solid var(--border, #d0d5dd); border-radius: 8px;
+  outline: none;
+}
+.yaml-wrap .yaml-hl {
+  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  font-size: 13px; line-height: 1.55; tab-size: 2;
+  padding: 10px 12px; white-space: pre; overflow: hidden; word-wrap: normal;
+  margin: 0; position: absolute; inset: 0; z-index: 1;
+  pointer-events: none; background: transparent;
+  border: 1px solid transparent;
+}
+.y-k { color: #7aa2f7; }            /* 键名：蓝 */
+.y-p { color: #89ddff; }            /* 冒号/横杠：青 */
+.y-s { color: #9ece6a; }            /* 字符串：绿 */
+.y-n { color: #bb9af7; }            /* 数字/布尔：紫 */
+.y-c { color: #8b93a7; font-style: italic; } /* 注释：灰 */
+.y-d { color: #f7768e; }            /* 列表横杠：红粉 */
