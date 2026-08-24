@@ -24,8 +24,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -X main
 # 运行阶段：最小镜像
 FROM alpine:latest
 
-# 安装 ca-certificates（TLS 证书）和 时区数据
-RUN apk --no-cache add ca-certificates tzdata
+# 安装 ca-certificates（TLS 证书）、时区数据、ffmpeg（媒体信息探测/未来字幕抽取）
+RUN apk --no-cache add ca-certificates tzdata ffmpeg
 
 WORKDIR /app
 

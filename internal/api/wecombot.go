@@ -135,6 +135,7 @@ func (h *Handler) wecomHandleCommand(text string) {
 			"搜索 <片名> — TMDB 搜片",
 			"整理 — 立即执行一次整理",
 			"同步 — 立即执行一次增量同步",
+			"补全 — 扫描缺画质信息的文件，探测后规范命名",
 		)
 
 	case strings.HasPrefix(text, "下载"), strings.HasPrefix(lower, "dl "):
@@ -199,6 +200,16 @@ func (h *Handler) wecomHandleCommand(text string) {
 			lines = append(lines, r)
 		}
 		reply(lines...)
+
+	case lower == "补全" || lower == "enrich":
+		go func() {
+			if _, _, err := h.executeEnrichScan(); err != nil {
+				NotifyMessage("🤖 StrmHub", "✗ 补全扫描失败: "+err.Error())
+			} else {
+				NotifyMessage("🤖 StrmHub", "✓ 补全扫描完成，任务已入队（详见日志）")
+			}
+		}()
+		reply("已开始扫描媒体库，缺画质信息的文件将入队探测。")
 
 	case lower == "整理":
 		go func() {

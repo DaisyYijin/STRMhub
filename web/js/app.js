@@ -1765,6 +1765,16 @@ async function loadConfigs() {
   }));
 }
 
+// ==================== 媒体信息补全 ====================
+async function enrichScan(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api('/enrich/scan', { method: 'POST' });
+    toast(`扫描完成：共 ${data.total_videos} 个视频，${data.queued} 个缺画质信息已入队探测`);
+  } catch (e) { toast(e.message); }
+  if (btn) btn.disabled = false;
+}
+
 // ==================== 115 离线任务面板 ====================
 let offlineTaskTimer = null;
 function fmtSize(n) {

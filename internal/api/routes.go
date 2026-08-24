@@ -59,6 +59,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 元数据回传（本地媒体树的 poster/nfo → 115 对应目录）
 	StartMetadataUploader(h)
 
+	// 媒体信息补全队列（ffprobe 探测 → 规范重命名）
+	StartEnrichWorker(h)
+
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 
@@ -173,6 +176,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/scrape/categories", h.ListCategories)
 		protected.POST("/scrape/categories", h.SaveCategories)
 		protected.POST("/strm/cleanup", h.OrphanCleanup)
+
+		// 媒体信息补全（探测队列）
+		protected.POST("/enrich/scan", h.EnrichQueueAll)
+		protected.GET("/enrich/list", h.EnrichList)
 
 		// 版本号与日志级别
 		protected.GET("/version", func(c *gin.Context) {

@@ -157,3 +157,38 @@ func TestIsStandardMediaImageName(t *testing.T) {
 		}
 	}
 }
+
+func TestEnrichHelpers(t *testing.T) {
+	// 需要探测：分辨率与编码都缺失
+	for _, n := range []string{"蜘蛛侠.2016.mkv", "movie.mp4"} {
+		if !enrichNeedsProbe(n) {
+			t.Errorf("%s 应判定为需要补全", n)
+		}
+	}
+	// 不需要：已有分辨率或编码
+	for _, n := range []string{
+		"蜘蛛侠.2016.1080p.mkv",
+		"Movie.2020.H265.mkv",
+		"剧 - S01E01.1080p.WEB-DL.H264.DDP.mkv",
+	} {
+		if enrichNeedsProbe(n) {
+			t.Errorf("%s 不应判定为需要补全", n)
+		}
+	}
+	// 探测结果映射
+	if got := pixFromHeight(1080); got != "1080p" {
+		t.Errorf("pixFromHeight(1080)=%s", got)
+	}
+	if got := pixFromHeight(2160); got != "2160p" {
+		t.Errorf("pixFromHeight(2160)=%s", got)
+	}
+	if got := videoCodecLabel("hevc"); got != "H265" {
+		t.Errorf("videoCodecLabel(hevc)=%s", got)
+	}
+	if got := audioCodecLabel("eac3", 6); got != "DDP" {
+		t.Errorf("audioCodecLabel(eac3,6)=%s", got)
+	}
+	if got := audioCodecLabel("eac3", 8); got != "DDP.Atmos" {
+		t.Errorf("audioCodecLabel(eac3,8)=%s", got)
+	}
+}

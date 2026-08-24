@@ -164,6 +164,20 @@ type SyncedFile struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// MediaEnrich 补全任务：文件名缺分辨率/编码等信息，用 ffprobe 探测
+// 115 直链头部后按模板重新命名（蜘蛛侠.2016.mkv → 规范名）
+type MediaEnrich struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	FileID    string    `json:"file_id" gorm:"index;size:64"`            // 115 文件 id
+	PickCode  string    `json:"pick_code" gorm:"size:64"`                // 直链探测用
+	FileName  string    `json:"file_name" gorm:"size:255"`               // 当前文件名
+	Status    string    `json:"status" gorm:"size:20;default:"pending"`  // pending/done/failed/skipped
+	Message   string    `json:"message" gorm:"size:255"`                 // 结果说明
+	Attempts  int       `json:"attempts"`                                // 重试次数
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // SeenSha1 整理过程中见过的文件指纹（含广告/冗余/已存在去向）——
 // 发布站的广告包内容固定、反复投放，指纹进库后重复广告零成本秒判
 type SeenSha1 struct {
@@ -195,6 +209,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&CategoryRule{},
 		&WashRule{},
 		&SeenSha1{},
+		&MediaEnrich{},
 		&MediaLibrary{},
 		&SyncEvent{},
 		&SyncedFile{},
