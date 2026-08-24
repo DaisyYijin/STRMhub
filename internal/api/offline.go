@@ -354,6 +354,7 @@ func StartOfflineTaskMonitor(h *Handler) {
 					go h.triggerOrganizeAndSync()
 				case -1: // 失败
 					log.Printf("[离线] ✗ 磁力下载失败: %s（115 离线任务报错，请检查资源或重新提交）", truncateStr(t.name, 60))
+					go NotifyMessage("❌ 磁力下载失败", truncateStr(t.name, 120)+"\n（115 离线任务报错，请检查资源或重新提交）")
 					notified[key] = true
 				}
 			}

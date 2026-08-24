@@ -104,7 +104,7 @@ function showPage(id) {
     loadWash();
   }
   if (id === 'sync') { loadConfigs(); previewCron(); }
-  if (id === 'upload-download') loadConfigs();
+  if (id === 'upload-download') { loadConfigs(); startOfflineTaskPoll(); }
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
@@ -796,11 +796,11 @@ async function startFullSync() {
 // ==================== 同步记录 ====================
 async function loadRecords() {
   try {
-    const data = await api('/strm');
+    const data = await api('/strm?page=1&page_size=30');
     const tbody = document.getElementById('record-tbody');
     if (data.data && data.data.length) {
-      tbody.innerHTML = data.data.slice(0, 30).map(f => `<tr>
-        <td><input type="checkbox"></td><td>${f.local_path || '-'}</td><td>文件</td><td>${f.remote_path || '-'}</td><td>-</td>
+      tbody.innerHTML = data.data.map(f => `<tr>
+        <td><input type="checkbox"></td><td>${esc(f.rel_path || '-')}</td><td>${f.kind === 'video' ? 'STRM' : '附属'}</td><td>${esc(f.pick_code || '-')}</td><td>${fmtSize(f.size)}</td>
         <td><button class="btn btn-outline btn-sm">删除</button></td></tr>`).join('');
     } else {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-3)">暂无同步记录</td></tr>';
@@ -1762,6 +1762,80 @@ async function loadConfigs() {
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
   }));
+}
+
+// ==================== 115 离线任务面板 ====================
+let offlineTaskTimer = null;
+function fmtSize(n) {
+  if (!n || n <= 0) return '-';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v >= 100 || i === 0 ? 0 : 1) + ' ' + u[i];
+}
+async function loadOfflineTasks() {
+  const tbody = document.getElementById('offline-task-tbody');
+  if (!tbody) return;
+  try {
+    const data = await api('/offline/tasks');
+    const tasks = normalizeOfflineTasks(data.data);
+    if (!tasks.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-3)">暂无任务</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tasks.slice(0, 20).map(t => `<tr>
+      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.name)}">${esc(t.name)}</td>
+      <td>${t.statusLabel}</td>
+      <td>${fmtSize(t.size)}</td>
+    </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-3)">${esc(e.message)}</td></tr>`;
+  }
+}
+// 兼容 web 接口的多种响应形态（数组 / {tasks} / {list}，status 数字或文案）
+function normalizeOfflineTasks(raw) {
+  let arr = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (raw && Array.isArray(raw.tasks)) arr = raw.tasks;
+  else if (raw && Array.isArray(raw.list)) arr = raw.list;
+  const label = st => {
+    switch (String(st)) {
+      case '-1': return '<span style="color:#e74c3c">失败</span>';
+      case '0': return '<span style="color:#f0ad4e">排队中</span>';
+      case '1': return '<span style="color:#3273dc">下载中</span>';
+      case '2': return '<span style="color:#27ae60">已完成</span>';
+      default: return esc(String(st));
+    }
+  };
+  return arr.map(m => {
+    const o = m || {};
+    const st = o.status !== undefined ? o.status : (o.status_label || '');
+    const name = o.name || o.task_name || o.file_name || '(未命名)';
+    const size = Number(o.size || o.file_size || 0);
+    let statusLabel;
+    if (typeof st === 'number') statusLabel = label(st);
+    else {
+      const t = String(st);
+      if (/fail|失败/i.test(t)) statusLabel = label(-1);
+      else if (/完成|done/i.test(t)) statusLabel = label(2);
+      else if (/下载/i.test(t)) statusLabel = label(1);
+      else statusLabel = label(0);
+    }
+    return { name, statusLabel, size };
+  });
+}
+function startOfflineTaskPoll() {
+  stopOfflineTaskPoll();
+  loadOfflineTasks();
+  offlineTaskTimer = setInterval(() => {
+    const panel = document.getElementById('offline-task-tbody');
+    const tab = document.querySelector('[data-panel="ud-download"]');
+    if (!panel || !tab || !tab.classList.contains('active')) return;
+    loadOfflineTasks();
+  }, 30000);
+}
+function stopOfflineTaskPoll() {
+  if (offlineTaskTimer) { clearInterval(offlineTaskTimer); offlineTaskTimer = null; }
 }
 
 // ==================== YAML 编辑器高亮（透明文本域 + 着色层） ====================

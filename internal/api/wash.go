@@ -376,5 +376,6 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 		destLabel = "已存在"
 	}
 	onLog(fmt.Sprintf("✦ 洗版替换: %s 优于库内版本（%s），旧版已移到%s/洗版-旧版本", newName, libNames[0], destLabel))
+	go NotifyMessage("🔄 洗版替换", fmt.Sprintf("新版: %s\n旧版: %s\n旧版已移到%s/洗版-旧版本", truncateStr(newName, 80), truncateStr(libNames[0], 80), destLabel))
 	return washReplaced
 }

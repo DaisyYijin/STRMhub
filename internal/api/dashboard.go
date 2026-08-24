@@ -3,6 +3,9 @@ package api
 // ==================== 仪表盘 + 代理测试 ====================
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -54,8 +57,22 @@ func (h *Handler) TestProxyLatency(c *gin.Context) {
 func (h *Handler) DashboardEnhanced(c *gin.Context) {
 	// strm 统计
 	var strmTotal, strmInvalid, syncedFiles int64
-	h.DB.Model(&model.StrmFile{}).Count(&strmTotal)
-	h.DB.Model(&model.StrmFile{}).Where("status = ?", "invalid").Count(&strmInvalid)
+	var dashRecentVideos []model.SyncedFile
+	dashLocalRoot := defaultLocalPath
+	var dashFullCfg struct {
+		LocalPath string `json:"local_path"`
+	}
+	if json.Unmarshal([]byte(h.getSettingValue("full")), &dashFullCfg) == nil && dashFullCfg.LocalPath != "" {
+		dashLocalRoot = dashFullCfg.LocalPath
+	}
+	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Count(&strmTotal)
+	// 失效 STRM 真实口径：台账 video 行中本地 strm 文件已不存在的数量（有上限，防大库卡顿）
+	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Order("updated_at DESC").Limit(500).Find(&dashRecentVideos)
+	for _, sf := range dashRecentVideos {
+		if _, err := os.Stat(filepath.Join(dashLocalRoot, filepath.FromSlash(sf.RelPath))); err != nil {
+			strmInvalid++
+		}
+	}
 	h.DB.Model(&model.SyncedFile{}).Count(&syncedFiles)
 
 	// 整理记录

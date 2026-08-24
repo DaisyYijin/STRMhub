@@ -105,6 +105,7 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 		}
 		if json.NewDecoder(libResp.Body).Decode(&libs) == nil {
 			refreshed := 0
+			libNames := ""
 			for _, lib := range libs.Items {
 				hit := false
 				for _, loc := range lib.Locations {
@@ -124,8 +125,14 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 				r.Body.Close()
 				refreshed++
 				log.Printf("Emby 媒体库刷新任务提交成功：%s %s", lib.ID, lib.Name)
+				if libNames != "" {
+					libNames += "、"
+				}
+				libNames += lib.Name
 			}
 			if refreshed > 0 {
+				// 入库通知（Emby-notify 卡的消费方）：刷新已提交 = 内容即将入库
+				go NotifyMessage("🎬 媒体入库", "已刷新媒体库：" + libNames)
 				return
 			}
 			log.Printf("Emby 按库刷新：变更路径未命中任何媒体库（%s），回退路径通知", embyPath)

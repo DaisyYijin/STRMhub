@@ -357,7 +357,7 @@ func (h *Handler) AuthMiddleware() gin.HandlerFunc {
 func (h *Handler) Dashboard(c *gin.Context) {
 	// 统计数据
 	var strmCount int64
-	h.DB.Model(&model.StrmFile{}).Count(&strmCount)
+	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Count(&strmCount)
 
 	var storageCount int64
 	h.DB.Model(&model.Storage{}).Count(&storageCount)
@@ -776,8 +776,9 @@ func (h *Handler) CreateSyncTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": task, "message": "创建成功"})
 }
 
+// RunSyncTask/GetSyncLogs：任务编排功能未实现，返回明确错误而非假成功
 func (h *Handler) RunSyncTask(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "同步任务已启动（开发中）"})
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "任务编排功能规划中，请使用全量/增量同步按钮"})
 }
 
 func (h *Handler) GetSyncLogs(c *gin.Context) {
@@ -786,14 +787,24 @@ func (h *Handler) GetSyncLogs(c *gin.Context) {
 
 // ==================== STRM 管理（占位） ====================
 
+// ListStrmFiles 同步记录：查 SyncedFile 台账（此前查 StrmFile 表，
+// 无任何代码写入该表——页面永远"暂无同步记录"，现已改台账真实数据）
 func (h *Handler) ListStrmFiles(c *gin.Context) {
-	var files []model.StrmFile
-	query := h.DB.Model(&model.StrmFile{})
-	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
+	page, pageSize := 1, 30
+	if v := c.Query("page"); v != "" {
+		fmt.Sscanf(v, "%d", &page)
 	}
-	query.Find(&files)
-	c.JSON(http.StatusOK, gin.H{"data": files})
+	if v := c.Query("page_size"); v != "" {
+		fmt.Sscanf(v, "%d", &pageSize)
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 30
+	}
+	var total int64
+	h.DB.Model(&model.SyncedFile{}).Count(&total)
+	var files []model.SyncedFile
+	h.DB.Order("updated_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&files)
+	c.JSON(http.StatusOK, gin.H{"data": files, "total": total})
 }
 
 func (h *Handler) DeleteStrmFile(c *gin.Context) {
