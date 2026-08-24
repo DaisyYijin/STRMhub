@@ -666,17 +666,10 @@ av:
     <!-- 上传下载 -->
     <div class="page" id="page-upload-download">
       <div class="tabs">
-        <div class="tab active" data-tab="ud-upload" onclick="switchUDTab('ud-upload')">监控上传</div>
-        <div class="tab" data-tab="ud-download" onclick="switchUDTab('ud-download')">转存下载</div>
+        <div class="tab active" data-tab="ud-download" onclick="switchUDTab('ud-download')">转存下载</div>
+        <div class="tab" data-tab="ud-upload" onclick="switchUDTab('ud-upload')">监控上传</div>
       </div>
-      <div class="tab-panel active" data-panel="ud-upload">
-        <div class="card">
-          <div class="alert alert-info">监控上传：把 Emby 刮削生成的标准元数据回传 115 —— 监控目录填本地媒体库根目录（如 /media），自动检测新产生的标准图片（poster/fanart/banner/seasonXX-poster 等）与 NFO（tvshow/movie/season/每集同名 .nfo），按相对路径上传到 115 对应目录。</div>
-          <div class="form-row"><div class="label">监控目录</div><div class="control"><div class="form-inline-group"><input type="text" id="monitor-dir" placeholder="本地媒体库根目录（如 /media）" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('monitor-dir')">选择目录</button></div></div></div>
-                    <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
-        </div>
-      </div>
-      <div class="tab-panel" data-panel="ud-download">
+      <div class="tab-panel active" data-panel="ud-download">
         <div class="card">
           <div class="form-row"><div class="label">转存目录</div><div class="control"><div class="form-inline-group"><input type="text" id="share-folder" placeholder="转存/离线下载的目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('share-folder')">选择目录</button></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存目录</button></div></div>
@@ -922,7 +915,14 @@ av:
             <tr><td>115 文件夹清空</td><td>一键清空115指定文件夹（配合分享同步使用）</td><td><span class="badge badge-gray">规划中</span></td><td><button class="btn btn-outline btn-sm" disabled>暂未开放</button></td></tr>
           </tbody>
         </table>
+      </div><div class="tab-panel" data-panel="ud-upload">
+        <div class="card">
+          <div class="alert alert-info">监控上传：把 Emby 刮削生成的标准元数据回传 115 —— 监控目录填本地媒体库根目录（如 /media），自动检测新产生的标准图片（poster/fanart/banner/seasonXX-poster 等）与 NFO（tvshow/movie/season/每集同名 .nfo），按相对路径上传到 115 对应目录。</div>
+          <div class="form-row"><div class="label">监控目录</div><div class="control"><div class="form-inline-group"><input type="text" id="monitor-dir" placeholder="本地媒体库根目录（如 /media）" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('monitor-dir')">选择目录</button></div></div></div>
+                    <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
+        </div>
       </div>
+      
     </div>
   </div>
 </div>
@@ -959,6 +959,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=67"></script>
+<script src="/js/app.js?v=68"></script>
 </body>
 </html>

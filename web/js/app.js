@@ -719,6 +719,11 @@ function confirmDirPicker() {
     }
   } else {
     if (target) target.value = dirPicker.path || '/media';
+    // 本地目录选择即时生效：监控目录这类"选完即用"的配置自动保存，
+    // 避免忘记点保存导致刷新后丢失
+    if (dirPickerTarget === 'monitor-dir') {
+      saveConfig('monitor').then(() => toast('监控目录已保存')).catch(() => {});
+    }
   }
   closeDirPicker();
 }
