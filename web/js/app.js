@@ -818,9 +818,11 @@ function switchUDTab(tab) {
   document.querySelectorAll('#page-upload-download .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('#page-upload-download .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
 }
-let transferOrganizeVal = true;
-function setTransferOrganize(v) {
+let transferOrganizeVal = localStorage.getItem('transfer-organize') !== 'false';
+function setTransferOrganize(v, silent) {
   transferOrganizeVal = v;
+  localStorage.setItem('transfer-organize', v ? 'true' : 'false');
+  if (silent) return;
   document.querySelectorAll('#transfer-organize-switch .seg-item').forEach(el => {
     el.classList.toggle('active', String(el.dataset.value) === String(v));
   });

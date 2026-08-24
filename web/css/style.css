@@ -417,3 +417,11 @@ tr:hover td { background: var(--fill-1); }
 .y-n { color: #bb9af7; }            /* 数字/布尔：紫 */
 .y-c { color: #8b93a7; font-style: italic; } /* 注释：灰 */
 .y-d { color: #f7768e; }            /* 列表横杠：红粉 */
+
+/* 移动端：气泡提示改点击触发（无 hover）；控制宽度放宽利用屏幕 */
+@media (max-width: 768px) {
+  .help-tip:focus .tip-bubble { opacity: 1; visibility: visible; }
+  .help-tip .tip-bubble { width: 200px; left: 0; transform: none; }
+  .form-row .control { max-width: none; }
+  .form-row textarea { max-width: none; }
+}
