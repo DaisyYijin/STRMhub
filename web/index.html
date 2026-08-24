@@ -185,7 +185,32 @@
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
                 <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-outline" onclick="enrichScan(this)">扫描补全</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-outline" onclick="resetOrgRecords(this)" style="position:relative">重置整理记录</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
+        <div class="form-row"><div class="label">媒体补全</div><div class="control"><div class="segmented-control" id="enrich-enabled-switch">
+            <div class="seg-item active" data-value="false" onclick="setEnrichOpt('enabled', false)">关闭</div>
+            <div class="seg-item" data-value="true" onclick="setEnrichOpt('enabled', true)">开启</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">开启后：新整理文件名缺画质信息时自动探测；扫描补全按钮可用</span></div></div>
+          <div class="form-row"><div class="label">保守度</div><div class="control"><div class="segmented-control" id="enrich-mode-switch">
+            <div class="seg-item" data-value="conservative" onclick="setEnrichOpt('mode', 'conservative')">保守</div>
+            <div class="seg-item active" data-value="standard" onclick="setEnrichOpt('mode', 'standard')">标准</div>
+            <div class="seg-item" data-value="aggressive" onclick="setEnrichOpt('mode', 'aggressive')">激进</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">保守=只补缺失；标准=缺失+名实冲突按探测改（完整命名不动）；激进=完整命名冲突也改</span></div></div>
+          <div class="form-row"><div class="label">缺信息时</div><div class="control"><div class="segmented-control" id="enrich-missing-switch">
+            <div class="seg-item active" data-value="rename" onclick="setEnrichOpt('missing', 'rename')">补充</div>
+            <div class="seg-item" data-value="keep" onclick="setEnrichOpt('missing', 'keep')">保留</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">文件名无分辨率/编码、探测到了 → 是否补进文件名</span></div></div>
+          <div class="form-row"><div class="label">探测高于命名</div><div class="control"><div class="segmented-control" id="enrich-clow-switch">
+            <div class="seg-item active" data-value="rename" onclick="setEnrichOpt('clow', 'rename')">以探测为准</div>
+            <div class="seg-item" data-value="keep" onclick="setEnrichOpt('clow', 'keep')">保留命名</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">如命名 1080p 但实际是 2160p</span></div></div>
+          <div class="form-row"><div class="label">探测低于命名</div><div class="control"><div class="segmented-control" id="enrich-chigh-switch">
+            <div class="seg-item active" data-value="rename" onclick="setEnrichOpt('chigh', 'rename')">以探测为准</div>
+            <div class="seg-item" data-value="keep" onclick="setEnrichOpt('chigh', 'keep')">保留命名</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">如命名 2160p 但实际是 1080p（发布站冒充 4K）</span></div></div>
+          <div class="form-row"><div class="label">完整命名冲突</div><div class="control"><div class="segmented-control" id="enrich-full-switch">
+            <div class="seg-item active" data-value="keep" onclick="setEnrichOpt('full', 'keep')">保留</div>
+            <div class="seg-item" data-value="rename" onclick="setEnrichOpt('full', 'rename')">以探测为准</div>
+          </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">命名已含来源+发布组（专业组发布）但与探测冲突；跨 3 档差异始终保留并记录</span></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-outline" onclick="enrichScan(this)">扫描补全</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-outline" onclick="resetOrgRecords(this)" style="position:relative">重置整理记录</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
       </div>
     </div>
 
@@ -925,6 +950,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=65"></script>
+<script src="/js/app.js?v=66"></script>
 </body>
 </html>

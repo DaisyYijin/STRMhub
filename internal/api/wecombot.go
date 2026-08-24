@@ -202,6 +202,10 @@ func (h *Handler) wecomHandleCommand(text string) {
 		reply(lines...)
 
 	case lower == "补全" || lower == "enrich":
+		if !loadEnrichPolicy().Enabled {
+			reply("补全功能未开启（自动整理 → 基础配置 → 媒体补全）")
+			return
+		}
 		go func() {
 			if _, _, err := h.executeEnrichScan(); err != nil {
 				NotifyMessage("🤖 StrmHub", "✗ 补全扫描失败: "+err.Error())

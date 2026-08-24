@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type probeResult struct {
 	Pix       string // 1080p / 2160p ...
 	Video     string // H264 / H265
 	Audio     string // AAC / DDP / DTS...
+	Effect    string // HDR / DV（探测出 side_data 时标注）
 	Duration  int    // 秒
 	ProbedAt  time.Time
 }
@@ -50,6 +52,9 @@ func probeMediaInfo(directURL string) (*probeResult, error) {
 			Height       int    `json:"height"`
 			Channels     int    `json:"channels"`
 			Duration     string `json:"duration"`
+			SideDataList []struct {
+				SideDataType string `json:"side_data_type"`
+			} `json:"side_data_list"`
 		} `json:"streams"`
 		Format struct {
 			Duration string `json:"duration"`
@@ -66,6 +71,22 @@ func probeMediaInfo(directURL string) (*probeResult, error) {
 			videoFound = true
 			res.Pix = pixFromHeight(st.Height)
 			res.Video = videoCodecLabel(st.CodecName)
+			// HDR/DV 探测（side_data）：DV 优先于 HDR 标注
+			hasDV, hasHDR := false, false
+			for _, sd := range st.SideDataList {
+				t := strings.ToLower(sd.SideDataType)
+				if strings.Contains(t, "dolby") {
+					hasDV = true
+				}
+				if strings.Contains(t, "hdr") && !strings.Contains(t, "dolby") {
+					hasHDR = true
+				}
+			}
+			if hasDV {
+				res.Effect = "DV"
+			} else if hasHDR {
+				res.Effect = "HDR"
+			}
 		}
 		if st.CodecType == "audio" && !audioFound {
 			audioFound = true
@@ -197,17 +218,16 @@ func (h *Handler) enrichProcessOne() {
 		return
 	}
 
-	// 用探测结果生成规范名：原名基名 + 探测画质段 + 原扩展名
+	// 决策引擎：按八情形矩阵与用户策略决定 改名/跳过/存疑替换
 	ext := pathExt(task.FileName)
 	base := strings.TrimSuffix(task.FileName, ext)
-	newName := fmt.Sprintf("%s.%s.%s.%s%s", base, probe.Pix, probe.Video, probe.Audio, ext)
-	if probe.Pix == "" {
-		newName = fmt.Sprintf("%s.%s.%s%s", base, probe.Video, probe.Audio, ext)
-	}
-	if newName == task.FileName {
-		h.DB.Model(&task).Updates(map[string]interface{}{"status": "skipped", "message": "无可补充信息"})
+	action, reason := enrichDecide(task.FileName, probe, loadEnrichPolicy())
+	if action != "rename" {
+		h.DB.Model(&task).Updates(map[string]interface{}{"status": "skipped", "message": reason})
+		vlog("[补全] ○ %s: %s", task.FileName, reason)
 		return
 	}
+	newName := buildEnrichedName(base, ext, probe)
 
 	ops, err := h.newPan115Ops()
 	if err == nil {
@@ -287,6 +307,10 @@ func (h *Handler) EnrichQueueAll(c *gin.Context) {
 	beginTask("媒体补全扫描")
 	defer endTask()
 
+	if policy := loadEnrichPolicy(); !policy.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "补全功能未开启（自动整理 → 基础配置 → 媒体补全）"})
+		return
+	}
 	total, queued, err := h.executeEnrichScan()
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -306,4 +330,155 @@ func (h *Handler) EnrichList(c *gin.Context) {
 		counts[st] = n
 	}
 	c.JSON(http.StatusOK, gin.H{"data": tasks, "counts": counts})
+}
+
+
+// ---- 补全策略（UI 可配） ----
+
+// enrichPolicy 用户策略：各情形的处置（rename=按探测改 / keep=保留原名）
+type enrichPolicy struct {
+	Enabled bool   `json:"enabled"`  // 总开关（关闭时自动入队与扫描均不工作）
+	Mode    string `json:"mode"`     // conservative 保守 / standard 标准 / aggressive 激进
+	// 逐情形策略（空 = 跟随 mode 默认；rename/keep 二选一）
+	Missing      string `json:"missing"`       // 情形1：名缺+探测有 → 默认 rename
+	Match        string `json:"match"`         // 情形2：名实一致 → 固定 keep（不可改，展示用）
+	ConflictLow  string `json:"conflict_low"`  // 情形3：名1080探测2160 → 标准默认 rename
+	ConflictHigh string `json:"conflict_high"` // 情形4：名2160探测1080 → 标准默认 rename
+	ProbeFail    string `json:"probe_fail"`    // 情形5：名有+探测失败 → 固定 keep（探测都失败无从改）
+	FullNamed    string `json:"full_named"`    // 情形7：命名已完整 → 保守/标准默认 keep，激进 rename
+}
+
+// loadEnrichPolicy 读取补全策略（随 org-basic 配置存储于 enrich 字段；
+// 未配置=关闭+标准默认）
+func loadEnrichPolicy() enrichPolicy {
+	p := enrichPolicy{Enabled: false, Mode: "standard"}
+	v := modelSettingValue("org-basic")
+	if v == "" {
+		return p
+	}
+	var wrapped struct {
+		Enrich enrichPolicy `json:"enrich"`
+	}
+	if json.Unmarshal([]byte(v), &wrapped) != nil || wrapped.Enrich.Mode == "" && !wrapped.Enrich.Enabled {
+		return p
+	}
+	p = wrapped.Enrich
+	if p.Mode == "" {
+		p.Mode = "standard"
+	}
+	return p
+}
+
+// pixTier 分辨率档位（跨档防御用）：极端跳档视为探测可疑
+func pixTier(p string) int {
+	switch p {
+	case "2160p":
+		return 4
+	case "1080p":
+		return 3
+	case "720p":
+		return 2
+	case "480p":
+		return 1
+	}
+	return 0
+}
+
+// enrichDecide 决策矩阵。返回 action: rename/keep，reason 供日志与队列 message
+func enrichDecide(fileName string, probe *probeResult, policy enrichPolicy) (string, string) {
+	if probe == nil {
+		return "keep", "探测失败，保留原名"
+	}
+	ri := ParseResourceInfo(fileName)
+	claimedPix, probedPix := ri.Pix, probe.Pix
+
+	// 情形2：名实一致（pix 都有且相同）→ 跳过
+	if claimedPix != "" && probedPix != "" && claimedPix == probedPix {
+		return "keep", "名实相符"
+	}
+	// 情形1：名缺 + 探测有 → 补充
+	if claimedPix == "" && probedPix != "" {
+		if policy.Missing == "keep" {
+			return "keep", "策略：名缺不改（保守设置）"
+		}
+		return "rename", "补充缺失画质"
+	}
+	// 情形5/6：探测无结果 → 保留（声明是唯一信息）
+	if probedPix == "" {
+		return "keep", "探测无画质信息，保留原名"
+	}
+	// 情形3/4：名实冲突
+	if claimedPix != "" {
+		// 跨档防御：极端跳档（差 ≥2 档）视为探测可疑
+		ct, pt := pixTier(claimedPix), pixTier(probedPix)
+		if ct > 0 && pt > 0 && absInt(ct-pt) >= 2 {
+			return "keep", fmt.Sprintf("跨档差异过大（声明 %s 探测 %s），疑似探测异常，保留", claimedPix, probedPix)
+		}
+		// 完整命名（有来源+发布组）→ 情形7
+		if ri.Type != "" && ri.Team != "" {
+			if policy.FullNamed == "rename" || (policy.FullNamed == "" && policy.Mode == "aggressive") {
+				return "rename", fmt.Sprintf("完整命名但名实冲突（%s→%s），激进策略按探测改", claimedPix, probedPix)
+			}
+			return "keep", fmt.Sprintf("命名完整（%s），名实差异仅记录：%s vs %s", fileName, claimedPix, probedPix)
+		}
+		// 普通冲突：按配置/模式
+		action, label := policy.ConflictLow, "低报"
+		if pixTier(probedPix) < pixTier(claimedPix) {
+			action, label = policy.ConflictHigh, "高报"
+		}
+		if action == "" {
+			// 标准模式默认 rename（探测为事实）；保守模式 keep
+			if policy.Mode == "conservative" {
+				action = "keep"
+			} else {
+				action = "rename"
+			}
+		}
+		if action == "keep" {
+			return "keep", fmt.Sprintf("策略保留：名 %s 探测 %s（%s）", claimedPix, probedPix, label)
+		}
+		return "rename", fmt.Sprintf("名实冲突以探测为准（%s→%s，%s）", claimedPix, probedPix, label)
+	}
+	return "keep", "未归类情形，保守保留"
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// buildEnrichedName 重建规范名：保留原基名（含片名/集数/年份/来源/组等
+// 已有信息段），替换/追加探测画质段。原基名里已有的同位段先剔除再补
+func buildEnrichedName(base, ext string, probe *probeResult) string {
+	// 已有画质段中与探测冲突的部分（分辨率/编码）从基名剔除，其余保留
+	ri := ParseResourceInfo(base)
+	cleanBase := base
+	if ri.Pix != "" {
+		cleanBase = stripToken(cleanBase, ri.Pix)
+	}
+	if ri.VideoEncode != "" {
+		cleanBase = stripToken(cleanBase, ri.VideoEncode)
+	}
+	cleanBase = strings.Trim(cleanBase, " .-_")
+	var parts []string
+	for _, p := range []string{probe.Pix, probe.Effect, probe.Video, probe.Audio} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 {
+		return base + ext
+	}
+	return cleanBase + "." + strings.Join(parts, ".") + ext
+}
+
+// stripToken 从字符串中移除一个 token（含其紧邻的分隔符）
+func stripToken(s, token string) string {
+	if token == "" {
+		return s
+	}
+	re := regexp.MustCompile(`(?i)[.\s_-]*` + regexp.QuoteMeta(token) + `[.\s_-]*`)
+	return re.ReplaceAllString(s, ".")
 }

@@ -1428,6 +1428,11 @@ function collectConfig(key) {
       existing_path: val('org-existing'),
       redundant: resolveCID('org-redundant'),
       redundant_path: val('org-redundant'),
+      enrich: {
+        enabled: enrichOpts.enabled, mode: enrichOpts.mode,
+        missing: enrichOpts.missing, conflict_low: enrichOpts.clow,
+        conflict_high: enrichOpts.chigh, full_named: enrichOpts.full
+      }
     };
   }
   if (key === 'org-recognize') {
@@ -1527,6 +1532,7 @@ function applyConfig(key, v) {
       el.dataset.path = shown;
       setVal(id, shown);
     });
+    if (v.enrich) loadEnrichOpts(v.enrich);
   } else if (key === 'org-recognize') {
     setVal('org-replace-rules', v.replace_rules);
     setVal('org-min-size', v.min_size);
@@ -1764,6 +1770,23 @@ async function loadConfigs() {
     } catch (e) {}
   }));
 }
+
+// ==================== 媒体信息补全配置 ====================
+const enrichOpts = { enabled: false, mode: 'standard', missing: 'rename', clow: 'rename', chigh: 'rename', full: 'keep' };
+function setEnrichOpt(key, v) {
+  enrichOpts[key] = v;
+  const map = { enabled: 'enrich-enabled-switch', mode: 'enrich-mode-switch', missing: 'enrich-missing-switch', clow: 'enrich-clow-switch', chigh: 'enrich-chigh-switch', full: 'enrich-full-switch' };
+  document.querySelectorAll('#' + map[key] + ' .seg-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.value === String(v));
+  });
+}
+function loadEnrichOpts(v) {
+  if (!v) return;
+  if (v.enabled !== undefined) setEnrichOpt('enabled', v.enabled === true || v.enabled === 'true');
+  ['mode', 'missing', 'clow', 'chigh', 'full'].forEach(k => { if (v[k]) setEnrichOpt(k, v[k]); });
+}
+// org-basic 保存时附带补全配置
+const _origCollectOrgBasic = null;
 
 // ==================== 媒体信息补全 ====================
 async function enrichScan(btn) {
