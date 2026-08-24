@@ -257,6 +257,114 @@ func monitorOnce(h *Handler) {
 	}
 }
 
+// metadataUploadNames 元数据回传监听的文件名（Emby 写入媒体目录的标准名）
+var metadataUploadNames = map[string]bool{
+	"poster.jpg": true, "poster.jpeg": true, "poster.png": true,
+	"fanart.jpg": true, "fanart.jpeg": true, "banner.jpg": true,
+	"tvshow.nfo": true, "movie.nfo": true, "season.nfo": true,
+}
+
+// StartMetadataUploader 元数据回传引擎：每 5 分钟扫描本地媒体树，
+// 把 Emby 写入的 poster/nfo/fanart 上传到 115 对应目录（按相对路径
+// 用 files/getid 定位）。与「监控上传」（Emby 图片目录→115）互补：
+// 这里针对的是媒体卷内、随剧集目录存放的元数据文件
+func StartMetadataUploader(h *Handler) {
+	go func() {
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(5 * time.Minute):
+			}
+			h.uploadMetadataOnce()
+		}
+	}()
+	log.Println("[元数据回传] 引擎已启动（每 5 分钟扫描媒体目录）")
+}
+
+// uploadMetadataOnce 单轮回传
+func (h *Handler) uploadMetadataOnce() {
+	local := defaultLocalPath
+	var fullCfg struct {
+		LocalPath string `json:"local_path"`
+		Cid       string `json:"cid"`
+	}
+	if json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg) == nil && fullCfg.LocalPath != "" {
+		local = fullCfg.LocalPath
+	}
+	if fullCfg.Cid == "" {
+		return // 未配置媒体库，无法定位云端目录
+	}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return
+	}
+	userid := cookieUserID(cookie)
+
+	// 库根绝对路径（云端目录定位用）
+	libAbs := absPathOf(cookie, fullCfg.Cid, map[string]dirInfo{})
+	if libAbs == "" {
+		return
+	}
+
+	// 扫描媒体树里的元数据文件（跳过已上传标记；用台账判定是否已在云端）
+	var files []string
+	filepath.WalkDir(local, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !metadataUploadNames[strings.ToLower(d.Name())] {
+			// 每集同名 nfo（xxx.mkv.nfo）也要回传
+			if !strings.HasSuffix(strings.ToLower(d.Name()), ".mkv.nfo") &&
+				!strings.HasSuffix(strings.ToLower(d.Name()), ".mp4.nfo") {
+				return nil
+			}
+		}
+		if metaUploadedMark[p] {
+			return nil
+		}
+		files = append(files, p)
+		return nil
+	})
+	if len(files) == 0 {
+		return
+	}
+	log.Printf("[元数据回传] 发现 %d 个待上传文件", len(files))
+
+	ok, fail := 0, 0
+	for _, f := range files {
+		rel, err := filepath.Rel(local, f)
+		if err != nil {
+			continue
+		}
+		relDir := filepath.ToSlash(filepath.Dir(rel))
+		targetAbs := strings.TrimSuffix(libAbs, "/") + "/" + relDir
+		cid, found := cloudPathCid(cookie, targetAbs)
+		if !found {
+			log.Printf("[元数据回传] ○ 云端目录不存在，跳过 %s（%s）", rel, targetAbs)
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if err := upload115File(cookie, parseI64(cid), userid, filepath.Base(f), data); err != nil {
+			fail++
+			log.Printf("[元数据回传] ✗ 失败 %s: %v", rel, err)
+			continue
+		}
+		metaUploadedMark[f] = true
+		ok++
+		log.Printf("[元数据回传] ✓ %s → %s", rel, targetAbs)
+	}
+	if ok+fail > 0 {
+		log.Printf("[元数据回传] 本轮完成: 成功 %d，失败 %d", ok, fail)
+	}
+}
+
+// metaUploadedMark 已回传路径标记（会话级）
+var metaUploadedMark = map[string]bool{}
+
 // cloudPathCid 按绝对路径查询 115 目录 cid（files/getid）
 func cloudPathCid(cookie, absPath string) (string, bool) {
 	body, err := httpGet115UA("https://webapi.115.com/files/getid",

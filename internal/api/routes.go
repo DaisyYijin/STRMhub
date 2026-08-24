@@ -56,6 +56,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 媒体卷宽松权限（存量补 chmod，异步）
 	h.RelaxedMediaPerms()
 
+	// 元数据回传（本地媒体树的 poster/nfo → 115 对应目录）
+	StartMetadataUploader(h)
+
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 
