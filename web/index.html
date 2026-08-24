@@ -169,6 +169,7 @@
       <div class="tabs">
         <div class="tab active" data-tab="basic">基础配置</div>
         <div class="tab" data-tab="recognize">识别规则</div>
+        <div class="tab" data-tab="enrich">媒体补全</div>
         <div class="tab" data-tab="gpt">GPT识别</div>
         <div class="tab" data-tab="rename">重命名策略</div>
         <div class="tab" data-tab="category">二级分类策略</div>
@@ -185,6 +186,24 @@
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
                 <div class="form-row"><div class="label">已存在文件夹<i class="help-tip">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-outline" onclick="resetOrgRecords(this)" style="position:relative">重置整理记录</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+      <!-- 识别规则 -->
+      <div class="tab-panel" data-panel="recognize">
+      <div class="card">
+        <div class="form-row"><div class="label">替换规则<i class="help-tip">?<span class="tip-bubble">识别前对视频文件名称进行字符串/正则替换，一行一个，格式：原文本=>替换后文本。</span></i></div><div class="control"><textarea id="org-replace-rules" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，格式：原文本=>替换后文本"></textarea></div></div>
+        <div class="form-row"><div class="label">发布组<i class="help-tip">?<span class="tip-bubble">用于扩展未收录的发布组名称，一行一个（已集成常见的 PT 发布组）。</span></i></div><div class="control"><textarea id="org-release-groups" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，如：WiKi"></textarea></div></div>
+        <div class="form-row"><div class="label">最小视频大小<i class="help-tip">?<span class="tip-bubble">单位 MB，小于该大小的视频文件跳过识别与整理，0 表示不限制。可过滤封面视频、广告等小文件。</span></i></div><div class="control"><input type="text" id="org-min-size" value="0"></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-recognize')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-recognize', this)" style="position:relative">重置配置</button></div></div>
+      </div>
+    </div>
+
+      <!-- 媒体补全 -->
+      <div class="tab-panel" data-panel="enrich">
+      <div class="alert alert-info">媒体补全：文件名缺分辨率/编码时（如 蜘蛛侠.2016.mkv），用 ffprobe 读取 115 直链头部探测真实画质（只拉几 MB，不下载全文件），按下方策略规范命名。探测是"事实"、命名为"声明"：默认只在缺失或名实冲突时修改；片名/集数/年份/来源/发布组等原有信息一律保留。</div>
+      <div class="card">
         <div class="form-row"><div class="label">媒体补全</div><div class="control"><div class="segmented-control" id="enrich-enabled-switch">
             <div class="seg-item active" data-value="false" onclick="setEnrichOpt('enabled', false)">关闭</div>
             <div class="seg-item" data-value="true" onclick="setEnrichOpt('enabled', true)">开启</div>
@@ -210,17 +229,7 @@
             <div class="seg-item active" data-value="keep" onclick="setEnrichOpt('full', 'keep')">保留</div>
             <div class="seg-item" data-value="rename" onclick="setEnrichOpt('full', 'rename')">以探测为准</div>
           </div><span style="font-size:12px;color:var(--text-3);margin-left:8px">命名已含来源+发布组（专业组发布）但与探测冲突；跨 3 档差异始终保留并记录</span></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-outline" onclick="enrichScan(this)">扫描补全</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-outline" onclick="resetOrgRecords(this)" style="position:relative">重置整理记录</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
-      </div>
-    </div>
-
-      <!-- 识别规则 -->
-      <div class="tab-panel" data-panel="recognize">
-      <div class="card">
-        <div class="form-row"><div class="label">替换规则<i class="help-tip">?<span class="tip-bubble">识别前对视频文件名称进行字符串/正则替换，一行一个，格式：原文本=>替换后文本。</span></i></div><div class="control"><textarea id="org-replace-rules" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，格式：原文本=>替换后文本"></textarea></div></div>
-        <div class="form-row"><div class="label">发布组<i class="help-tip">?<span class="tip-bubble">用于扩展未收录的发布组名称，一行一个（已集成常见的 PT 发布组）。</span></i></div><div class="control"><textarea id="org-release-groups" class="auto-resize" rows="1" oninput="autoResizeTextarea(this)" placeholder="一行一个，如：WiKi"></textarea></div></div>
-        <div class="form-row"><div class="label">最小视频大小<i class="help-tip">?<span class="tip-bubble">单位 MB，小于该大小的视频文件跳过识别与整理，0 表示不限制。可过滤封面视频、广告等小文件。</span></i></div><div class="control"><input type="text" id="org-min-size" value="0"></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-recognize')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-recognize', this)" style="position:relative">重置配置</button></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存策略</button> <button class="btn btn-outline" onclick="enrichScan(this)">扫描补全（存量库）</button></div></div>
       </div>
     </div>
 
@@ -950,6 +959,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=66"></script>
+<script src="/js/app.js?v=67"></script>
 </body>
 </html>
