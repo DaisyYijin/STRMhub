@@ -1479,7 +1479,7 @@ function collectConfig(key) {
     return { folder: resolveCID('share-folder'), folder_path: val('share-folder') };
   }
   if (key === 'monitor') {
-    return { dir: val('monitor-dir'), target: val('monitor-target') };
+    return { dir: val('monitor-dir') }; // 目标固定用全量同步的媒体库（target 字段已废弃）
   }
   return null;
 }
@@ -1572,7 +1572,6 @@ function applyConfig(key, v) {
     }
   } else if (key === 'monitor') {
     setVal('monitor-dir', v.dir);
-    setVal('monitor-target', v.target);
   }
 }
 

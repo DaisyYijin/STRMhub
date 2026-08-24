@@ -172,7 +172,8 @@ func StartMonitorUploader(h *Handler) {
 
 // monitorOnce 单轮扫描上传
 func monitorOnce(h *Handler) {
-	// 配置：监控目录 + 上传目标（目标为空时用全量同步的媒体库，按相对路径对应）
+	// 配置：仅需监控目录；上传目标固定为全量同步的媒体库（旧配置里的
+	// target 字段已废弃忽略——监控的是本地媒体树，目标自然是云端媒体库）
 	var cfg struct {
 		Dir    string `json:"dir"`
 		Target string `json:"target"`
@@ -183,6 +184,7 @@ func monitorOnce(h *Handler) {
 	if cfg.Dir == "" {
 		return // 未启用
 	}
+	_ = cfg.Target
 
 	cookie, err := h.get115Cookie()
 	if err != nil {
