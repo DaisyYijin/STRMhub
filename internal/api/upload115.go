@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -209,15 +210,19 @@ func monitorOnce(h *Handler) {
 		return
 	}
 
-	// 扫描监控目录中的图片文件（按修改时间新→旧，只处理最近 24h 内的）
+	// 扫描监控目录：Emby 刮削产物（标准图片命名 + NFO），只处理最近 24h 内的新文件
 	var imgs []string
 	cutoff := time.Now().Add(-24 * time.Hour)
 	filepath.WalkDir(cfg.Dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
+		name := strings.ToLower(d.Name())
 		ext := strings.ToLower(filepath.Ext(p))
-		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+		isImg := (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp") &&
+			isStandardMediaImageName(name)
+		isNfo := strings.HasSuffix(name, ".nfo")
+		if !isImg && !isNfo {
 			return nil
 		}
 		if info, err := d.Info(); err == nil && info.ModTime().After(cutoff) && !uploadedMark[p] {
@@ -229,7 +234,7 @@ func monitorOnce(h *Handler) {
 		return
 	}
 	sort.Strings(imgs)
-	log.Printf("[上传] 发现 %d 张新图片", len(imgs))
+	log.Printf("[上传] 发现 %d 个新刮削文件（图片+NFO）", len(imgs))
 
 	for _, img := range imgs {
 		rel, err := filepath.Rel(cfg.Dir, img)
@@ -269,6 +274,15 @@ var metadataUploadNames = map[string]bool{
 // 用 files/getid 定位）。与「监控上传」（Emby 图片目录→115）互补：
 // 这里针对的是媒体卷内、随剧集目录存放的元数据文件
 func StartMetadataUploader(h *Handler) {
+	// 监控上传（monitor 配置）已覆盖同一职责且更可配（目录自选）；
+	// 本引擎仅在监控目录未配置时作为兜底启用，避免双路重复上传
+	var mc struct {
+		Dir string `json:"dir"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("monitor")), &mc)
+	if mc.Dir != "" {
+		return // 监控上传已启用，兜底引擎休眠
+	}
 	go func() {
 		for {
 			select {
@@ -279,7 +293,7 @@ func StartMetadataUploader(h *Handler) {
 			h.uploadMetadataOnce()
 		}
 	}()
-	log.Println("[元数据回传] 引擎已启动（每 5 分钟扫描媒体目录）")
+	log.Println("[元数据回传] 兜底引擎已启动（未配置监控目录；每 5 分钟扫描媒体目录）")
 }
 
 // uploadMetadataOnce 单轮回传
@@ -364,6 +378,26 @@ func (h *Handler) uploadMetadataOnce() {
 
 // metaUploadedMark 已回传路径标记（会话级）
 var metaUploadedMark = map[string]bool{}
+
+// isStandardMediaImageName Emby/Jellyfin 标准媒体图片命名
+//（poster/fanart/banner/logo/clearart/disc…及 seasonXX-poster 等变体）
+func isStandardMediaImageName(lowerName string) bool {
+	base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(
+		strings.TrimSuffix(strings.TrimSuffix(lowerName, ".jpg"), ".jpeg"),
+		".png"), ".webp"), "")
+	for _, std := range []string{"poster", "fanart", "backdrop", "banner", "thumb",
+		"landscape", "logo", "clearlogo", "clearart", "disc", "discart", "folder"} {
+		if base == std || strings.HasPrefix(base, std+"-") || strings.HasSuffix(base, "-"+std) {
+			return true
+		}
+	}
+	// seasonXX-poster / season-specials-poster 变体
+	if regexp.MustCompile(`^season(\d{1,2}|specials)-.+`).MatchString(base) {
+		return true
+	}
+	// 剧集名-poster 等含分隔符的形态已由前后缀匹配覆盖
+	return false
+}
 
 // cloudPathCid 按绝对路径查询 115 目录 cid（files/getid）
 func cloudPathCid(cookie, absPath string) (string, bool) {

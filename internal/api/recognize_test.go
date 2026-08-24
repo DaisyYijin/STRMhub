@@ -141,3 +141,19 @@ func TestParseBracketEpisode(t *testing.T) {
 		t.Errorf("classifyFile(海报.png) 应为标准图片")
 	}
 }
+
+func TestIsStandardMediaImageName(t *testing.T) {
+	yes := []string{"poster.jpg", "fanart.jpg", "banner.png", "logo.jpg",
+		"season01-poster.jpg", "season-specials-poster.jpg", "clearart.png", "folder.jpg", "disc.png"}
+	no := []string{"随便截图.jpg", "IMG_20240101.jpg", "video.mkv", "tvshow.nfo"}
+	for _, n := range yes {
+		if !isStandardMediaImageName(n) {
+			t.Errorf("应识别为标准图片: %s", n)
+		}
+	}
+	for _, n := range no {
+		if isStandardMediaImageName(n) {
+			t.Errorf("不应识别为标准图片: %s", n)
+		}
+	}
+}

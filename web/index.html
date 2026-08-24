@@ -637,8 +637,8 @@ av:
       </div>
       <div class="tab-panel active" data-panel="ud-upload">
         <div class="card">
-          <div class="alert alert-info">监控上传：只上传 emby 生成的标准格式的媒体图片。</div>
-          <div class="form-row"><div class="label">监控目录</div><div class="control"><input type="text" id="monitor-dir" placeholder="emby 媒体图片所在目录"></div></div>
+          <div class="alert alert-info">监控上传：把 Emby 刮削生成的标准元数据回传 115 —— 监控目录填本地媒体库根目录（如 /media），自动检测新产生的标准图片（poster/fanart/banner/seasonXX-poster 等）与 NFO（tvshow/movie/season/每集同名 .nfo），按相对路径上传到 115 对应目录。</div>
+          <div class="form-row"><div class="label">监控目录</div><div class="control"><div class="form-inline-group"><input type="text" id="monitor-dir" placeholder="本地媒体库根目录（如 /media）" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('monitor-dir')">选择目录</button></div></div></div>
           <div class="form-row"><div class="label">上传目标目录</div><div class="control"><input type="text" id="monitor-target" placeholder="目标目录 cid（可选，默认用接收文件夹）"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
         </div>
@@ -926,6 +926,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=62"></script>
+<script src="/js/app.js?v=63"></script>
 </body>
 </html>
