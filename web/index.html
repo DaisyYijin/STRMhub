@@ -850,6 +850,9 @@ av:
           <div class="form-row"><div class="label">企业 ID</div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
           <div class="form-row"><div class="label">应用 Secret</div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
           <div class="form-row"><div class="label">Agent ID</div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
+          <div class="form-row"><div class="label">Token</div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
+          <div class="form-row"><div class="label">EncodingAESKey</div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
+          <div class="alert alert-info">机器人互动：企业微信后台「接收消息」填写 URL http://&lt;公网IP&gt;:6086/wecom/callback 及上面的 Token/AESKey，然后给应用发消息即可用指令（下载/状态/搜索/整理/同步/帮助）。</div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
         </div>
       </div>
@@ -923,6 +926,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=61"></script>
+<script src="/js/app.js?v=62"></script>
 </body>
 </html>

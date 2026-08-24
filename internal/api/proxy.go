@@ -55,6 +55,11 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 		c.JSON(200, gin.H{"status": "running", "port": cfg.ProxyPort})
 	})
 
+	// 企业微信机器人回调（无 JWT 鉴权：协议自带 Token 签名 + AES 加密验证）
+	botHandler := &Handler{DB: db, Config: cfg}
+	r.GET("/wecom/callback", botHandler.WecomCallback)
+	r.POST("/wecom/callback", botHandler.WecomCallback)
+
 	// 302 代理核心路由: /d/{pickcode} 或 /d/{pickcode}/{filename}
 	r.GET("/d/:pickcode", func(c *gin.Context) {
 		handleProxyRedirect(c, db, cfg)

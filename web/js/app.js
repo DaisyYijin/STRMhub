@@ -1415,7 +1415,7 @@ function collectConfig(key) {
   }
   if (key === 'message') {
     return {
-      wecom: { corp_id: val('msg-wecom-corp-id'), secret: val('msg-wecom-secret'), agent_id: val('msg-wecom-agent-id'), enabled: msgWecomEnabled },
+      wecom: { corp_id: val('msg-wecom-corp-id'), secret: val('msg-wecom-secret'), agent_id: val('msg-wecom-agent-id'), token: val('msg-wecom-token'), encoding_aes_key: val('msg-wecom-aes-key'), enabled: msgWecomEnabled },
       tg: { token: val('msg-tg-token'), chat_id: val('msg-tg-chat-id'), enabled: msgTgEnabled },
     };
   }
@@ -1506,6 +1506,8 @@ function applyConfig(key, v) {
       setVal('msg-wecom-corp-id', v.wecom.corp_id);
       setVal('msg-wecom-secret', v.wecom.secret);
       setVal('msg-wecom-agent-id', v.wecom.agent_id);
+      setVal('msg-wecom-token', v.wecom.token);
+      setVal('msg-wecom-aes-key', v.wecom.encoding_aes_key);
       setMsgEnabled('wecom', v.wecom.enabled === true || v.wecom.enabled === 'true');
     }
     if (v.tg) {

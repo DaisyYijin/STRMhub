@@ -23,12 +23,14 @@ type MessageConfig struct {
 	TG    TGConfig    `json:"tg"`
 }
 
-// WecomConfig 企业微信配置
+// WecomConfig 企业微信配置（Token/EncodingAESKey 为机器人回调验签解密用）
 type WecomConfig struct {
-	CorpID  string `json:"corp_id"`
-	Secret  string `json:"secret"`
-	AgentID string `json:"agent_id"`
-	Enabled any    `json:"enabled"`
+	CorpID         string `json:"corp_id"`
+	Secret         string `json:"secret"`
+	AgentID        string `json:"agent_id"`
+	Token          string `json:"token"`
+	EncodingAESKey string `json:"encoding_aes_key"`
+	Enabled        any    `json:"enabled"`
 }
 
 // TGConfig Telegram 配置
