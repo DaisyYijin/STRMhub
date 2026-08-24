@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=21">
+  <link rel="stylesheet" href="/css/style.css?v=22">
 </head>
 <body>
 
@@ -87,7 +87,7 @@
           <div class="form-row"><div class="label">本地媒体库目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">STRM 与附属文件（字幕/NFO/图片）的本地保存根目录。需与 Emby 媒体库路径一致（配合 EMBY 管理卡的路径映射）。</span></i></div><div class="control">
             <div class="form-inline-group"><input type="text" id="full-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker()">选择目录</button></div>
           </div></div>
-          <div class="form-row"><div class="label">视频文件后缀</div><div class="control">
+          <div class="form-row"><div class="label">视频文件后缀<i class="help-tip" tabindex="0">?<span class="tip-bubble">匹配这些后缀的文件视为视频，生成 STRM。</span></i></div><div class="control">
             <div class="tag-input" id="video-ext">
               <span class="tag" data-val="mp4">mp4<span class="tag-close" onclick="removeTag(this)">×</span></span>
               <span class="tag" data-val="mkv">mkv<span class="tag-close" onclick="removeTag(this)">×</span></span>
@@ -104,7 +104,7 @@
               <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="video-ext" onkeydown="addTag(event)">
             </div>
           </div></div>
-          <div class="form-row"><div class="label">媒体图片后缀</div><div class="control">
+          <div class="form-row"><div class="label">媒体图片后缀<i class="help-tip" tabindex="0">?<span class="tip-bubble">匹配这些后缀的图片下载到本地（poster 等 Emby 刮削用）。</span></i></div><div class="control">
             <div class="tag-input" id="image-ext">
               <span class="tag" data-val="jpg">jpg<span class="tag-close" onclick="removeTag(this)">×</span></span>
               <span class="tag" data-val="png">png<span class="tag-close" onclick="removeTag(this)">×</span></span>
@@ -113,7 +113,7 @@
               <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="image-ext" onkeydown="addTag(event)">
             </div>
           </div></div>
-          <div class="form-row"><div class="label">数据文件后缀</div><div class="control">
+          <div class="form-row"><div class="label">数据文件后缀<i class="help-tip" tabindex="0">?<span class="tip-bubble">匹配这些后缀的数据文件下载到本地（.nfo 始终包含）。</span></i></div><div class="control">
             <div class="tag-input" id="data-ext">
               <span class="tag" data-val="ass">ass<span class="tag-close" onclick="removeTag(this)">×</span></span>
               <span class="tag" data-val="srt">srt<span class="tag-close" onclick="removeTag(this)">×</span></span>
@@ -128,7 +128,7 @@
         <div class="card">
           <div class="alert alert-info">增量同步前需开启 115 生活 APP 中的最近（生活事件必须开启），且必须先执行一次全量同步。</div>
           <div class="form-row"><div class="label">增量同步 Cron<i class="help-tip" tabindex="0">?<span class="tip-bubble">标准 5 字段 cron（分 时 日 月 周）。命中时执行「自动整理→增量同步」流水线；全量同步仅手动触发。</span></i></div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *" oninput="previewCron()"></div></div>
-          <div class="form-row"><div class="label">最近运行</div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
+          <div class="form-row"><div class="label">最近运行<i class="help-tip" tabindex="0">?<span class="tip-bubble">最近 5 次定时任务的名称、开始时间与耗时，成功 ✓ 失败 ✗。</span></i></div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
 
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-outline" onclick="cleanupOrphanStrm()">清理孤儿</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
@@ -569,20 +569,20 @@ av:
 
         <div class="rename-group">
           <div class="rename-group-title"><span class="badge badge-blue">电影</span></div>
-          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-movie-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-movie-folder" class="rename-example"></code></div></div></div>
-          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-movie-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-movie-file" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-movie-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-movie-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-movie-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-movie-file" class="rename-example"></code></div></div></div>
         </div>
 
         <div class="rename-group">
           <div class="rename-group-title"><span class="badge badge-green">剧集</span></div>
-          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-tv-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-tv-folder" class="rename-example"></code></div></div></div>
-          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-tv-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{season_episode}<.{resource_pix}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-tv-file" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-tv-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-tv-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-tv-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{season_episode}<.{resource_pix}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-tv-file" class="rename-example"></code></div></div></div>
         </div>
 
         <div class="rename-group">
           <div class="rename-group-title"><span class="badge badge-amber">AV</span></div>
-          <div class="form-row"><div class="label">文件夹命名规则</div><div class="control"><textarea id="rename-av-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}</textarea><div class="rename-example-box">示例：<code id="ex-av-folder" class="rename-example"></code></div></div></div>
-          <div class="form-row"><div class="label">文件命名规则</div><div class="control"><textarea id="rename-av-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{num}-{title}<.{resource_pix}><.{resource_type}></textarea><div class="rename-example-box">示例：<code id="ex-av-file" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-av-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}</textarea><div class="rename-example-box">示例：<code id="ex-av-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。</span></i></div><div class="control"><textarea id="rename-av-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{num}-{title}<.{resource_pix}><.{resource_type}></textarea><div class="rename-example-box">示例：<code id="ex-av-file" class="rename-example"></code></div></div></div>
         </div>
 
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-rename')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-rename', this)" style="position:relative">重置配置</button></div></div>
@@ -675,7 +675,7 @@ av:
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存目录</button></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">链接</div><div class="control"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()"></div></div>
+          <div class="form-row"><div class="label">链接<i class="help-tip" tabindex="0">?<span class="tip-bubble">支持磁力 / ed2k / HTTP / 115 分享链接（需提取码），提交后自动整理入库。</span></i></div><div class="control"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()"></div></div>
           <div class="form-row"><div class="label">转存后整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后：转存/下载完成自动识别入库并生成 STRM（识别→分类→重命名→同步全流程）。</span></i></div><div class="control"><div class="segmented-control" id="transfer-organize-switch"><div class="seg-item active" data-value="true" onclick="setTransferOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="setTransferOrganize(false)">关闭</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
         </div>
@@ -802,11 +802,11 @@ av:
       <div class="tab-panel active" data-panel="strm">
         <div class="card">
           <div class="form-row"><div class="label"><span class="required-mark">*</span> STRM 直连域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">STRM 内直链的域名，需指向 302 代理端口（http://NAS_IP:6086）。播放时反代会按客户端实际访问地址自动改写，此项为兜底值。</span></i></div><div class="control"><input type="text" id="strm-domain" value="http://172.17.0.1:6060" oninput="updateStrmExample()"></div></div>
-          <div class="form-row"><div class="label">STRM 直连格式</div><div class="control"><div class="segmented-control" id="strm-format-switch"><div class="seg-item active" data-value="pick_code_name" onclick="setStrmFormat('pick_code_name')">pick_code_name</div><div class="seg-item" data-value="pick_code" onclick="setStrmFormat('pick_code')">pick_code</div></div></div></div>
-          <div class="form-row"><div class="label">保留文件后缀</div><div class="control"><div class="segmented-control" id="strm-ext-switch"><div class="seg-item active" data-value="true" onclick="setStrmExt(true)">是</div><div class="seg-item" data-value="false" onclick="setStrmExt(false)">否</div></div></div></div>
-          <div class="form-row"><div class="label">本地已存在时</div><div class="control"><div class="segmented-control" id="strm-exist-switch"><div class="seg-item active" data-value="overwrite" onclick="setStrmExist('overwrite')">覆盖</div><div class="seg-item" data-value="skip" onclick="setStrmExist('skip')">跳过</div></div></div></div>
+          <div class="form-row"><div class="label">STRM 直连格式<i class="help-tip" tabindex="0">?<span class="tip-bubble">pick_code_name = 直链带原文件名（播放器显示友好）；pick_code = 仅文件 ID（最短）。</span></i></div><div class="control"><div class="segmented-control" id="strm-format-switch"><div class="seg-item active" data-value="pick_code_name" onclick="setStrmFormat('pick_code_name')">pick_code_name</div><div class="seg-item" data-value="pick_code" onclick="setStrmFormat('pick_code')">pick_code</div></div></div></div>
+          <div class="form-row"><div class="label">保留文件后缀<i class="help-tip" tabindex="0">?<span class="tip-bubble">是 = 直链 ID 段带 .mkv 等后缀（播放器据 URL 识别容器格式）；否 = 纯 ID。</span></i></div><div class="control"><div class="segmented-control" id="strm-ext-switch"><div class="seg-item active" data-value="true" onclick="setStrmExt(true)">是</div><div class="seg-item" data-value="false" onclick="setStrmExt(false)">否</div></div></div></div>
+          <div class="form-row"><div class="label">本地已存在时<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地已有同名 STRM：覆盖 = 重新生成（推荐）；跳过 = 只生成一次。</span></i></div><div class="control"><div class="segmented-control" id="strm-exist-switch"><div class="seg-item active" data-value="overwrite" onclick="setStrmExist('overwrite')">覆盖</div><div class="seg-item" data-value="skip" onclick="setStrmExist('skip')">跳过</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('strm')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('strm', this)" style="position:relative">重置配置</button></div></div>
-          <div class="form-row"><div class="label">STRM 直链示例</div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);word-break:break-all;display:block;line-height:38px"></code></div></div>
+          <div class="form-row"><div class="label">STRM 直链示例<i class="help-tip" tabindex="0">?<span class="tip-bubble">按当前配置实时预览生成的直链样式，切换选项立即更新。</span></i></div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);word-break:break-all;display:block;line-height:38px"></code></div></div>
         </div>
       <div class="card">
         <div class="form-row"><div class="label">日志级别<i class="help-tip" tabindex="0">?<span class="tip-bubble">简洁模式隐藏过程日志（目录遍历/TMDB搜索/302请求/播放改写等），只留关键节点与异常，30 秒内生效。</span></i></div><div class="control"><div class="segmented-control" id="log-level-switch">
@@ -820,10 +820,10 @@ av:
       <!-- TMDB 配置 -->
       <div class="tab-panel" data-panel="tmdb">
         <div class="card">
-          <div class="form-row"><div class="label">API 域名</div><div class="control"><input type="text" id="tmdb-api-url" value="https://api.themoviedb.org"></div></div>
-          <div class="form-row"><div class="label">图片域名</div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
-          <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥</div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
-          <div class="form-row"><div class="label">语言</div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
+          <div class="form-row"><div class="label">API 域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API 地址，国内网络可换反代加速。</span></i></div><div class="control"><input type="text" id="tmdb-api-url" value="https://api.themoviedb.org"></div></div>
+          <div class="form-row"><div class="label">图片域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB 海报图片域名，可换反代加速。</span></i></div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API Key（themoviedb.org 注册获取），识别与搜片必填。</span></i></div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
+          <div class="form-row"><div class="label">语言<i class="help-tip" tabindex="0">?<span class="tip-bubble">中文优先返回中文片名与简介；英文返回原名。</span></i></div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button> <button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button> <span id="tmdb-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div></div>
         </div>
       </div>
@@ -831,7 +831,7 @@ av:
       <!-- 代理配置 -->
       <div class="tab-panel" data-panel="proxy">
         <div class="card">
-          <div class="form-row"><div class="label">代理地址</div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
+          <div class="form-row"><div class="label">代理地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">HTTP(S) 代理，用于访问 TMDB 等外网服务，格式 http://IP:端口，留空不代理。</span></i></div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button> <span id="proxy-test-result" style="font-size:13px"></span> <button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div></div>
         </div>
       </div>
@@ -839,26 +839,26 @@ av:
       <!-- EMBY 入库刷新 -->
       <div class="tab-panel active" data-panel="emby-manage">
         <div class="card">
-          <div class="form-row"><div class="label"><span class="required-mark">*</span> Emby 服务器地址</div><div class="control"><input type="text" id="emby-server-url" placeholder="如 http://192.168.1.100:8096"></div></div>
-          <div class="form-row"><div class="label">API 密钥</div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" style="font-size:13px;margin-left:8px"></span></div></div>
-          <div class="form-row"><div class="label">本地路径映射</div><div class="control"><input type="text" id="emby-path-mapping" placeholder="/media#/media（本地路径#Emby路径，#分隔）"></div></div>
-          <div class="form-row"><div class="label">入库时刷新</div><div class="control"><div class="segmented-control" id="emby-auto-refresh-switch"><div class="seg-item active" data-value="true" onclick="setEmbyAutoRefresh(true)">开启</div><div class="seg-item" data-value="false" onclick="setEmbyAutoRefresh(false)">关闭</div></div></div></div></div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> Emby 服务器地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 访问地址（StrmHub 容器内可达，如 http://172.17.0.1:8096）。6086 反代与此处配置联动。</span></i></div><div class="control"><input type="text" id="emby-server-url" placeholder="如 http://192.168.1.100:8096"></div></div>
+          <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 后台「设置 → API 密钥」生成，用于按库刷新与连接测试。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" style="font-size:13px;margin-left:8px"></span></div></div>
+          <div class="form-row"><div class="label">本地路径映射<i class="help-tip" tabindex="0">?<span class="tip-bubble">StrmHub 本地路径#Emby 路径（# 分隔）。刷新入库时把本地路径转换为 Emby 路径。</span></i></div><div class="control"><input type="text" id="emby-path-mapping" placeholder="/media#/media（本地路径#Emby路径，#分隔）"></div></div>
+          <div class="form-row"><div class="label">入库时刷新<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后 STRM 生成时自动通知 Emby 刷新对应媒体库（需上方 API 密钥）。</span></i></div><div class="control"><div class="segmented-control" id="emby-auto-refresh-switch"><div class="seg-item active" data-value="true" onclick="setEmbyAutoRefresh(true)">开启</div><div class="seg-item" data-value="false" onclick="setEmbyAutoRefresh(false)">关闭</div></div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby', this)" style="position:relative">重置配置</button></div></div>
         </div>
         <div class="alert alert-info">配置 Emby 连接后，整理入库时可自动刷新对应媒体库。路径映射用于将 StrmHub 的本地路径转换为 Emby 能识别的路径。</div>
       <div class="alert alert-info">用于 STRM 生成时通知 Emby 刷新入库；非必须，开启 Emby 实时监控也一样，此通知只是能更快入库。</div>
         <div class="card">
           <div class="form-row"><div class="label">路径替换规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">用于将 CMS 的路径转为 Emby 的路径，为空代表不需要转换。</span></i></div><div class="control"><input type="text" id="emby-refresh-path" value="/media#/media" oninput="testEmbyPath()"></div></div>
-          <div class="form-row"><div class="label">路径风格</div><div class="control"><div class="segmented-control" id="emby-refresh-style-switch"><div class="seg-item active" data-value="unix" onclick="setEmbyStyle('unix')">Unix 风格</div><div class="seg-item" data-value="windows" onclick="setEmbyStyle('windows')">Windows 风格</div></div></div></div>
+          <div class="form-row"><div class="label">路径风格<i class="help-tip" tabindex="0">?<span class="tip-bubble">通知 Emby 的路径分隔符：Unix（/）或 Windows（\），与 Emby 挂载方式一致。</span></i></div><div class="control"><div class="segmented-control" id="emby-refresh-style-switch"><div class="seg-item active" data-value="unix" onclick="setEmbyStyle('unix')">Unix 风格</div><div class="seg-item" data-value="windows" onclick="setEmbyStyle('windows')">Windows 风格</div></div></div></div>
           <div class="form-row"><div class="label">路径转换测试<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入一个 CMS 中的路径，下方显示转换后的 Emby 路径，一致则说明规则正确。</span></i></div><div class="control"><input type="text" id="emby-path-test-input" placeholder="如 /media/电影/钢铁侠.mkv" oninput="testEmbyPath()"><code id="emby-path-test-output" style="display:block;font-size:13px;color:var(--success);margin-top:6px;word-break:break-all"></code></div></div>
-          <div class="form-row"><div class="label">状态</div><div class="control"><div class="segmented-control" id="emby-refresh-enabled-switch"><div class="seg-item active" data-value="true" onclick="setEmbyEnabled(true)">启用</div><div class="seg-item" data-value="false" onclick="setEmbyEnabled(false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后 STRM 生成时发送刷新通知，禁用则静默。</span></i></div><div class="control"><div class="segmented-control" id="emby-refresh-enabled-switch"><div class="seg-item active" data-value="true" onclick="setEmbyEnabled(true)">启用</div><div class="seg-item" data-value="false" onclick="setEmbyEnabled(false)">禁用</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby-refresh')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby-refresh', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
       <div class="alert alert-info">在 emby 入库成功时进行消息通知，token 需要改为你自己的。</div>
         <div class="card">
-          <div class="form-row"><div class="label">Webhook 地址</div><div class="control"><input type="text" id="emby-notify-webhook" placeholder="Emby Webhook 地址"></div></div>
-          <div class="form-row"><div class="label">通知事件</div><div class="control">
+          <div class="form-row"><div class="label">Webhook 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby Webhook 插件生成的回调地址；也用于定位 Emby 服务器。</span></i></div><div class="control"><input type="text" id="emby-notify-webhook" placeholder="Emby Webhook 地址"></div></div>
+          <div class="form-row"><div class="label">通知事件<i class="help-tip" tabindex="0">?<span class="tip-bubble">勾选的事件类型推送到企微/TG。</span></i></div><div class="control">
             <span class="inline"><input type="checkbox" checked> 入库</span>
             <span class="inline"><input type="checkbox" checked> 删除</span>
             <span class="inline"><input type="checkbox" checked> 播放</span>
@@ -880,19 +880,19 @@ av:
       </div>
       <div class="tab-panel active" data-panel="msg-wecom">
         <div class="card">
-          <div class="form-row"><div class="label">企业 ID</div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
-          <div class="form-row"><div class="label">应用 Secret</div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
-          <div class="form-row"><div class="label">Agent ID</div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
-          <div class="form-row"><div class="label">Token</div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
-          <div class="form-row"><div class="label">EncodingAESKey</div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
+          <div class="form-row"><div class="label">企业 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">企业微信「我的企业」页的 CorpID（ww 开头）。</span></i></div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
+          <div class="form-row"><div class="label">应用 Secret<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的凭证，泄露后请在企微后台重置。</span></i></div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
+          <div class="form-row"><div class="label">Agent ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的数字 ID。</span></i></div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
+          <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 Token——机器人互动必填，仅发通知可不填。</span></i></div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
+          <div class="form-row"><div class="label">EncodingAESKey<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 43 位密钥——机器人互动必填。</span></i></div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
           <div class="alert alert-info">机器人互动：企业微信后台「接收消息」填写 URL http://&lt;公网IP&gt;:6086/wecom/callback 及上面的 Token/AESKey，然后给应用发消息即可用指令（下载/状态/搜索/整理/同步/帮助）。</div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
         </div>
       </div>
       <div class="tab-panel" data-panel="msg-tg">
         <div class="card">
-          <div class="form-row"><div class="label">Bot Token</div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
-          <div class="form-row"><div class="label">Chat ID</div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
+          <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
+          <div class="form-row"><div class="label">Chat ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram 目标会话 ID，向 @userinfobot 发消息可查到。</span></i></div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div></div></div></div>
         </div>
       </div>
@@ -960,6 +960,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=71"></script>
+<script src="/js/app.js?v=72"></script>
 </body>
 </html>
