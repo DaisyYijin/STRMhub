@@ -241,6 +241,41 @@ func vlog(format string, args ...interface{}) {
 	}
 }
 
+// RelaxedMediaPerms 媒体卷宽松权限模式：新建目录 0777、文件 0666（umask 只减不增，
+// 实际落地常见为 0755/0644），并在启动时对存量树补 chmod——Emby 等容器需往媒体
+// 目录写 poster/nfo（此前 0755 导致其 Permission denied，回退只存内部库）
+// RelaxedMediaPerms 对存量媒体树补宽松权限（幂等，异步执行不阻塞启动）
+func (h *Handler) RelaxedMediaPerms() {
+	local := defaultLocalPath
+	var fullCfg struct {
+		LocalPath string `json:"local_path"`
+	}
+	if json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg) == nil && fullCfg.LocalPath != "" {
+		local = fullCfg.LocalPath
+	}
+	go func() {
+		dirs, files := 0, 0
+		filepath.WalkDir(local, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if os.Chmod(p, 0o777) == nil {
+					dirs++
+				}
+			} else {
+				if os.Chmod(p, 0o666) == nil {
+					files++
+				}
+			}
+			return nil
+		})
+		if dirs+files > 0 {
+			log.Printf("[系统] ○ 媒体目录宽松权限已应用: %d 个目录 / %d 个文件（Emby 可写入 poster/nfo）", dirs, files)
+		}
+	}()
+}
+
 // orphanSafeExts 孤儿清理只碰这些后缀（strm 与附属），其他文件一律不动
 var orphanSafeExts = map[string]bool{
 	".strm": true, ".srt": true, ".ass": true, ".ssa": true, ".sub": true,
@@ -459,11 +494,11 @@ func upsertSyncedFile(db *gorm.DB, f remoteFile, relPath, kind string) {
 func writeAssetBytes(f remoteFile, localRoot string, data []byte) (string, error) {
 	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
 	dst := filepath.Join(dir, f.Name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return "", err
 	}
 	tmp := dst + ".part"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o666); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmp, dst); err != nil {
@@ -611,7 +646,7 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 
 	// 本地目录：保持网盘目录结构
 	dir := filepath.Join(localRoot, filepath.FromSlash(f.Path))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return err
 	}
 
@@ -625,6 +660,6 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 		}
 	}
 
-	return os.WriteFile(strmPath, []byte(streamURL), 0o644)
+	return os.WriteFile(strmPath, []byte(streamURL), 0o666)
 }
 
