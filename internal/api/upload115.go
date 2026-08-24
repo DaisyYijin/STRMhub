@@ -317,10 +317,16 @@ func (h *Handler) uploadMetadataOnce() {
 	}
 	userid := cookieUserID(cookie)
 
-	// 库根绝对路径（云端目录定位用）
+	// 库根绝对路径与库名（云端目录定位用）。
+	// 本地路径第一层是库名（STRM 结构特性），拼接云端绝对路径前要剥掉，
+	// 否则出现 /俱乐部/俱乐部/... 查不到目录（全部跳过）
 	libAbs := absPathOf(cookie, fullCfg.Cid, map[string]dirInfo{})
 	if libAbs == "" {
 		return
+	}
+	libName := ""
+	if info, err := get115DirInfo(cookie, fullCfg.Cid); err == nil {
+		libName = info.n
 	}
 
 	// 扫描媒体树里的元数据文件（跳过已上传标记；用台账判定是否已在云端）
@@ -354,7 +360,14 @@ func (h *Handler) uploadMetadataOnce() {
 			continue
 		}
 		relDir := filepath.ToSlash(filepath.Dir(rel))
-		targetAbs := strings.TrimSuffix(libAbs, "/") + "/" + relDir
+		// 剥掉本地路径的库名第一层，与云端库根对齐
+		if libName != "" {
+			relDir = strings.TrimPrefix(strings.TrimPrefix(relDir, libName), "/")
+		}
+		targetAbs := strings.TrimSuffix(libAbs, "/")
+		if relDir != "" && relDir != "." {
+			targetAbs += "/" + relDir
+		}
 		cid, found := cloudPathCid(cookie, targetAbs)
 		if !found {
 			log.Printf("[元数据回传] ○ 云端目录不存在，跳过 %s（%s）", rel, targetAbs)
