@@ -1795,6 +1795,55 @@ function loadEnrichOpts(v) {
 // org-basic 保存时附带补全配置
 const _origCollectOrgBasic = null;
 
+// ==================== 插件：一键创建 Emby 媒体库 ====================
+let embyLibItems = [];
+async function embyLibPreview() {
+  const box = document.getElementById('emby-lib-result');
+  box.style.display = 'block';
+  box.innerHTML = '扫描中...';
+  try {
+    const data = await api('/plugin/emby-libraries');
+    if (!data.emby_configured) {
+      box.innerHTML = '<span style="color:#e74c3c">未配置 Emby 服务器，请先在「系统配置 → EMBY 管理」填写地址与 API 密钥</span>';
+      return;
+    }
+    if (!data.data || !data.data.length) {
+      box.innerHTML = '未在媒体库根目录下发现分类目录（需要 根/分类/子目录 或 根/分类 结构）';
+      return;
+    }
+    embyLibItems = data.data.filter(x => !x.exists);
+    const existsCount = data.data.length - embyLibItems.length;
+    const rows = data.data.map(x => `<tr>
+      <td>${esc(x.name)}</td>
+      <td>${x.type_label}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.emby_path)}">${esc(x.emby_path)}</td>
+      <td>${x.exists ? '<span style="color:#f0ad4e">已存在</span>' : '<span style="color:#27ae60">将创建</span>'}</td>
+    </tr>`).join('');
+    box.innerHTML = `
+      <table style="font-size:12px">
+        <thead><tr><th>库名</th><th>类型</th><th>Emby 路径</th><th>状态</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
+        <button class="btn btn-primary btn-sm" ${embyLibItems.length ? '' : 'disabled'} onclick="embyLibCreate()">创建 ${embyLibItems.length} 个库</button>
+        <span style="color:var(--text-3)">${existsCount ? existsCount + ' 个已存在将跳过' : ''}</span>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = '<span style="color:#e74c3c">' + esc(e.message) + '</span>';
+  }
+}
+async function embyLibCreate() {
+  const box = document.getElementById('emby-lib-result');
+  box.innerHTML = '创建中...';
+  try {
+    const data = await api('/plugin/emby-libraries', { method: 'POST', body: JSON.stringify({ items: embyLibItems }) });
+    toast(data.message || '完成');
+    setTimeout(embyLibPreview, 500);
+  } catch (e) {
+    box.innerHTML = '<span style="color:#e74c3c">' + esc(e.message) + '</span>';
+  }
+}
+
 // ==================== 媒体信息补全 ====================
 async function enrichScan(btn) {
   if (btn) btn.disabled = true;

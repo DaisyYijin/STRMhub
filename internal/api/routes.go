@@ -181,6 +181,10 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/enrich/scan", h.EnrichQueueAll)
 		protected.GET("/enrich/list", h.EnrichList)
 
+		// 插件：一键创建 Emby 媒体库
+		protected.GET("/plugin/emby-libraries", h.EmbyLibrariesPreview)
+		protected.POST("/plugin/emby-libraries", h.EmbyLibrariesCreate)
+
 		// 版本号与日志级别
 		protected.GET("/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"version": buildVersion})

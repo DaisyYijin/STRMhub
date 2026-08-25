@@ -914,14 +914,38 @@ av:
 
     <!-- 扩展功能 -->
     <div class="page" id="page-config-extension">
-      <div class="card">
-        <table>
-          <thead><tr><th>插件</th><th>说明</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr><td>ALIST 同步</td><td>将 alist 网盘文件同步到本地生成 strm</td><td><span class="badge badge-gray">规划中</span></td><td><button class="btn btn-outline btn-sm" disabled>暂未开放</button></td></tr>
-            <tr><td>115 文件夹清空</td><td>一键清空115指定文件夹（配合分享同步使用）</td><td><span class="badge badge-gray">规划中</span></td><td><button class="btn btn-outline btn-sm" disabled>暂未开放</button></td></tr>
-          </tbody>
-        </table>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">
+        <!-- 卡片：一键创建 Emby 媒体库 -->
+        <div class="card" style="margin-bottom:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-size:20px">🎬</span>
+            <span style="font-weight:600">一键创建 Emby 媒体库</span>
+          </div>
+          <p style="font-size:13px;color:var(--text-3);line-height:1.6;flex:1">扫描本地媒体库的分类目录（如 /media/俱乐部/电影/国产剧），每个子目录建成一个同名 Emby 媒体库（库名=国产剧）。默认中文元数据、NFO 与图片保存到媒体文件夹。已存在的同名库自动跳过。</p>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="embyLibPreview()">扫描预览</button>
+          </div>
+          <div id="emby-lib-result" style="display:none;margin-top:12px;font-size:13px"></div>
+        </div>
+        <!-- 卡片：占位（规划中） -->
+        <div class="card" style="margin-bottom:0;display:flex;flex-direction:column;opacity:.75">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-size:20px">🗂️</span>
+            <span style="font-weight:600">ALIST 同步</span>
+            <span class="badge badge-gray">规划中</span>
+          </div>
+          <p style="font-size:13px;color:var(--text-3);line-height:1.6;flex:1">将 alist 网盘文件同步到本地生成 strm，接入更多网盘来源。</p>
+          <div style="margin-top:10px"><button class="btn btn-outline" disabled>暂未开放</button></div>
+        </div>
+        <div class="card" style="margin-bottom:0;display:flex;flex-direction:column;opacity:.75">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="font-size:20px">🧹</span>
+            <span style="font-weight:600">115 文件夹清空</span>
+            <span class="badge badge-gray">规划中</span>
+          </div>
+          <p style="font-size:13px;color:var(--text-3);line-height:1.6;flex:1">一键清空 115 指定文件夹（配合分享同步使用，清空转存目录等待下一批）。</p>
+          <div style="margin-top:10px"><button class="btn btn-outline" disabled>暂未开放</button></div>
+        </div>
       </div>
       
     </div>
@@ -960,6 +984,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=72"></script>
+<script src="/js/app.js?v=73"></script>
 </body>
 </html>
