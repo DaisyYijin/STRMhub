@@ -69,6 +69,34 @@ const PAGE_TITLES = {
   'logs': ['实时日志', '同步与整理操作的服务端与本地日志'],
 };
 
+// ==================== 前端路由（真实路径，与后端 NoRoute 回退 index.html 配合） ====================
+// 切换页面时地址栏变为 /sync、/plugins 等真实路径；直接访问/刷新/收藏/前进后退均可恢复。
+const PAGE_PATHS = {
+  'dashboard': '/',
+  'sync': '/sync',
+  'organize': '/organize',
+  'upload-download': '/upload-download',
+  'config-accounts': '/accounts',
+  'config-system': '/settings',
+  'config-message': '/message',
+  'logs': '/logs',
+  'config-extension': '/plugins',
+};
+const PATH_PAGES = Object.fromEntries(Object.entries(PAGE_PATHS).map(([p, path]) => [path, p]));
+
+function pathToPageId(path) { return PATH_PAGES[path] || null; }
+
+function syncRoute(id) {
+  const want = PAGE_PATHS[id] || '/';
+  if (location.pathname !== want) history.pushState(null, '', want);
+}
+
+// 浏览器前进/后退时按当前路径切页（showPage 内 syncRoute 不会再压栈）
+window.addEventListener('popstate', () => {
+  const id = pathToPageId(location.pathname);
+  if (id) showPage(id);
+});
+
 function showPage(id) {
   if (id === 'logs') {
     startLogPoll();
@@ -89,6 +117,8 @@ function showPage(id) {
   if (mobileTitle) mobileTitle.textContent = title[0];
   // 记住当前页面，刷新后恢复
   localStorage.setItem('current-page', id);
+  // 地址栏同步为真实路径（/sync、/plugins 等），可刷新/收藏/前进后退
+  syncRoute(id);
   // 移动端切页面后关闭侧边栏
   if (window.innerWidth <= 768) closeSidebar();
   // 加载对应数据
@@ -165,6 +195,10 @@ function showAuth(mode) {
   document.getElementById('auth-page').style.display = 'flex';
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('auth-mode').value = mode;
+  // 地址栏显示 /login；但保留深链接路径（如直接访问 /plugins）以便登录后跳回目标页
+  if (location.pathname === '/' || location.pathname === '/login') {
+    history.replaceState(null, '', '/login');
+  }
   const isReg = mode === 'register';
   document.getElementById('auth-heading').textContent = isReg ? '首次部署，注册管理员' : '请输入账号密码登录';
   document.getElementById('auth-submit').textContent = isReg ? '注册' : '登录';
@@ -176,9 +210,11 @@ function showMain() {
   document.getElementById('main-app').style.display = 'flex';
   loadVersion();
   loadLogLevel();
-  // 恢复上次停留的页面
+  // 优先按地址栏路径恢复（深链接 / 刷新），其次上次停留页面，默认仪表盘
+  const fromPath = pathToPageId(location.pathname);
   const saved = localStorage.getItem('current-page');
-  if (saved) showPage(saved);
+  const target = fromPath || (saved && document.getElementById('page-' + saved) ? saved : 'dashboard');
+  showPage(target);
 }
 
 async function handleAuth(e) {
@@ -2127,6 +2163,8 @@ window.addEventListener('DOMContentLoaded', () => {
   if (btnLogMobile) btnLogMobile.addEventListener('click', openLog);
   document.getElementById('btn-logout').addEventListener('click', () => {
     localStorage.clear();
+    // 跳到 /login：地址栏立即反映登出状态，登录后回到仪表盘
+    history.pushState(null, '', '/login');
     location.reload();
   });
   // 输入框自适应高度

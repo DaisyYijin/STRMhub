@@ -427,6 +427,10 @@ tr:hover td { background: var(--fill-1); }
 }
 
 /* ===================== 插件中心（参考 CMS 卡片设计） ===================== */
+/* 白色圆角大容器（对应 CMS 的 page-content），卡片网格放在其中 */
+.plugin-page-content { background: var(--white); border-radius: 16px; box-shadow: 0 1px 8px rgba(0,0,0,.05); padding: 32px; }
+@media (max-width: 1200px) { .plugin-page-content { padding: 24px; } }
+@media (max-width: 576px) { .plugin-page-content { padding: 20px 16px; border-radius: 12px; } }
 .plugin-content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--fill-2); }
 .plugin-section-title { display: flex; align-items: center; font-size: 18px; font-weight: 600; color: var(--text-1); }
 .plugin-section-title .section-icon { width: 4px; height: 18px; background: var(--primary); border-radius: 4px; margin-right: 10px; display: inline-block; }
