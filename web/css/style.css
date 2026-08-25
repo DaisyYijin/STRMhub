@@ -425,3 +425,69 @@ tr:hover td { background: var(--fill-1); }
   .form-row .control { max-width: none; }
   .form-row textarea { max-width: none; }
 }
+
+/* ===================== 插件中心（参考 CMS 卡片设计） ===================== */
+.plugin-content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--fill-2); }
+.plugin-section-title { display: flex; align-items: center; font-size: 18px; font-weight: 600; color: var(--text-1); }
+.plugin-section-title .section-icon { width: 4px; height: 18px; background: var(--primary); border-radius: 4px; margin-right: 10px; display: inline-block; }
+.plugin-rule-count { font-size: 13px; color: var(--text-3); margin-left: 14px; font-weight: 400; position: relative; top: 1px; }
+
+.rule-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+@media (max-width: 1400px) { .rule-container { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1200px) { .rule-container { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 576px) { .rule-container { grid-template-columns: 1fr; gap: 16px; } }
+
+.rule-card { border-radius: 8px; border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,.1); background: var(--white); display: flex; flex-direction: column; height: 100%; overflow: hidden; transition: all .3s cubic-bezier(.4,0,.2,1); position: relative; }
+.rule-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.12); border-color: #d9e1ff; }
+.rule-card.rule-card-active { border-color: #b5cdff; background-color: #fcfdff; }
+
+/* 右上角状态圆点：启用=绿色脉冲，未启用=灰色 */
+.card-status-badge { position: absolute; top: 14px; right: 14px; width: 10px; height: 10px; border-radius: 50%; background-color: #36b37e; z-index: 2; box-shadow: 0 0 0 2px rgba(255,255,255,.8); }
+.card-status-badge.inactive { background-color: var(--text-4); }
+.card-status-badge .status-dot { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.card-status-badge .status-dot.animated { animation: pluginPulse 2s infinite; }
+@keyframes pluginPulse {
+  0% { box-shadow: 0 0 0 0 rgba(54,179,126,.4); }
+  70% { box-shadow: 0 0 0 6px rgba(54,179,126,0); }
+  100% { box-shadow: 0 0 0 6px rgba(54,179,126,0); }
+}
+
+/* 卡片头：浅灰横条，标题左（启用时带蓝色竖条+蓝字），状态药丸右 */
+.rule-header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--fill-2); background-color: #fafafa; }
+.rule-title { font-size: 15px; font-weight: 600; color: var(--text-1); position: relative; padding-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 15px); }
+.rule-card-active .rule-title { color: var(--primary); }
+.rule-card-active .rule-title::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 3px; background-color: var(--primary); border-radius: 4px; }
+.rule-status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.status-text { font-size: 13px; font-weight: 500; color: var(--text-3); padding: 3px 5px; border-radius: 4px; background-color: var(--fill-2); box-shadow: 0 1px 2px rgba(0,0,0,.05); letter-spacing: .5px; white-space: nowrap; min-width: 60px; text-align: center; }
+.status-text.active { color: #36b37e; background-color: rgba(54,179,126,.15); border: 1px solid rgba(54,179,126,.2); }
+
+/* 描述区：行数截断，弹性填充保证同排卡片底边对齐 */
+.rule-content { font-size: 14px; color: var(--text-2); line-height: 1.6; padding: 20px 24px; overflow: hidden; flex: 1; }
+.rule-content p { margin: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; }
+
+/* 底部按钮组：两个等宽按钮 */
+.rule-footer { margin-top: auto; padding: 0 16px 16px; }
+.button-group { display: flex; gap: 12px; width: 100%; }
+.action-button { flex: 1; height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; transition: all .25s ease; cursor: pointer; font-family: inherit; }
+.action-button.config-button, .action-button.run-button { background-color: #f5f5f7; color: var(--text-2); border: 1px solid var(--border); }
+.action-button:hover:not(:disabled) { background-color: #edf2fc; color: var(--primary); border-color: #d6e4ff; box-shadow: 0 2px 6px rgba(22,93,255,.1); }
+.rule-card-active .action-button.config-button, .rule-card-active .action-button.run-button { background-color: #f0f6ff; border: 1px solid #d6e4ff; color: var(--primary); }
+.action-button:disabled { opacity: .55; cursor: not-allowed; }
+.action-button .btn-icon { font-size: 13px; transition: all .3s ease; }
+.action-button:hover:not(:disabled) .btn-icon.config-icon { transform: rotate(30deg); display: inline-block; }
+.action-button:hover:not(:disabled) .btn-icon.run-icon { transform: translateX(2px); display: inline-block; }
+
+/* 卡片内预览/结果面板（扫描预览表格） */
+.plugin-preview { border-top: 1px dashed var(--border); margin: 0 16px 14px; padding-top: 12px; font-size: 13px; max-height: 260px; overflow-y: auto; }
+.plugin-preview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.plugin-preview th, .plugin-preview td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--fill-2); }
+.plugin-preview th { color: var(--text-3); font-weight: 500; white-space: nowrap; }
+
+@media (max-width: 576px) {
+  .action-button { height: 38px; font-size: 13px; }
+  .rule-content { padding: 16px 20px; }
+  .rule-header { padding: 16px 20px 14px; }
+  .rule-status { gap: 8px; }
+  .plugin-section-title { font-size: 16px; }
+  .plugin-rule-count { margin-left: 10px; font-size: 12px; }
+}
