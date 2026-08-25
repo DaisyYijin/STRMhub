@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -54,6 +55,8 @@ func guessLibType(parentName, dirName string) (string, string) {
 
 // mapToEmbyPath 本地路径 → Emby 路径（复用 emby 配置的映射规则）
 func (h *Handler) mapToEmbyPath(local string) string {
+	// 统一为正斜杠再比较（Windows 下 filepath.Join 产生反斜杠）
+	local = strings.ReplaceAll(local, "\\", "/")
 	var embyCfg struct {
 		PathMapping string `json:"path_mapping"`
 	}
@@ -78,6 +81,7 @@ func (h *Handler) scanLibCandidates() ([]embyLibCandidate, error) {
 	if json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg) == nil && fullCfg.LocalPath != "" {
 		local = fullCfg.LocalPath
 	}
+	log.Printf("[插件] ○ Emby 建库扫描媒体根: %s", local)
 
 	var candidates []embyLibCandidate
 	// 第一层（电影/剧集/AV…）
@@ -143,6 +147,7 @@ func (h *Handler) embyServerInfo() (base, apiKey string, ok bool) {
 func (h *Handler) EmbyLibrariesPreview(c *gin.Context) {
 	cands, err := h.scanLibCandidates()
 	if err != nil {
+		log.Printf("[插件] ✗ Emby 建库扫描失败: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -150,11 +155,7 @@ func (h *Handler) EmbyLibrariesPreview(c *gin.Context) {
 	base, apiKey, ok := h.embyServerInfo()
 	existing := map[string]bool{}
 	if ok {
-		q := ""
-		if apiKey != "" {
-			q = "?api_key=" + url.QueryEscape(apiKey)
-		}
-		if resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + "/Library/MediaFolders" + q); err == nil {
+		if resp, err := embyRequest(http.MethodGet, base, apiKey, "/Library/MediaFolders", nil, nil); err == nil {
 			defer resp.Body.Close()
 			var libs struct {
 				Items []struct {
@@ -171,10 +172,92 @@ func (h *Handler) EmbyLibrariesPreview(c *gin.Context) {
 	for i := range cands {
 		cands[i].Exists = existing[cands[i].Name]
 	}
+	nExist := 0
+	for _, cd := range cands {
+		if cd.Exists {
+			nExist++
+		}
+	}
+	log.Printf("[插件] ○ Emby 建库扫描：发现 %d 个候选目录，%d 个已存在、%d 个待创建",
+		len(cands), nExist, len(cands)-nExist)
 	c.JSON(http.StatusOK, gin.H{"data": cands, "emby_configured": ok})
 }
 
+// embyLibOptions 生成默认库选项（中文元数据 + NFO/图片保存到媒体文件夹）
+func embyLibOptions(embyPath string) map[string]interface{} {
+	return map[string]interface{}{
+		"EnableRealtimeMonitor":         true,
+		"EnableInternetProviders":       true,
+		"SaveLocalMetadata":             true, // 元数据（NFO/图片）保存到媒体文件夹
+		"EnableAutomaticSeriesGrouping": false,
+		"DownloadImagesInAdvance":       false,
+		"MetadataOptions": map[string]interface{}{
+			"PreferredMetadataLanguage": "zh-CN", // 中文元数据
+			"MetadataCountryCode":       "CN",
+			"PreferredImageLanguage":    "zh-CN",
+			"MaxBackdrops":              10,
+			"MinBackdropWidth":          1920,
+		},
+		"PathInfos": []map[string]interface{}{
+			{"Path": embyPath},
+		},
+	}
+}
+
+// embyRequest 带 api_key 的请求构造
+func embyRequest(method, base, apiKey, path string, query url.Values, body []byte) (*http.Response, error) {
+	if apiKey != "" {
+		if query == nil {
+			query = url.Values{}
+		}
+		query.Set("api_key", apiKey)
+	}
+	u := base + path
+	if qs := query.Encode(); qs != "" {
+		u += "?" + qs
+	}
+	var rd io.Reader
+	if body != nil {
+		rd = strings.NewReader(string(body))
+	}
+	req, err := http.NewRequest(method, u, rd)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return (&http.Client{Timeout: 20 * time.Second}).Do(req)
+}
+
+// embyVirtualFolderIds 已有媒体库 名字 → ItemId（用于创建后固化库选项）
+func embyVirtualFolderIds(base, apiKey string) map[string]string {
+	resp, err := embyRequest(http.MethodGet, base, apiKey, "/Library/VirtualFolders", nil, nil)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var libs struct {
+		Items []struct {
+			Name   string `json:"Name"`
+			ItemID string `json:"ItemId"`
+		} `json:"Items"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&libs) != nil {
+		return nil
+	}
+	m := map[string]string{}
+	for _, it := range libs.Items {
+		m[it.Name] = it.ItemID
+	}
+	return m
+}
+
 // EmbyLibrariesCreate POST /plugin/emby-libraries —— 创建预览中不存在的库
+//
+// Emby 的建库接口从查询参数读取目录（paths），body 的 LibraryOptions
+// 只承载偏好设置；创建后再按 Emby Web 的保存流程调用
+// /Library/VirtualFolders/LibraryOptions 固化详细设置，确保目录与选项都生效。
 func (h *Handler) EmbyLibrariesCreate(c *gin.Context) {
 	base, apiKey, ok := h.embyServerInfo()
 	if !ok {
@@ -188,57 +271,57 @@ func (h *Handler) EmbyLibrariesCreate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	q := ""
-	if apiKey != "" {
-		q = "?api_key=" + url.QueryEscape(apiKey)
-	}
-	client := &http.Client{Timeout: 20 * time.Second}
 
+	log.Printf("[插件] ▶ Emby 建库开始：待创建 %d 个库", len(req.Items))
 	created, skipped := []string{}, []string{}
 	for _, it := range req.Items {
 		if it.EmbyPath == "" {
 			continue
 		}
-		// 默认库选项：中文元数据 + NFO/图片保存到媒体文件夹
-		options := map[string]interface{}{
-			"MetadataOptions": map[string]interface{}{
-				"PreferredMetadataLanguage": "zh-CN",
-				"MetadataCountryCode":       "cn",
-				"MaxBackdrops":              10,
-				"MinBackdropWidth":          1920,
-			},
-			"EnableInternetProviders":    true,
-			"SaveLocalMetadata":          true, // 元数据（NFO/图片）保存到媒体文件夹
-			"EnableAutomaticSeriesGrouping": false,
-			"PreferredImageLanguage":     "zh-CN",
-			"DownloadImagesInAdvance":    false,
-			"PathInfos": []map[string]interface{}{
-				{"Path": it.EmbyPath},
-			},
-		}
+		options := embyLibOptions(it.EmbyPath)
 		body, _ := json.Marshal(options)
-		api := base + "/Library/VirtualFolders" + q +
-			"&name=" + url.QueryEscape(it.Name) +
-			"&collectionType=" + it.Type +
-			"&refreshLibrary=false"
-		req2, _ := http.NewRequest(http.MethodPost, api, strings.NewReader(string(body)))
-		req2.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req2)
+
+		// 1) 创建库：目录放查询参数 paths（Emby 从这里读取媒体文件夹）
+		q := url.Values{}
+		q.Set("name", it.Name)
+		q.Set("collectionType", it.Type)
+		q.Add("paths", it.EmbyPath)
+		q.Set("refreshLibrary", "false")
+		resp, err := embyRequest(http.MethodPost, base, apiKey, "/Library/VirtualFolders", q, body)
 		if err != nil {
+			log.Printf("[插件] ✗ 建库请求失败: %s（%v）", it.Name, err)
 			skipped = append(skipped, it.Name+"（请求失败）")
 			continue
 		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode >= 400 {
+			log.Printf("[插件] ✗ 建库失败: %s（HTTP %d）", it.Name, resp.StatusCode)
 			skipped = append(skipped, fmt.Sprintf("%s（HTTP %d）", it.Name, resp.StatusCode))
 			continue
 		}
+
+		// 2) 固化详细设置（Emby Web 的保存流程）：按库名取 ItemId 后提交 LibraryOptions
+		if ids := embyVirtualFolderIds(base, apiKey); ids[it.Name] != "" {
+			q2 := url.Values{}
+			q2.Set("id", ids[it.Name])
+			q2.Set("refreshLibrary", "false")
+			if resp2, err := embyRequest(http.MethodPost, base, apiKey, "/Library/VirtualFolders/LibraryOptions", q2, body); err == nil {
+				io.Copy(io.Discard, resp2.Body)
+				resp2.Body.Close()
+				if resp2.StatusCode >= 400 {
+					log.Printf("[插件] ○ 库选项固化失败: %s（HTTP %d，库已创建）", it.Name, resp2.StatusCode)
+				}
+			}
+		}
+		log.Printf("[插件] ✅ 建库成功: %s（%s · %s · 路径 %s · 中文元数据/NFO 本地保存）",
+			it.Name, it.TypeLabel, it.Type, it.EmbyPath)
 		created = append(created, it.Name)
 	}
 	msg := fmt.Sprintf("创建 %d 个媒体库", len(created))
 	if len(skipped) > 0 {
 		msg += fmt.Sprintf("，失败 %d 个: %s", len(skipped), strings.Join(skipped, "、"))
 	}
+	log.Printf("[插件] ✅ Emby 建库结束：%s", msg)
 	c.JSON(http.StatusOK, gin.H{"message": msg, "created": created, "skipped": skipped})
 }

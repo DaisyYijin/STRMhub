@@ -1833,13 +1833,12 @@ const _origCollectOrgBasic = null;
 
 // ==================== 插件：一键创建 Emby 媒体库 ====================
 let embyLibItems = [];
-function renderEmbyLibPreview(data) {
-  const box = document.getElementById('emby-lib-result');
+function renderEmbyLibTable(data, box, withCreateButton) {
   const existsCount = data.data.length - embyLibItems.length;
   const rows = data.data.map(x => `<tr>
     <td>${esc(x.name)}</td>
     <td>${x.type_label}</td>
-    <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.emby_path)}">${esc(x.emby_path)}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.emby_path)}">${esc(x.emby_path)}</td>
     <td>${x.exists ? '<span style="color:#f0ad4e">已存在</span>' : '<span style="color:#27ae60">将创建</span>'}</td>
   </tr>`).join('');
   box.innerHTML = `
@@ -1848,29 +1847,43 @@ function renderEmbyLibPreview(data) {
       <tbody>${rows}</tbody>
     </table>
     <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
-      <button class="btn btn-primary btn-sm" ${embyLibItems.length ? '' : 'disabled'} onclick="embyLibCreate()">创建 ${embyLibItems.length} 个库</button>
+      ${withCreateButton ? `<button class="btn btn-primary btn-sm" ${embyLibItems.length ? '' : 'disabled'} onclick="embyLibCreate()">创建 ${embyLibItems.length} 个库</button>` : ''}
       <span style="color:var(--text-3)">${existsCount ? existsCount + ' 个已存在将跳过' : ''}</span>
     </div>`;
+  const mbtn = document.getElementById('emby-lib-create-btn');
+  if (mbtn) { mbtn.disabled = !embyLibItems.length; mbtn.textContent = `创建 ${embyLibItems.length} 个库`; }
 }
-async function embyLibPreview() {
-  const box = document.getElementById('emby-lib-result');
-  box.style.display = 'block';
+// kind: 'modal'（配置规则弹窗）| 'panel'（立即运行结果面板）
+async function embyLibScanTo(kind) {
+  const box = document.getElementById(kind === 'modal' ? 'emby-lib-modal-body' : 'emby-lib-result');
   box.innerHTML = '扫描中...';
   try {
     const data = await api('/plugin/emby-libraries');
     if (!data.emby_configured) {
       box.innerHTML = '<span style="color:#e74c3c">未配置 Emby 服务器，请先在「系统配置 → EMBY 管理」填写地址与 API 密钥</span>';
-      return;
+      return false;
     }
     if (!data.data || !data.data.length) {
       box.innerHTML = '未在媒体库根目录下发现分类目录（需要 根/分类/子目录 或 根/分类 结构）';
-      return;
+      return false;
     }
     embyLibItems = data.data.filter(x => !x.exists);
-    renderEmbyLibPreview(data);
+    renderEmbyLibTable(data, box, kind !== 'modal');
+    return true;
   } catch (e) {
     box.innerHTML = '<span style="color:#e74c3c">' + esc(e.message) + '</span>';
+    return false;
   }
+}
+function embyLibConfig() {
+  document.getElementById('emby-lib-modal').style.display = 'flex';
+  embyLibScanTo('modal');
+}
+function embyLibScanAgain() { embyLibScanTo('modal'); }
+function closeEmbyLibModal() { document.getElementById('emby-lib-modal').style.display = 'none'; }
+async function embyLibPreview() {
+  document.getElementById('emby-lib-result').style.display = 'block';
+  await embyLibScanTo('panel');
 }
 async function embyLibRun() {
   const box = document.getElementById('emby-lib-result');
@@ -1879,17 +1892,8 @@ async function embyLibRun() {
   box.innerHTML = '扫描中...';
   if (btn) btn.disabled = true;
   try {
-    const data = await api('/plugin/emby-libraries');
-    if (!data.emby_configured) {
-      box.innerHTML = '<span style="color:#e74c3c">未配置 Emby 服务器，请先在「系统配置 → EMBY 管理」填写地址与 API 密钥</span>';
-      return;
-    }
-    if (!data.data || !data.data.length) {
-      box.innerHTML = '未在媒体库根目录下发现分类目录（需要 根/分类/子目录 或 根/分类 结构）';
-      return;
-    }
-    embyLibItems = data.data.filter(x => !x.exists);
-    renderEmbyLibPreview(data);
+    const ok = await embyLibScanTo('panel');
+    if (!ok) return;
     if (!embyLibItems.length) { toast('没有需要创建的媒体库，全部已存在'); return; }
     if (!confirm(`将创建 ${embyLibItems.length} 个 Emby 媒体库（${embyLibItems.map(x => x.name).join('、')}），确认执行？`)) return;
     await embyLibCreate();
@@ -1900,15 +1904,19 @@ async function embyLibRun() {
   }
 }
 async function embyLibCreate() {
-  const box = document.getElementById('emby-lib-result');
-  box.innerHTML = '创建中...';
+  const inModal = document.getElementById('emby-lib-modal').style.display !== 'none';
+  const target = document.getElementById(inModal ? 'emby-lib-modal-body' : 'emby-lib-result');
+  target.innerHTML = '创建中...';
+  const mbtn = document.getElementById('emby-lib-create-btn');
+  if (mbtn) mbtn.disabled = true;
   try {
     const data = await api('/plugin/emby-libraries', { method: 'POST', body: JSON.stringify({ items: embyLibItems }) });
     toast(data.message || '完成');
-    setTimeout(embyLibPreview, 500);
   } catch (e) {
-    box.innerHTML = '<span style="color:#e74c3c">' + esc(e.message) + '</span>';
+    target.innerHTML = '<span style="color:#e74c3c">' + esc(e.message) + '</span>';
+    return;
   }
+  setTimeout(() => embyLibScanTo(inModal ? 'modal' : 'panel'), 600);
 }
 
 // ==================== 媒体信息补全 ====================

@@ -929,7 +929,7 @@ av:
           <div class="rule-content"><p>扫描本地媒体库的分类目录（如 /媒体库/电影/国产剧），每个二级子目录建成一个同名 Emby 媒体库（库名=子目录名）。默认中文元数据、NFO 与图片保存到媒体文件夹，已存在的同名库自动跳过。</p></div>
           <div class="plugin-preview" id="emby-lib-result" style="display:none"></div>
           <div class="rule-footer"><div class="button-group">
-            <button class="action-button config-button" onclick="embyLibPreview()"><span class="btn-icon config-icon">⚙</span><span>扫描预览</span></button>
+            <button class="action-button config-button" onclick="embyLibConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
             <button class="action-button run-button" id="emby-lib-run-btn" onclick="embyLibRun()"><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
           </div></div>
         </div>
@@ -997,6 +997,21 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=74"></script>
+<!-- Emby 建库配置弹窗 -->
+<div class="modal-mask" id="emby-lib-modal" style="display:none">
+  <div class="modal" style="max-width:680px">
+    <h3>一键创建 Emby 媒体库 · 配置规则</h3>
+    <p style="font-size:13px;margin-bottom:10px">扫描媒体库根目录下的分类子目录，<b>库名=子目录名</b>，类型按目录名推断（电影/剧集/音乐/混合）。创建时自动应用：媒体文件夹路径（含 EMBY 管理卡的路径映射）、中文元数据（zh-CN）、NFO 与图片保存到媒体文件夹。</p>
+    <div id="emby-lib-modal-body" style="font-size:13px;max-height:48vh;overflow-y:auto">扫描中...</div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="embyLibScanAgain()">重新扫描</button>
+      <span class="spacer"></span>
+      <button class="btn btn-outline" onclick="closeEmbyLibModal()">关闭</button>
+      <button class="btn btn-primary" id="emby-lib-create-btn" disabled onclick="embyLibCreate()">创建 0 个库</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/app.js?v=75"></script>
 </body>
 </html>
