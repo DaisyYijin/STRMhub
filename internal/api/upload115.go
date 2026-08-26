@@ -150,7 +150,35 @@ func ossPut(init uploadInitResp, tk struct {
 
 // ==================== 监控上传引擎 ====================
 
-var uploadedMark = map[string]bool{} // 已上传文件路径（进程内标记，避免重复上传）
+// fileStamp 已上传文件的指纹（修改时间+大小）。Emby 重新刮削会覆盖同名
+// poster/nfo，指纹随之变化，下一轮扫描即检测到并重新上传（内容未变则
+// 115 秒传命中，不会产生重复文件）。
+type fileStamp struct {
+	modTime time.Time
+	size    int64
+}
+
+func stampOf(d os.DirEntry) (fileStamp, bool) {
+	info, err := d.Info()
+	if err != nil {
+		return fileStamp{}, false
+	}
+	return fileStamp{modTime: info.ModTime(), size: info.Size()}, true
+}
+
+func stampOfPath(p string) (fileStamp, bool) {
+	info, err := os.Stat(p)
+	if err != nil {
+		return fileStamp{}, false
+	}
+	return fileStamp{modTime: info.ModTime(), size: info.Size()}, true
+}
+
+func (a fileStamp) same(b fileStamp) bool {
+	return a.size == b.size && a.modTime.Equal(b.modTime)
+}
+
+var uploadedState = map[string]fileStamp{} // 监控上传：已上传文件指纹（会话级）
 
 // StartMonitorUploader 启动监控上传：定期扫描监控目录中新生成的图片，
 // 按本地目录结构对应上传到 115 媒体库（本地 strm 树与网盘一致）
@@ -227,7 +255,11 @@ func monitorOnce(h *Handler) {
 		if !isImg && !isNfo {
 			return nil
 		}
-		if info, err := d.Info(); err == nil && info.ModTime().After(cutoff) && !uploadedMark[p] {
+		if info, err := d.Info(); err == nil && info.ModTime().After(cutoff) {
+			st := fileStamp{modTime: info.ModTime(), size: info.Size()}
+			if prev, ok := uploadedState[p]; ok && prev.same(st) {
+				return nil // 已上传且未变化
+			}
 			imgs = append(imgs, p)
 		}
 		return nil
@@ -259,7 +291,9 @@ func monitorOnce(h *Handler) {
 			log.Printf("[上传] ✗ 上传失败 %s: %v", rel, err)
 			continue
 		}
-		uploadedMark[img] = true
+		if st, ok := stampOfPath(img); ok {
+			uploadedState[img] = st
+		}
 		log.Printf("[上传] ✓ 上传成功: %s → %s", rel, targetAbs)
 	}
 }
@@ -342,8 +376,11 @@ func (h *Handler) uploadMetadataOnce() {
 				return nil
 			}
 		}
-		if metaUploadedMark[p] {
-			return nil
+		if st, ok := stampOf(d); ok {
+			// 已上传且内容未变（mtime/size 一致）才跳过；Emby 重新刮削覆盖后会重传
+			if prev, ok2 := metaUploadedState[p]; ok2 && prev.same(st) {
+				return nil
+			}
 		}
 		files = append(files, p)
 		return nil
@@ -389,7 +426,9 @@ func (h *Handler) uploadMetadataOnce() {
 			log.Printf("[元数据回传] ✗ 失败 %s: %v", rel, err)
 			continue
 		}
-		metaUploadedMark[f] = true
+		if st, ok := stampOfPath(f); ok {
+			metaUploadedState[f] = st
+		}
 		ok++
 		log.Printf("[元数据回传] ✓ %s → %s", rel, targetAbs)
 	}
@@ -398,8 +437,9 @@ func (h *Handler) uploadMetadataOnce() {
 	}
 }
 
-// metaUploadedMark 已回传路径标记（会话级）
-var metaUploadedMark = map[string]bool{}
+// metaUploadedState 已回传文件指纹（会话级）：mtime/size 变化即视为
+// Emby 重新刮削覆盖，下一轮重新上传；内容未变时 115 秒传命中不产生重复
+var metaUploadedState = map[string]fileStamp{}
 
 // metaMissCount 云端目录连续未命中计数（会话级；达到上限后不再重试防刷屏）
 var metaMissCount = map[string]int{}
