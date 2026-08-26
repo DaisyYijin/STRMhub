@@ -2082,9 +2082,9 @@ async function loadSystemLogs() {
   if (viewer.textContent === '暂无日志...') viewer.textContent = '加载中...';
   try {
     const data = await api('/system/logs');
-    const nearBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 60;
-    viewer.textContent = data.logs || '暂无日志';
-    if (nearBottom) viewer.scrollTop = viewer.scrollHeight;
+    // 最新在最上面显示
+    const lines = String(data.logs || '暂无日志').split('\n').filter(l => l.trim() !== '');
+    viewer.textContent = lines.reverse().join('\n');
   } catch (e) {
     console.error('[日志] 加载失败:', e);
     viewer.textContent = '加载失败: ' + (e.message || '未知错误');

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=24">
+  <link rel="stylesheet" href="/css/style.css?v=25">
 </head>
 <body>
 
@@ -796,17 +796,8 @@ av:
           <div class="form-row"><div class="label">保留文件后缀<i class="help-tip" tabindex="0">?<span class="tip-bubble">是 = 直链 ID 段带 .mkv 等后缀（播放器据 URL 识别容器格式）；否 = 纯 ID。</span></i></div><div class="control"><div class="segmented-control" id="strm-ext-switch"><div class="seg-item active" data-value="true" onclick="setStrmExt(true)">是</div><div class="seg-item" data-value="false" onclick="setStrmExt(false)">否</div></div></div></div>
           <div class="form-row"><div class="label">本地已存在时<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地已有同名 STRM：覆盖 = 重新生成（推荐）；跳过 = 只生成一次。</span></i></div><div class="control"><div class="segmented-control" id="strm-exist-switch"><div class="seg-item active" data-value="overwrite" onclick="setStrmExist('overwrite')">覆盖</div><div class="seg-item" data-value="skip" onclick="setStrmExist('skip')">跳过</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('strm')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('strm', this)" style="position:relative">重置配置</button></div></div>
-          <div class="form-row"><div class="label">STRM 直链示例<i class="help-tip" tabindex="0">?<span class="tip-bubble">按当前配置实时预览生成的直链样式，切换选项立即更新。</span></i></div><div class="control"><code id="strm-format-example" style="font-size:13px;color:var(--primary);white-space:nowrap;overflow-x:auto;display:block;line-height:38px;scrollbar-width:thin"></code></div></div>
+          <div class="form-row"><div class="label">STRM 直链示例<i class="help-tip" tabindex="0">?<span class="tip-bubble">按当前配置实时预览生成的直链样式，切换选项立即更新。</span></i></div><div class="control" style="max-width:none"><code id="strm-format-example" style="font-size:13px;color:var(--primary);white-space:nowrap;display:block;line-height:38px"></code></div></div>
         </div>
-      <div class="card">
-        <div class="form-row"><div class="label">日志级别<i class="help-tip" tabindex="0">?<span class="tip-bubble">简洁模式隐藏过程日志（目录遍历/TMDB搜索/302请求/播放改写等），只留关键节点与异常，30 秒内生效。</span></i></div><div class="control"><div class="segmented-control" id="log-level-switch">
-          <div class="seg-item active" data-value="verbose" onclick="setLogLevel('verbose')">详细</div>
-          <div class="seg-item" data-value="simple" onclick="setLogLevel('simple')">简洁</div>
-        </div></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveLogLevel()">保存</button></div></div>
-        </div>
-      </div>
-
       <!-- TMDB 配置 -->
       <div class="tab-panel" data-panel="tmdb">
         <div class="card">
@@ -895,7 +886,13 @@ av:
     <div class="page" id="page-logs">
       <div class="card" style="height:calc(100vh - 130px);display:flex;flex-direction:column">
         <div class="form-inline-group" style="justify-content:space-between;margin-bottom:6px">
-          <span style="font-weight:600">任务日志（整理 / 同步 / 转存等动作的实时输出，每 3 秒自动刷新）</span>
+          <span style="font-weight:600;display:flex;align-items:center;gap:10px">任务日志
+            <div class="segmented-control" id="log-level-switch">
+              <div class="seg-item active" data-value="simple" onclick="setLogLevel('simple');saveLogLevel()">重要</div>
+              <div class="seg-item" data-value="verbose" onclick="setLogLevel('verbose');saveLogLevel()">详细</div>
+            </div>
+            <i class="help-tip" tabindex="0">?<span class="tip-bubble">重要：只留关键节点与异常（隐藏目录遍历/TMDB搜索/302请求等过程日志）；详细：全部输出。切换立即保存，30 秒内生效。每 3 秒自动刷新，最新在最上。</span></i>
+          </span>
           <button class="btn btn-outline" onclick="loadSystemLogs()">立即刷新</button>
         </div>
         <div class="log-viewer" id="server-log-viewer" style="flex:1;height:auto">暂无日志...</div>
@@ -1002,6 +999,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=77"></script>
+<script src="/js/app.js?v=78"></script>
 </body>
 </html>
