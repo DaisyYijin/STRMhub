@@ -239,6 +239,12 @@ func monitorOnce(h *Handler) {
 	if libAbs == "" {
 		return
 	}
+	// 库名（云端库根目录名，如「俱乐部」）：本地媒体树第一层是库名，
+	// 拼云端绝对路径前要剥掉，否则出现 /俱乐部/俱乐部/... 查不到目录
+	libName := ""
+	if info, err := get115DirInfo(cookie, rootCid); err == nil {
+		libName = info.n
+	}
 
 	// 扫描监控目录：Emby 刮削产物（标准图片命名 + NFO），只处理最近 24h 内的新文件
 	var imgs []string
@@ -276,13 +282,27 @@ func monitorOnce(h *Handler) {
 			continue
 		}
 		relDir := filepath.ToSlash(filepath.Dir(rel))
+		// 剥掉本地路径的库名第一层（监控目录=本地媒体根时存在），与云端库根对齐
+		if libName != "" {
+			relDir = strings.TrimPrefix(strings.TrimPrefix(relDir, libName), "/")
+		}
 		// 定位 115 目标目录：媒体库绝对路径 + 相对目录（files/getid 查询）
-		targetAbs := strings.TrimSuffix(libAbs, "/") + "/" + strings.TrimPrefix(relDir, "./")
+		targetAbs := strings.TrimSuffix(libAbs, "/")
+		if relDir != "" && relDir != "." {
+			targetAbs += "/" + relDir
+		}
 		cid, ok := cloudPathCid(cookie, targetAbs)
 		if !ok {
-			log.Printf("[上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
+			// 连续多轮查不到云端目录就停止重试（本引擎每分钟一轮，防刷屏）
+			metaMissCount[img]++
+			if metaMissCount[img] <= 2 {
+				log.Printf("[上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
+			} else if metaMissCount[img] == 3 {
+				log.Printf("[上传] ○ %s 连续 3 轮未找到云端目录，本会话内不再重试（如目录确实存在请反馈日志）", rel)
+			}
 			continue
 		}
+		delete(metaMissCount, img)
 		data, err := os.ReadFile(img)
 		if err != nil {
 			continue
