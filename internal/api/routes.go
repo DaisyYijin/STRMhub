@@ -73,6 +73,12 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		auth.POST("/login", h.Login)           // 登录
 	}
 
+	// Emby Webhook 接收端（无需登录鉴权：Emby 服务器推送事件，token 可选）
+	r.POST("/emby/webhook", h.EmbyWebhook)
+	r.GET("/emby/webhook", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "StrmHub Emby Webhook 接收端就绪，请使用 POST 推送事件"})
+	})
+
 	// 以下接口需要认证
 	protected := r.Group("/")
 	protected.Use(h.AuthMiddleware())

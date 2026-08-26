@@ -1311,6 +1311,18 @@ function testEmbyPath() {
   out.textContent = result;
 }
 
+// Emby Webhook 接收地址：展示本机地址并一键复制（Emby 服务器需能访问到本服务）
+function embyWebhookAddress() { return location.origin + '/api/emby/webhook'; }
+function fillEmbyWebhookHint() {
+  const el = document.getElementById('emby-webhook-hint');
+  if (el) el.textContent = '本服务接收地址：' + embyWebhookAddress();
+}
+function copyEmbyWebhook(btn) {
+  const addr = embyWebhookAddress();
+  navigator.clipboard?.writeText(addr).then(() => toast('已复制：' + addr)).catch(() => toast(addr));
+  fillEmbyWebhookHint();
+}
+
 // 消息通知
 let msgWecomEnabled = false;
 let msgTgEnabled = false;
@@ -1440,7 +1452,9 @@ function collectConfig(key) {
     return { url: document.getElementById('proxy-url').value };
   }
   if (key === 'emby-notify') {
-    return { webhook: document.getElementById('emby-notify-webhook').value };
+    const events = {};
+    document.querySelectorAll('#page-config-system [data-event]').forEach(cb => { events[cb.dataset.event] = cb.checked; });
+    return { webhook: document.getElementById('emby-notify-webhook').value, events };
   }
   if (key === 'message') {
     return {
@@ -1531,6 +1545,11 @@ function applyConfig(key, v) {
     if (v.url !== undefined) document.getElementById('proxy-url').value = v.url;
   } else if (key === 'emby-notify') {
     if (v.webhook !== undefined) document.getElementById('emby-notify-webhook').value = v.webhook;
+    if (v.events) {
+      document.querySelectorAll('#page-config-system [data-event]').forEach(cb => {
+        if (v.events[cb.dataset.event] !== undefined) cb.checked = v.events[cb.dataset.event] === true || v.events[cb.dataset.event] === 'true';
+      });
+    }
   } else if (key === 'message') {
     if (v.wecom) {
       setVal('msg-wecom-corp-id', v.wecom.corp_id);
@@ -1803,6 +1822,7 @@ async function loadConfigs() {
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
   }));
+  fillEmbyWebhookHint();
   // 旧版 emby-refresh 配置迁移：在 emby 配置应用完成后统一回填，避免并行竞态
   try {
     const data = await api('/config/setting?key=emby-refresh');

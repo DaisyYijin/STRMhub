@@ -165,6 +165,99 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 	log.Printf("Emby 刷新通知已发送: %s", embyPath)
 }
 
+// EmbyWebhook POST /api/emby/webhook —— 接收 Emby Webhooks 插件的事件推送，转发为企微/TG 通知
+// 可选鉴权：配置的 Webhook 地址带 ?token=xxx 时，请求需携带相同 token 才被接受
+func (h *Handler) EmbyWebhook(c *gin.Context) {
+	var notifyCfg struct {
+		Webhook string         `json:"webhook"`
+		Events  map[string]bool `json:"events"`
+	}
+	if v := h.getSettingValue("emby-notify"); v != "" {
+		_ = json.Unmarshal([]byte(v), &notifyCfg)
+	}
+	if notifyCfg.Webhook != "" {
+		if u, err := url.Parse(notifyCfg.Webhook); err == nil {
+			if want := u.Query().Get("token"); want != "" && c.Query("token") != want {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "token 无效"})
+				return
+			}
+		}
+	}
+
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求失败"})
+		return
+	}
+	var payload map[string]interface{}
+	if json.Unmarshal(body, &payload) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 JSON"})
+		return
+	}
+	getStr := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := payload[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	event := strings.ToLower(getStr("Event", "event", "NotificationType", "notification_type"))
+	itemName := ""
+	if item, ok := payload["Item"].(map[string]interface{}); ok {
+		if n, ok := item["Name"].(string); ok {
+			itemName = n
+		}
+	}
+	userName := ""
+	if user, ok := payload["User"].(map[string]interface{}); ok {
+		if n, ok := user["Name"].(string); ok {
+			userName = n
+		}
+	}
+
+	// 事件归类（stop 归入暂停/停止，需先于 play 判断，避免 "Playback start" 误命中）
+	category, title := "", ""
+	switch {
+	case strings.Contains(event, "add"):
+		category, title = "added", "🎬 Emby 入库"
+	case strings.Contains(event, "delete"), strings.Contains(event, "remove"):
+		category, title = "deleted", "🗑️ Emby 删除"
+	case strings.Contains(event, "pause"), strings.Contains(event, "stop"):
+		category, title = "pause", "⏸️ Emby 暂停/停止"
+	case strings.Contains(event, "play"), strings.Contains(event, "start"):
+		category, title = "play", "▶️ Emby 播放"
+	}
+	if category == "" {
+		log.Printf("[Emby Webhook] 未识别的事件类型 %q，已忽略", event)
+		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+		return
+	}
+
+	// 按通知事件开关过滤（默认全部开启）
+	events := map[string]bool{"added": true, "deleted": true, "play": true, "pause": true}
+	if notifyCfg.Events != nil {
+		for k, v := range notifyCfg.Events {
+			events[k] = v
+		}
+	}
+	if !events[category] {
+		c.JSON(http.StatusOK, gin.H{"message": "ok（该事件未开启通知）"})
+		return
+	}
+
+	content := itemName
+	if content == "" {
+		content = event
+	}
+	if userName != "" && category != "added" && category != "deleted" {
+		content = userName + "：" + content
+	}
+	log.Printf("[Emby Webhook] %s %s", title, content)
+	go NotifyMessage(title, content)
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
 // TestEmbyConnection 测试 Emby 服务器连接
 // POST /config/test-emby  body: {"server_url":"...", "api_key":"..."}
 func (h *Handler) TestEmbyConnection(c *gin.Context) {

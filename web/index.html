@@ -832,14 +832,14 @@ av:
         </div>
       <div class="alert alert-info">配置 Emby 连接后，STRM 生成时按库刷新对应媒体库，整理入库更快；非必须，开启 Emby 实时监控也一样，此通知只是能更快入库。</div>
 
-      <div class="alert alert-info">在 emby 入库成功时进行消息通知，token 需要改为你自己的。</div>
+      <div class="alert alert-info">把下方接收地址填到 Emby 的 Webhooks 插件里，Emby 的入库/删除/播放事件会推送到企业微信/Telegram（需在消息配置中启用渠道）。</div>
         <div class="card">
-          <div class="form-row"><div class="label">Webhook 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby Webhook 插件生成的回调地址；也用于定位 Emby 服务器。</span></i></div><div class="control"><input type="text" id="emby-notify-webhook" placeholder="Emby Webhook 地址"></div></div>
-          <div class="form-row"><div class="label">通知事件<i class="help-tip" tabindex="0">?<span class="tip-bubble">勾选的事件类型推送到企微/TG。</span></i></div><div class="control">
-            <span class="inline"><input type="checkbox" checked> 入库</span>
-            <span class="inline"><input type="checkbox" checked> 删除</span>
-            <span class="inline"><input type="checkbox" checked> 播放</span>
-            <span class="inline"><input type="checkbox" checked> 暂停</span>
+          <div class="form-row"><div class="label">接收地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby Webhooks 插件里填的回调地址。如需鉴权，在地址后加 ?token=任意密钥，Emby 侧带上相同 token 才能推送成功。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-notify-webhook" class="inline-input" placeholder="http://StrmHub的IP:6060/api/emby/webhook"><button class="btn btn-outline" onclick="copyEmbyWebhook(this)">复制</button></div><code id="emby-webhook-hint" style="display:block;font-size:12px;color:var(--text-3);margin-top:6px;word-break:break-all"></code></div></div>
+          <div class="form-row"><div class="label">通知事件<i class="help-tip" tabindex="0">?<span class="tip-bubble">勾选的事件类型推送到企微/TG；Emby 插件侧也建议只勾选这些事件，避免推送刷屏。</span></i></div><div class="control">
+            <span class="inline"><input type="checkbox" checked data-event="added"> 入库</span>
+            <span class="inline"><input type="checkbox" checked data-event="deleted"> 删除</span>
+            <span class="inline"><input type="checkbox" checked data-event="play"> 播放</span>
+            <span class="inline"><input type="checkbox" checked data-event="pause"> 暂停/停止</span>
           </div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby-notify')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby-notify', this)" style="position:relative">重置配置</button></div>
 
@@ -995,6 +995,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=80"></script>
+<script src="/js/app.js?v=81"></script>
 </body>
 </html>
