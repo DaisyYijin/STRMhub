@@ -2,12 +2,14 @@ package api
 
 // ==================== 115 文件上传 + 监控上传引擎 ====================
 //
-// 上传流程（p115client upload_init + p115oss OSS 直传）：
-//  1. POST proapi.115.com/open/upload/init（fileid=sha1, filename, filesize,
-//     target=U_1_{pid}, userid）→ 秒传直接完成，否则返回 OSS 信息
-//  2. GET uplb.115.com/3.0/gettoken.php → OSS 临时凭证
-//  3. PUT https://{bucket}.oss-cn-shenzhen.aliyuncs.com/{object}，
-//     带 OSS 签名 + x-oss-callback（服务端回调确认入库）
+// 上传走 115 OpenAPI（LitePan 同款流程，需要「账号管理 → OpenAPI 授权」）：
+//  1. POST {open}/open/upload/init（fileid=全量SHA1, preid=前128KB SHA1,
+//     file_name/file_size/target=U_1_{pid}, topupload=0，Bearer 鉴权）
+//     status=2 秒传直接完成；status=6/7/8 触发二次认证（sign_check 指定
+//     偏移区间的 SHA1 复验）；status=1 返回 OSS bucket/object/callback
+//  2. GET {open}/open/upload/get_token → OSS 临时凭证（含 endpoint）
+//  3. PUT https://{bucket}.{endpoint}/{object}，OSS 签名 + x-oss-callback
+//     回调头，由 115 服务端确认入库
 //
 // 监控上传（CMS media_moni 同款）：定期扫描本地媒体目录中 Emby 新生成的
 // 图片，按目录结构对应上传到 115 剧集目录（本地 strm 结构与网盘一致）。
@@ -26,114 +28,240 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// uploadInitResp /open/upload/init 响应
-type uploadInitResp struct {
-	State  bool   `json:"state"`
-	Error  string `json:"error"`
-	ErrNo  int    `json:"errNo"`
-	Status int    `json:"status"`
-	Data   struct {
-		Bucket   string `json:"bucket"`
-		Object   string `json:"object"`
-		FileID   string `json:"file_id"`
-		Callback struct {
-			URL  string `json:"url"`
-			Body string `json:"body"`
-			Type string `json:"callback_body_type"`
-		} `json:"callback"`
-	} `json:"data"`
+// flexStatus 兼容数字/字符串两种 status 形态
+type flexStatus int64
+
+func (f *flexStatus) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `" `)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		*f = 0
+		return nil
+	}
+	*f = flexStatus(n)
+	return nil
 }
 
-// ossTokenResp gettoken.php 响应
-type ossTokenResp struct {
-	State bool `json:"state"`
-	Token struct {
-		AccessKeyID     string `json:"AccessKeyId"`
-		AccessKeySecret string `json:"AccessKeySecret"`
-		SecurityToken   string `json:"SecurityToken"`
-		Expiration      string `json:"Expiration"`
-	} `json:"token"`
+// openUploadInit /open/upload/init 响应（data 内为平铺结构）
+type openUploadInit struct {
+	Status      flexStatus     `json:"status"`
+	FileID      string         `json:"file_id"`
+	Bucket      string         `json:"bucket"`
+	Object      string         `json:"object"`
+	Callback    json.RawMessage `json:"callback"`
+	CallbackVar string         `json:"callback_var"`
+	SignKey     string         `json:"sign_key"`
+	SignCheck   string         `json:"sign_check"`
+	PickCode    string         `json:"pick_code"`
 }
 
-// upload115File 上传文件内容到 115 指定目录（秒传或 OSS 直传）
-func upload115File(cookie string, pid int64, userid int64, filename string, data []byte) error {
-	sha := fmt.Sprintf("%x", sha1.Sum(data))
+// openOSSCredential OSS 上传临时凭证（字段名兼容多种形态）
+type openOSSCredential struct {
+	AK, SK, Token, Endpoint string
+}
 
-	// 1. init（秒传或获取 OSS 参数）
-	form := url.Values{
-		"fileid":   {strings.ToUpper(sha)},
-		"filename": {filename},
-		"filesize": {fmt.Sprint(len(data))},
-		"target":   {fmt.Sprintf("U_1_%d", pid)},
-		"userid":   {fmt.Sprint(userid)},
+func openOSSTokenFromMap(raw map[string]any) openOSSCredential {
+	get := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := raw[k]; ok {
+				if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
+					return s
+				}
+			}
+		}
+		return ""
 	}
-	body, err := post115Form("https://proapi.115.com/open/upload/init", form, cookie, ua115Download, 20*time.Second)
-	if err != nil {
-		return fmt.Errorf("upload init 失败: %w", err)
+	return openOSSCredential{
+		AK:       get("access_key_id", "AccessKeyId", "accessKeyId"),
+		SK:       get("access_key_secret", "AccessKeySecret", "accessKeySecret"),
+		Token:    get("security_token", "SecurityToken", "securityToken"),
+		Endpoint: get("endpoint", "Endpoint", "endPoint"),
 	}
-	var init uploadInitResp
-	if err := json.Unmarshal(body, &init); err != nil || !init.State {
-		return fmt.Errorf("upload init 被拒: %s", truncateStr(string(body), 150))
+}
+
+// upload115File 上传文件内容到 115 指定目录（OpenAPI 通道；秒传或 OSS 直传）
+func (h *Handler) upload115File(pid int64, filename string, data []byte) error {
+	oc := h.getOpen115()
+	if oc == nil || !oc.authorized() {
+		return fmt.Errorf("上传需要 115 OpenAPI 授权，请到「账号管理」完成 OpenAPI 授权后重试")
 	}
-	if init.Data.Bucket == "" || init.Data.Object == "" {
-		return nil // 秒传命中（115 已有相同文件）
+	sha := strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data)))
+	n := len(data)
+	if n > 128*1024 {
+		n = 128 * 1024
+	}
+	preid := strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data[:n])))
+
+	// 1. init（含二次认证重试：status 6/7/8 时按 sign_check 区间复验）
+	signKey, signVal, pickCode := "", "", ""
+	var init openUploadInit
+	for round := 0; round < 3; round++ {
+		form := url.Values{
+			"file_name": {filename},
+			"file_size": {fmt.Sprint(len(data))},
+			"target":    {fmt.Sprintf("U_1_%d", pid)},
+			"fileid":    {sha},
+			"preid":     {preid},
+			"topupload": {"0"},
+		}
+		if pickCode != "" {
+			form.Set("pick_code", pickCode)
+		}
+		if signKey != "" {
+			form.Set("sign_key", signKey)
+			form.Set("sign_val", signVal)
+		}
+		if err := oc.apiCall(http.MethodPost, "/open/upload/init", nil, form, &init); err != nil {
+			return fmt.Errorf("upload init 失败: %w", err)
+		}
+		switch init.Status {
+		case 2:
+			return nil // 秒传成功
+		case 1:
+			// 走 OSS 直传
+		case 6, 7, 8:
+			// 二次认证：sign_check = "offset-length"，取该区间 SHA1 复验
+			off, length, ok := parseSignCheck(init.SignCheck, len(data))
+			if !ok || init.SignKey == "" {
+				return fmt.Errorf("上传需要二次认证但参数异常（sign_check=%q sign_key=%q）", init.SignCheck, init.SignKey)
+			}
+			signKey = init.SignKey
+			signVal = strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data[off:off+length])))
+			pickCode = init.PickCode
+			continue
+		default:
+			return fmt.Errorf("upload init 被拒: status=%d", int64(init.Status))
+		}
+		break
+	}
+	if init.Bucket == "" || init.Object == "" {
+		return fmt.Errorf("upload init 未返回 OSS 参数（bucket/object 为空）")
 	}
 
-	// 2. OSS 临时凭证
-	tkBody, err := httpGet115UA("https://uplb.115.com/3.0/gettoken.php", nil, cookie, ua115Download, 15*time.Second)
-	if err != nil {
-		return fmt.Errorf("gettoken 失败: %w", err)
+	// 2. OSS 临时凭证（GET 失败再试 POST，LitePan 同款兜底）
+	var tkRaw map[string]any
+	if err := oc.apiCall(http.MethodGet, "/open/upload/get_token", nil, nil, &tkRaw); err != nil {
+		tkRaw = nil
+		_ = oc.apiCall(http.MethodPost, "/open/upload/get_token", nil, nil, &tkRaw)
 	}
-	var tk ossTokenResp
-	if json.Unmarshal(tkBody, &tk) != nil || !tk.State || tk.Token.AccessKeyID == "" {
-		return fmt.Errorf("gettoken 响应异常: %s", truncateStr(string(tkBody), 120))
+	tk := openOSSTokenFromMap(tkRaw)
+	if tk.AK == "" || tk.SK == "" || tk.Token == "" {
+		return fmt.Errorf("获取 OSS 上传凭证失败")
 	}
 
 	// 3. OSS PUT（带回调，由 115 服务端确认入库）
-	return ossPut(init, tk.Token, data)
+	return ossPutOpen(tk, init, sha, data)
 }
 
-// ossPut 阿里云 OSS PUT 上传（Aliyun OSS 签名规范）
-func ossPut(init uploadInitResp, tk struct {
-	AccessKeyID     string `json:"AccessKeyId"`
-	AccessKeySecret string `json:"AccessKeySecret"`
-	SecurityToken   string `json:"SecurityToken"`
-	Expiration      string `json:"Expiration"`
-}, data []byte) error {
-	host := init.Data.Bucket + ".oss-cn-shenzhen.aliyuncs.com"
-	resource := "/" + init.Data.Bucket + "/" + init.Data.Object
+// parseSignCheck 解析二次认证区间 "offset-length"，越界时收敛到文件内
+func parseSignCheck(s string, size int) (int, int, bool) {
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	off, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	length, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || off < 0 || length <= 0 || off >= size {
+		return 0, 0, false
+	}
+	if off+length > size {
+		length = size - off
+	}
+	return off, length, true
+}
+
+// extractOSSCallback 解析 init 返回的回调配置（字符串/嵌套两种形态），
+// 并把 ${sha1} 占位符替换为实际值
+func extractOSSCallback(cbRaw json.RawMessage, cbVar, sha string) (callback, callbackVar string) {
+	callback = ""
+	if len(cbRaw) > 0 {
+		var asString string
+		if json.Unmarshal(cbRaw, &asString) == nil {
+			callback = asString
+		}
+		var nested struct {
+			Callback    string `json:"callback"`
+			CallbackVar string `json:"callback_var"`
+			Value       struct {
+				Callback    string `json:"callback"`
+				CallbackVar string `json:"callback_var"`
+			} `json:"value"`
+		}
+		if json.Unmarshal(cbRaw, &nested) == nil {
+			if nested.Callback != "" || nested.CallbackVar != "" {
+				callback, cbVar = nested.Callback, nested.CallbackVar
+			} else if nested.Value.Callback != "" {
+				callback, cbVar = nested.Value.Callback, nested.Value.CallbackVar
+			}
+		}
+		if callback == "" {
+			callback = strings.TrimSpace(string(cbRaw))
+		}
+	}
+	callback = strings.ReplaceAll(callback, "${sha1}", sha)
+	return callback, cbVar
+}
+
+// ossPutOpen 阿里云 OSS PUT 上传（Aliyun OSS V1 签名规范 + 回调头）
+func ossPutOpen(tk openOSSCredential, init openUploadInit, sha string, data []byte) error {
+	endpoint := strings.TrimPrefix(strings.TrimPrefix(tk.Endpoint, "https://"), "http://")
+	if endpoint == "" {
+		endpoint = "oss-cn-shenzhen.aliyuncs.com"
+	}
+	host := init.Bucket + "." + endpoint
+	resource := "/" + init.Bucket + "/" + init.Object
 	date := time.Now().UTC().Format(http.TimeFormat)
 	contentType := "application/octet-stream"
+	callback, callbackVar := extractOSSCallback(init.Callback, init.CallbackVar, sha)
 
-	// 回调头（base64 的回调配置）
-	cb := map[string]string{
-		"callbackUrl":         init.Data.Callback.URL,
-		"callbackBody":        init.Data.Callback.Body,
-		"callbackBodyType":    "application/x-www-form-urlencoded",
+	// 回调头（base64 编码后放入 x-oss-callback / x-oss-callback-var）
+	var cbHeader, cbVarHeader string
+	if callback != "" {
+		cbHeader = base64.StdEncoding.EncodeToString([]byte(callback))
 	}
-	cbJSON, _ := json.Marshal(cb)
-	cbHeader := base64.StdEncoding.EncodeToString(cbJSON)
+	if callbackVar != "" {
+		cbVarHeader = base64.StdEncoding.EncodeToString([]byte(callbackVar))
+	}
 
 	// OSS 签名：VERB\nMD5\nContentType\nDate\nCanonicalizedOSSHeaders+Resource
-	stringToSign := "PUT\n\n" + contentType + "\n" + date + "\n" +
-		"x-oss-callback:" + cbHeader + "\nx-oss-security-token:" + tk.SecurityToken + "\n" + resource
-	mac := hmac.New(sha1.New, []byte(tk.AccessKeySecret))
+	// CanonicalizedOSSHeaders = 所有 x-oss-* 头按字典序 "k:v\n" 拼接
+	var canon strings.Builder
+	ossHeaders := []string{"x-oss-callback:" + cbHeader, "x-oss-callback-var:" + cbVarHeader, "x-oss-security-token:" + tk.Token}
+	sort.Strings(ossHeaders)
+	for _, h := range ossHeaders {
+		if !strings.HasSuffix(h, ":") {
+			canon.WriteString(h)
+			canon.WriteString("\n")
+		}
+	}
+	stringToSign := "PUT\n\n" + contentType + "\n" + date + "\n" + canon.String() + resource
+	mac := hmac.New(sha1.New, []byte(tk.SK))
 	mac.Write([]byte(stringToSign))
 	sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
-	req, err := http.NewRequest(http.MethodPut, "https://"+host+"/"+init.Data.Object, strings.NewReader(string(data)))
+	req, err := http.NewRequest(http.MethodPut, "https://"+host+"/"+init.Object, strings.NewReader(string(data)))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Date", date)
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("x-oss-security-token", tk.SecurityToken)
-	req.Header.Set("x-oss-callback", cbHeader)
-	req.Header.Set("Authorization", "OSS "+tk.AccessKeyID+":"+sign)
+	req.Header.Set("x-oss-security-token", tk.Token)
+	if cbHeader != "" {
+		req.Header.Set("x-oss-callback", cbHeader)
+	}
+	if cbVarHeader != "" {
+		req.Header.Set("x-oss-callback-var", cbVarHeader)
+	}
+	req.Header.Set("Authorization", "OSS "+tk.AK+":"+sign)
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
@@ -141,9 +269,17 @@ func ossPut(init uploadInitResp, tk struct {
 		return fmt.Errorf("OSS PUT 失败: %w", err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != 200 && resp.StatusCode != 203 {
 		return fmt.Errorf("OSS PUT HTTP %d: %s", resp.StatusCode, truncateStr(string(respBody), 150))
+	}
+	// 回调结果里带错误信息时上报（如空间不足、目标目录异常）
+	var cbResult struct {
+		State   bool   `json:"state"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(respBody, &cbResult) == nil && cbResult.Message != "" && !cbResult.State {
+		return fmt.Errorf("OSS 回调失败: %s", truncateStr(cbResult.Message, 150))
 	}
 	return nil
 }
@@ -218,7 +354,6 @@ func monitorOnce(h *Handler) {
 	if err != nil {
 		return
 	}
-	userid := cookieUserID(cookie)
 
 	// 目标库根 cid 与绝对路径
 	rootCid := cfg.Target
@@ -307,7 +442,7 @@ func monitorOnce(h *Handler) {
 		if err != nil {
 			continue
 		}
-		if err := upload115File(cookie, parseI64(cid), userid, filepath.Base(img), data); err != nil {
+		if err := h.upload115File(parseI64(cid), filepath.Base(img), data); err != nil {
 			log.Printf("[上传] ✗ 上传失败 %s: %v", rel, err)
 			continue
 		}
@@ -369,7 +504,6 @@ func (h *Handler) uploadMetadataOnce() {
 	if err != nil {
 		return
 	}
-	userid := cookieUserID(cookie)
 
 	// 库根绝对路径与库名（云端目录定位用）。
 	// 本地路径第一层是库名（STRM 结构特性），拼接云端绝对路径前要剥掉，
@@ -441,7 +575,7 @@ func (h *Handler) uploadMetadataOnce() {
 		if err != nil {
 			continue
 		}
-		if err := upload115File(cookie, parseI64(cid), userid, filepath.Base(f), data); err != nil {
+		if err := h.upload115File(parseI64(cid), filepath.Base(f), data); err != nil {
 			fail++
 			log.Printf("[元数据回传] ✗ 失败 %s: %v", rel, err)
 			continue
