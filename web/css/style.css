@@ -495,3 +495,7 @@ tr:hover td { background: var(--fill-1); }
   .plugin-section-title { font-size: 16px; }
   .plugin-rule-count { margin-left: 10px; font-size: 12px; }
 }
+
+/* 按钮组：同一行弹性排列；测试结果文字独立成行（长错误信息不再挤断按钮） */
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.test-result { display: block; margin-top: 6px; font-size: 13px; line-height: 1.5; word-break: break-all; }

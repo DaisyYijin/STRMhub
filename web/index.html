@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=25">
+  <link rel="stylesheet" href="/css/style.css?v=26">
 </head>
 <body>
 
@@ -240,7 +240,7 @@
         <div class="form-row"><div class="label">API 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">支持 OpenAI 协议标准的模型接口地址，当 TMDB 无法识别时调用大模型辅助识别。</span></i></div><div class="control"><input type="text" id="org-gpt-url" placeholder="如 https://api.siliconflow.cn/v1"></div></div>
         <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">大模型 API 密钥，推荐使用硅基流动等国内平台。</span></i></div><div class="control"><input type="text" id="org-gpt-key" placeholder="sk-xxx"></div></div>
         <div class="form-row"><div class="label">模型名称<i class="help-tip" tabindex="0">?<span class="tip-bubble">用于识别的模型名称，如 Qwen2.5-7B、gpt-4o-mini 等。</span></i></div><div class="control"><input type="text" id="org-gpt-model" placeholder="如 Qwen2.5-7B"></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-gpt')">保存配置</button> <button class="btn btn-outline" id="gpt-test-btn" onclick="testGPT()">测试连接</button> <span id="gpt-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('org-gpt', this)" style="position:relative">重置配置</button></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('org-gpt')">保存配置</button><button class="btn btn-outline" id="gpt-test-btn" onclick="testGPT()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('org-gpt', this)" style="position:relative">重置配置</button></div><span id="gpt-test-result" class="test-result"></span></div></div>
       </div>
     </div>
 
@@ -807,7 +807,7 @@ av:
           <div class="form-row"><div class="label">图片域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB 海报图片域名，可换反代加速。</span></i></div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
           <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API Key（themoviedb.org 注册获取），识别与搜片必填。</span></i></div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
           <div class="form-row"><div class="label">语言<i class="help-tip" tabindex="0">?<span class="tip-bubble">中文优先返回中文片名与简介；英文返回原名。</span></i></div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button> <button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button> <span id="tmdb-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button><button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div><span id="tmdb-test-result" class="test-result"></span></div></div>
         </div>
       </div>
 
@@ -815,7 +815,7 @@ av:
       <div class="tab-panel" data-panel="proxy">
         <div class="card">
           <div class="form-row"><div class="label">代理地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">HTTP(S) 代理，用于访问 TMDB 等外网服务，格式 http://IP:端口，留空不代理。</span></i></div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button> <span id="proxy-test-result" style="font-size:13px"></span> <button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button><button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div><span id="proxy-test-result" class="test-result"></span></div></div>
         </div>
       </div>
 
@@ -823,7 +823,7 @@ av:
       <div class="tab-panel active" data-panel="emby-manage">
         <div class="card">
           <div class="form-row"><div class="label"><span class="required-mark">*</span> Emby 服务器地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 访问地址（StrmHub 容器内可达，如 http://172.17.0.1:8096）。6086 反代与此处配置联动。</span></i></div><div class="control"><input type="text" id="emby-server-url" placeholder="如 http://192.168.1.100:8096"></div></div>
-          <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 后台「设置 → API 密钥」生成，用于按库刷新与连接测试。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" style="font-size:13px;margin-left:8px"></span></div></div>
+          <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 后台「设置 → API 密钥」生成，用于按库刷新与连接测试。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" class="test-result"></span></div></div>
           <div class="form-row"><div class="label">本地路径映射<i class="help-tip" tabindex="0">?<span class="tip-bubble">StrmHub 本地路径#Emby 路径（# 分隔）。刷新入库时把本地路径转换为 Emby 路径。</span></i></div><div class="control"><input type="text" id="emby-path-mapping" placeholder="/media#/media（本地路径#Emby路径，#分隔）"></div></div>
           <div class="form-row"><div class="label">入库时刷新<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后 STRM 生成时自动通知 Emby 刷新对应媒体库（需上方 API 密钥）。</span></i></div><div class="control"><div class="segmented-control" id="emby-auto-refresh-switch"><div class="seg-item active" data-value="true" onclick="setEmbyAutoRefresh(true)">开启</div><div class="seg-item" data-value="false" onclick="setEmbyAutoRefresh(false)">关闭</div></div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('emby')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('emby', this)" style="position:relative">重置配置</button></div></div>
@@ -880,7 +880,7 @@ av:
         </div>
       </div>
       <div class="card">
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button> <button class="btn btn-outline" id="msg-test-btn" onclick="testMessage()">测试通知</button> <span id="msg-test-result" style="font-size:13px"></span> <button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-outline" id="msg-test-btn" onclick="testMessage()">测试通知</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button></div><span id="msg-test-result" class="test-result"></span></div></div>
       </div>
     </div>
 
