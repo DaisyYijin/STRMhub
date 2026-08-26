@@ -1329,13 +1329,11 @@ function setMsgEnabled(type, val) {
   document.querySelectorAll('#msg-' + type + '-enabled-switch .seg-item').forEach(i => i.classList.toggle('active', i.dataset.value === String(val)));
 }
 
-async function testMessage() {
-  const btn = document.getElementById('msg-test-btn');
-  const result = document.getElementById('msg-test-result');
+async function testMessage(btn) {
+  const result = btn ? btn.closest('.control')?.querySelector('.test-result') : null;
   btn.disabled = true;
   btn.textContent = '发送中...';
-  result.textContent = '';
-  result.style.color = '';
+  if (result) { result.textContent = ''; result.style.color = ''; }
   try {
     const data = await api('/message/test', { method: 'POST' });
     if (data.success) {

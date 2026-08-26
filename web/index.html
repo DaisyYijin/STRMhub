@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=26">
+  <link rel="stylesheet" href="/css/style.css?v=27">
 </head>
 <body>
 
@@ -869,18 +869,17 @@ av:
           <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 Token——机器人互动必填，仅发通知可不填。</span></i></div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
           <div class="form-row"><div class="label">EncodingAESKey<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 43 位密钥——机器人互动必填。</span></i></div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
           <div class="alert alert-info">机器人互动：企业微信后台「接收消息」填写 URL http://&lt;公网IP&gt;:6086/wecom/callback 及上面的 Token/AESKey，然后给应用发消息即可用指令（下载/状态/搜索/整理/同步/帮助）。</div>
-          <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送企业微信通知；配置 Token/AESKey 后可用机器人远程控制。</span></i></div><div class="control"><div class="segmented-control seg-sm" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
         </div>
       </div>
       <div class="tab-panel" data-panel="msg-tg">
         <div class="card">
           <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
           <div class="form-row"><div class="label">Chat ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram 目标会话 ID，向 @userinfobot 发消息可查到。</span></i></div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送 Telegram 通知。</span></i></div><div class="control"><div class="segmented-control seg-sm" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
         </div>
-      </div>
-      <div class="card">
-        <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-outline" id="msg-test-btn" onclick="testMessage()">测试通知</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button></div><span id="msg-test-result" class="test-result"></span></div></div>
       </div>
     </div>
 
@@ -1001,6 +1000,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=78"></script>
+<script src="/js/app.js?v=79"></script>
 </body>
 </html>
