@@ -497,13 +497,6 @@ async function receiveShare() {
   } catch (e) { toast('转存失败: ' + e.message); }
 }
 
-let embyAutoRefreshVal = true;
-function setEmbyAutoRefresh(v) {
-  embyAutoRefreshVal = v;
-  document.querySelectorAll('#emby-auto-refresh-switch .seg-item').forEach(el => {
-    el.classList.toggle('active', String(el.dataset.value) === String(v));
-  });
-}
 async function testEmbyConnection() {
   const url = val('emby-server-url').trim();
   const key = val('emby-api-key').trim();
@@ -1292,6 +1285,8 @@ async function testTmdb() {
 // EMBY 入库刷新
 let embyStyleVal = 'unix';
 let embyEnabledVal = true;
+let migratedEmbyEnabled = false;
+let migratedEmbyStyle = false;
 function setEmbyStyle(val) {
   embyStyleVal = val;
   document.querySelectorAll('#emby-refresh-style-switch .seg-item').forEach(i => i.classList.toggle('active', i.dataset.value === val));
@@ -1303,7 +1298,7 @@ function setEmbyEnabled(val) {
 }
 function testEmbyPath() {
   const input = document.getElementById('emby-path-test-input')?.value || '';
-  const rule = document.getElementById('emby-refresh-path')?.value || '';
+  const rule = document.getElementById('emby-path-mapping')?.value || '';
   const out = document.getElementById('emby-path-test-output');
   if (!out) return;
   if (!input) { out.textContent = ''; return; }
@@ -1444,13 +1439,6 @@ function collectConfig(key) {
   if (key === 'proxy') {
     return { url: document.getElementById('proxy-url').value };
   }
-  if (key === 'emby-refresh') {
-    return {
-      path_rule: document.getElementById('emby-refresh-path').value,
-      style: embyStyleVal,
-      enabled: embyEnabledVal,
-    };
-  }
   if (key === 'emby-notify') {
     return { webhook: document.getElementById('emby-notify-webhook').value };
   }
@@ -1505,7 +1493,8 @@ function collectConfig(key) {
       server_url: val('emby-server-url'),
       api_key: val('emby-api-key'),
       path_mapping: val('emby-path-mapping'),
-      auto_refresh: embyAutoRefreshVal,
+      style: embyStyleVal,
+      refresh_enabled: embyEnabledVal,
     };
   }
   if (key === 'full') {
@@ -1540,11 +1529,6 @@ function applyConfig(key, v) {
     updateStrmExample();
   } else if (key === 'proxy') {
     if (v.url !== undefined) document.getElementById('proxy-url').value = v.url;
-  } else if (key === 'emby-refresh') {
-    if (v.path_rule !== undefined) document.getElementById('emby-refresh-path').value = v.path_rule;
-    if (v.style) setEmbyStyle(v.style === 'windows' || v.style === 'Windows风格' ? 'windows' : 'unix');
-    if (v.enabled !== undefined) setEmbyEnabled(v.enabled === true || v.enabled === 'true');
-    testEmbyPath();
   } else if (key === 'emby-notify') {
     if (v.webhook !== undefined) document.getElementById('emby-notify-webhook').value = v.webhook;
   } else if (key === 'message') {
@@ -1594,7 +1578,15 @@ function applyConfig(key, v) {
     setVal('emby-server-url', v.server_url);
     setVal('emby-api-key', v.api_key);
     setVal('emby-path-mapping', v.path_mapping);
-    if (v.auto_refresh !== undefined) setEmbyAutoRefresh(v.auto_refresh === true || v.auto_refresh === 'true');
+    if (v.style) {
+      setEmbyStyle(v.style === 'windows' || v.style === 'Windows风格' ? 'windows' : 'unix');
+      migratedEmbyStyle = true; // 新版已有值时不再被旧 emby-refresh.style 覆盖
+    }
+    if (v.refresh_enabled !== undefined) {
+      setEmbyEnabled(v.refresh_enabled === true || v.refresh_enabled === 'true');
+      migratedEmbyEnabled = true; // 新版已有值时不再被旧 emby-refresh.enabled 覆盖
+    }
+    testEmbyPath();
 	} else if (key === 'full') {
     const cidEl = document.getElementById('full-cid');
     if (cidEl) {
@@ -1731,10 +1723,9 @@ function resetConfig(key, btn) {
 
 // 各配置的默认值
 const DEFAULT_CONFIGS = {
-  'emby': { server_url: '', api_key: '', path_mapping: '', auto_refresh: true },
+  'emby': { server_url: '', api_key: '', path_mapping: '', style: 'unix', refresh_enabled: true },
   'strm': { domain: '', format: 'p', keep_ext: 'true', skip_exist: 'overwrite' },
   'proxy': { url: '' },
-  'emby-refresh': { url: '', api_key: '', path_replace: '', enabled: true },
   'emby-notify': { webhook: '' },
   'org-basic': { pending: '', pending_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
   'org-recognize': { replace_rules: '', release_groups: '', min_size: '0' },
@@ -1801,7 +1792,9 @@ function closeConfirmBubbleOnOutside(e) {
 }
 
 async function loadConfigs() {
-  const keys = ['emby', 'full', 'strm', 'proxy', 'emby-refresh', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
+  migratedEmbyEnabled = false;
+  migratedEmbyStyle = false;
+  const keys = ['emby', 'full', 'strm', 'proxy', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
   // 并行拉取，避免逐个等待导致 cid 等字段迟迟不回填
   await Promise.all(keys.map(async (key) => {
     try {
@@ -1810,6 +1803,18 @@ async function loadConfigs() {
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
   }));
+  // 旧版 emby-refresh 配置迁移：在 emby 配置应用完成后统一回填，避免并行竞态
+  try {
+    const data = await api('/config/setting?key=emby-refresh');
+    if (data.value) {
+      const v = JSON.parse(data.value);
+      const mapEl = document.getElementById('emby-path-mapping');
+      if (v.path_rule && mapEl && !mapEl.value.trim()) mapEl.value = v.path_rule;
+      if (v.style && !migratedEmbyStyle) setEmbyStyle(v.style === 'windows' || v.style === 'Windows风格' ? 'windows' : 'unix');
+      if (v.enabled !== undefined && !migratedEmbyEnabled) setEmbyEnabled(v.enabled === true || v.enabled === 'true');
+      testEmbyPath();
+    }
+  } catch (e) {}
 }
 
 // ==================== 媒体信息补全配置 ====================

@@ -18,77 +18,85 @@ import (
 // ==================== EMBY 入库刷新通知 ====================
 
 // notifyEmbyRefresh STRM 生成后通知 Emby 刷新入库
-// 如果配置了路径替换规则，将本地路径转为 Emby 路径后调用 Emby Library scan API
+// 统一使用 EMBY管理 配置（emby：服务器地址/API密钥/本地路径映射/路径风格/入库时刷新），
+// 兼容旧版 emby-refresh（path_rule/enabled）与从 webhook 地址提取 host 的配置方式
 func (h *Handler) notifyEmbyRefresh(localPath string) {
 	var s model.Setting
-	if err := h.DB.Where("key = ?", "emby-refresh").First(&s).Error; err != nil {
+	if err := h.DB.Where("key = ?", "emby").First(&s).Error; err != nil {
 		return
 	}
 	var cfg struct {
-		PathRule string `json:"path_rule"`
-		Style    string `json:"style"`
-		Enabled  any    `json:"enabled"`
+		Style          string `json:"style"`
+		RefreshEnabled any    `json:"refresh_enabled"`
 	}
 	if json.Unmarshal([]byte(s.Value), &cfg) != nil {
 		return
 	}
-	// 检查是否启用
+	// 检查是否启用；未写 refresh_enabled 时回退旧版 emby-refresh.enabled
 	enabled := true
-	switch v := cfg.Enabled.(type) {
+	switch v := cfg.RefreshEnabled.(type) {
 	case bool:
 		enabled = v
 	case string:
 		enabled = v == "true"
+	default:
+		var old struct {
+			Enabled any `json:"enabled"`
+		}
+		if v2 := h.getSettingValue("emby-refresh"); v2 != "" && json.Unmarshal([]byte(v2), &old) == nil {
+			if b, ok := old.Enabled.(bool); ok {
+				enabled = b
+			} else if str, ok := old.Enabled.(string); ok {
+				enabled = str == "true"
+			}
+		}
 	}
 	if !enabled {
 		return
 	}
 
-	// 路径替换
-	embyPath := localPath
-	if cfg.PathRule != "" && strings.Contains(cfg.PathRule, "#") {
-		parts := strings.SplitN(cfg.PathRule, "#", 2)
-		src, dst := parts[0], parts[1]
-		if src != "" && strings.HasPrefix(localPath, src) {
-			embyPath = dst + strings.TrimPrefix(localPath, src)
+	// 路径替换：本地路径映射（emby.path_mapping，与建库插件/6086 反代共用）
+	embyPath := h.mapToEmbyPath(localPath)
+	style := cfg.Style
+	if style == "" {
+		var old struct {
+			Style string `json:"style"`
+		}
+		if v2 := h.getSettingValue("emby-refresh"); v2 != "" && json.Unmarshal([]byte(v2), &old) == nil {
+			style = old.Style
 		}
 	}
-	if cfg.Style == "windows" {
+	if style == "windows" {
 		embyPath = strings.ReplaceAll(embyPath, "/", "\\")
 	}
 
-	// 读取 Emby webhook 配置中的 server 地址（暂用 webhook 地址的 host）
-	var embySetting model.Setting
-	if h.DB.Where("key = ?", "emby-notify").First(&embySetting).Error != nil {
-		return
+	// Emby 地址与密钥：优先 EMBY管理 配置；未配置地址时回退从 webhook URL 提取（旧版）
+	embyServer, apiKey, ok := h.embyServerInfo()
+	if !ok {
+		var embySetting model.Setting
+		if h.DB.Where("key = ?", "emby-notify").First(&embySetting).Error != nil {
+			return
+		}
+		var embyCfg struct {
+			Webhook string `json:"webhook"`
+		}
+		json.Unmarshal([]byte(embySetting.Value), &embyCfg)
+		// webhook 格式: http://ip:port/api/emby/webhook?token=xxx
+		if embyCfg.Webhook == "" {
+			return
+		}
+		u, err := url.Parse(embyCfg.Webhook)
+		if err != nil {
+			return
+		}
+		embyServer = u.Scheme + "://" + u.Host
+		apiKey = ""
 	}
-	var embyCfg struct {
-		Webhook string `json:"webhook"`
-	}
-	json.Unmarshal([]byte(embySetting.Value), &embyCfg)
-
-	// 从 webhook 地址提取 Emby server
-	if embyCfg.Webhook == "" {
-		return
-	}
-	// webhook 格式: http://ip:port/api/emby/webhook?token=xxx
-	u, err := url.Parse(embyCfg.Webhook)
-	if err != nil {
-		return
-	}
-	embyServer := u.Scheme + "://" + u.Host
 
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// 优先按库刷新（CMS 同款）：取媒体库列表，将变更路径映射到所属库后逐库 Refresh
-	apiKey := ""
-	var refreshCfg struct {
-		ApiKey string `json:"api_key"`
-	}
-	if err := json.Unmarshal([]byte(s.Value), &refreshCfg); err != nil {
-		return
-	}
-	apiKey = strings.TrimSpace(refreshCfg.ApiKey)
+	apiKey = strings.TrimSpace(apiKey)
 	q := ""
 	if apiKey != "" {
 		q = "?api_key=" + url.QueryEscape(apiKey)
