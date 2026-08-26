@@ -4,8 +4,9 @@ services:
     container_name: strmhub
     restart: unless-stopped
     ports:
-      - "6060:6060"
-      - "6086:6086"
+      - "6060:6060"   # 管理后台
+      - "6086:6086"   # 302 直链代理
+      - "6666:6666"   # 预留：另一个网页服务
     volumes:
       - ./config:/config
       - ./data:/data

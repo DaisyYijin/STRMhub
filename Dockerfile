@@ -34,7 +34,8 @@ COPY --from=builder /build/strmhub .
 # 复制前端静态资源
 COPY --from=builder /build/web ./web
 
-EXPOSE 6060 6086
+# 6060 管理后台 / 6086 302直链代理 / 6666 预留（另一个网页服务）
+EXPOSE 6060 6086 6666
 
 VOLUME ["/config", "/data", "/media", "/logs"]
 
