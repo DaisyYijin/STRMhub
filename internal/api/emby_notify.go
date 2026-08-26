@@ -203,20 +203,23 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 		return ""
 	}
 	event := strings.ToLower(getStr("Event", "event", "NotificationType", "notification_type"))
-	itemName := ""
-	if item, ok := payload["Item"].(map[string]interface{}); ok {
-		if n, ok := item["Name"].(string); ok {
-			itemName = n
+	// 片名：兼容 Emby 官方 Item.Name 与 Plex 兼容格式的 Metadata.title（社区 Webhooks 插件）
+	getNested := func(holders []string, keys []string) string {
+		for _, holder := range holders {
+			if m, ok := payload[holder].(map[string]interface{}); ok {
+				for _, k := range keys {
+					if v, ok := m[k].(string); ok && v != "" {
+						return v
+					}
+				}
+			}
 		}
+		return ""
 	}
-	userName := ""
-	if user, ok := payload["User"].(map[string]interface{}); ok {
-		if n, ok := user["Name"].(string); ok {
-			userName = n
-		}
-	}
+	itemName := getNested([]string{"Item", "Metadata"}, []string{"Name", "title", "fullTitle"})
+	userName := getNested([]string{"User", "Account"}, []string{"Name", "title"})
 
-	// 事件归类（stop 归入暂停/停止，需先于 play 判断，避免 "Playback start" 误命中）
+	// 事件归类（stop 归入暂停/停止，需先于 play 判断，避免 "Playback start" 误命中；resume 归入播放）
 	category, title := "", ""
 	switch {
 	case strings.Contains(event, "add"):
@@ -225,7 +228,7 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 		category, title = "deleted", "🗑️ Emby 删除"
 	case strings.Contains(event, "pause"), strings.Contains(event, "stop"):
 		category, title = "pause", "⏸️ Emby 暂停/停止"
-	case strings.Contains(event, "play"), strings.Contains(event, "start"):
+	case strings.Contains(event, "play"), strings.Contains(event, "start"), strings.Contains(event, "resume"):
 		category, title = "play", "▶️ Emby 播放"
 	}
 	if category == "" {
