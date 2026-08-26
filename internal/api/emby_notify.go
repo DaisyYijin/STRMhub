@@ -169,19 +169,23 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 // 可选鉴权：配置的 Webhook 地址带 ?token=xxx 时，请求需携带相同 token 才被接受
 func (h *Handler) EmbyWebhook(c *gin.Context) {
 	var notifyCfg struct {
-		Webhook string         `json:"webhook"`
+		Webhook string          `json:"webhook"`
+		Token   string          `json:"token"`
 		Events  map[string]bool `json:"events"`
 	}
 	if v := h.getSettingValue("emby-notify"); v != "" {
 		_ = json.Unmarshal([]byte(v), &notifyCfg)
 	}
-	if notifyCfg.Webhook != "" {
+	// 鉴权 token：优先专用 token 字段（界面自动生成），兼容旧版存在 webhook URL 里的 token
+	wantToken := strings.TrimSpace(notifyCfg.Token)
+	if wantToken == "" && notifyCfg.Webhook != "" {
 		if u, err := url.Parse(notifyCfg.Webhook); err == nil {
-			if want := u.Query().Get("token"); want != "" && c.Query("token") != want {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "token 无效"})
-				return
-			}
+			wantToken = u.Query().Get("token")
 		}
+	}
+	if wantToken != "" && c.Query("token") != wantToken {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 无效"})
+		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))

@@ -1311,16 +1311,28 @@ function testEmbyPath() {
   out.textContent = result;
 }
 
-// Emby Webhook 接收地址：展示本机地址并一键复制（Emby 服务器需能访问到本服务）
-function embyWebhookAddress() { return location.origin + '/api/emby/webhook'; }
-function fillEmbyWebhookHint() {
-  const el = document.getElementById('emby-webhook-hint');
-  if (el) el.textContent = '本服务接收地址：' + embyWebhookAddress();
+// Emby Webhook 接收地址：token 首次自动生成并落库，直接展示可复制地址（推送什么事件由 Emby 侧决定）
+let embyNotifyToken = '';
+function applyEmbyNotify(v) {
+  embyNotifyToken = (v && v.token) || '';
+  // 兼容旧版：token 存在旧 webhook 地址里的场景
+  if (!embyNotifyToken && v && v.webhook) {
+    const m = v.webhook.match(/[?&]token=([^&]+)/);
+    if (m) embyNotifyToken = m[1];
+  }
+  if (!embyNotifyToken) {
+    // 生成 16 位随机密钥并立即保存，保证展示地址与后端校验一致
+    const buf = new Uint8Array(8);
+    crypto.getRandomValues(buf);
+    embyNotifyToken = [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
+    api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'emby-notify', value: JSON.stringify({ token: embyNotifyToken }) }) }).catch(() => {});
+  }
+  const el = document.getElementById('emby-webhook-url');
+  if (el) el.textContent = location.origin + '/api/emby/webhook?token=' + embyNotifyToken;
 }
 function copyEmbyWebhook(btn) {
-  const addr = embyWebhookAddress();
+  const addr = location.origin + '/api/emby/webhook?token=' + (embyNotifyToken || '');
   navigator.clipboard?.writeText(addr).then(() => toast('已复制：' + addr)).catch(() => toast(addr));
-  fillEmbyWebhookHint();
 }
 
 // 消息通知
@@ -1452,9 +1464,7 @@ function collectConfig(key) {
     return { url: document.getElementById('proxy-url').value };
   }
   if (key === 'emby-notify') {
-    const events = {};
-    document.querySelectorAll('#page-config-system [data-event]').forEach(cb => { events[cb.dataset.event] = cb.checked; });
-    return { webhook: document.getElementById('emby-notify-webhook').value, events };
+    return { token: embyNotifyToken };
   }
   if (key === 'message') {
     return {
@@ -1544,12 +1554,7 @@ function applyConfig(key, v) {
   } else if (key === 'proxy') {
     if (v.url !== undefined) document.getElementById('proxy-url').value = v.url;
   } else if (key === 'emby-notify') {
-    if (v.webhook !== undefined) document.getElementById('emby-notify-webhook').value = v.webhook;
-    if (v.events) {
-      document.querySelectorAll('#page-config-system [data-event]').forEach(cb => {
-        if (v.events[cb.dataset.event] !== undefined) cb.checked = v.events[cb.dataset.event] === true || v.events[cb.dataset.event] === 'true';
-      });
-    }
+    applyEmbyNotify(v);
   } else if (key === 'message') {
     if (v.wecom) {
       setVal('msg-wecom-corp-id', v.wecom.corp_id);
@@ -1745,7 +1750,7 @@ const DEFAULT_CONFIGS = {
   'emby': { server_url: '', api_key: '', path_mapping: '', style: 'unix', refresh_enabled: true },
   'strm': { domain: '', format: 'p', keep_ext: 'true', skip_exist: 'overwrite' },
   'proxy': { url: '' },
-  'emby-notify': { webhook: '' },
+  'emby-notify': { token: '' },
   'org-basic': { pending: '', pending_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
   'org-recognize': { replace_rules: '', release_groups: '', min_size: '0' },
   'org-gpt': { url: 'https://api.siliconflow.cn/v1', key: '', model: '' },
@@ -1822,7 +1827,8 @@ async function loadConfigs() {
       applyConfig(key, JSON.parse(data.value));
     } catch (e) {}
   }));
-  fillEmbyWebhookHint();
+  // emby-notify 可能尚无配置（首次使用），走同一逻辑生成 token 并展示地址
+  if (!document.getElementById('emby-webhook-url')?.textContent) applyEmbyNotify({});
   // 旧版 emby-refresh 配置迁移：在 emby 配置应用完成后统一回填，避免并行竞态
   try {
     const data = await api('/config/setting?key=emby-refresh');
