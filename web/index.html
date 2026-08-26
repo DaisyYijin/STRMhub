@@ -834,7 +834,7 @@ av:
 
       <div class="alert alert-info">在 emby 入库/删除/播放时进行消息通知。把下方地址填到 Emby 的 Webhooks（请求方式 POST，内容类型 application/json），推送哪些事件由 Emby 侧勾选决定；token 为本实例自动生成的鉴权密钥。</div>
         <div class="card">
-          <div class="form-row"><div class="label">接收地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 服务器需能访问此地址（Docker 部署时注意换成 Emby 容器可达的 IP，如 172.17.0.1）。</span></i></div><div class="control"><div class="form-inline-group"><code id="emby-webhook-url" style="flex:1;font-size:13px;color:var(--primary);word-break:break-all"></code><button class="btn btn-outline" onclick="copyEmbyWebhook(this)">复制</button></div></div></div>
+          <div class="form-row"><div class="label">接收地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 服务器需能访问此地址（Docker 部署时注意换成 Emby 容器可达的 IP，如 172.17.0.1）。</span></i></div><div class="control"><div class="form-inline-group"><code id="emby-webhook-url" style="flex:1;font-size:13px;color:var(--primary);word-break:break-all"></code><button class="btn btn-outline" onclick="copyEmbyWebhook(this)">复制</button><button class="btn btn-outline" onclick="rotateEmbyWebhookToken()">换一个</button></div><div class="hint">「换一个」重新生成鉴权 token 并立即生效，旧地址随即失效，需到 Emby 里更新为新地址。</div></div></div>
 
       </div>
 
@@ -988,6 +988,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=82"></script>
+<script src="/js/app.js?v=83"></script>
 </body>
 </html>

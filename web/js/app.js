@@ -1321,14 +1321,28 @@ function applyEmbyNotify(v) {
     if (m) embyNotifyToken = m[1];
   }
   if (!embyNotifyToken) {
-    // 生成 16 位随机密钥并立即保存，保证展示地址与后端校验一致
-    const buf = new Uint8Array(8);
-    crypto.getRandomValues(buf);
-    embyNotifyToken = [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
-    api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'emby-notify', value: JSON.stringify({ token: embyNotifyToken }) }) }).catch(() => {});
+    saveEmbyNotifyToken(genEmbyNotifyToken());
   }
+  renderEmbyWebhookUrl();
+}
+function genEmbyNotifyToken() {
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  return [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function saveEmbyNotifyToken(t) {
+  embyNotifyToken = t;
+  api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'emby-notify', value: JSON.stringify({ token: t }) }) })
+    .then(() => { renderEmbyWebhookUrl(); })
+    .catch(() => { toast('token 保存失败'); });
+}
+function renderEmbyWebhookUrl() {
   const el = document.getElementById('emby-webhook-url');
   if (el) el.textContent = location.origin + '/api/emby/webhook?token=' + embyNotifyToken;
+}
+function rotateEmbyWebhookToken() {
+  saveEmbyNotifyToken(genEmbyNotifyToken());
+  toast('已生成新 token，请到 Emby 更新回调地址');
 }
 function copyEmbyWebhook(btn) {
   const addr = location.origin + '/api/emby/webhook?token=' + (embyNotifyToken || '');
