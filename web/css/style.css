@@ -88,7 +88,7 @@ select { width: auto; min-width: 120px; max-width: 480px; cursor: pointer; }
 
 /* 分段开关（启用/禁用） */
 .segmented-control { display: inline-flex; background: var(--fill-2); border-radius: var(--radius); padding: 2px; }
-.seg-item { padding: 6px 24px; font-size: 14px; color: var(--text-2); cursor: pointer; border-radius: var(--radius); transition: all .15s; }
+.seg-item { padding: 4px 18px; font-size: 13px; line-height: 20px; color: var(--text-2); cursor: pointer; border-radius: var(--radius); transition: all .15s; }
 .seg-item.active { background: var(--white); color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 
 /* 提示框图标 */
@@ -500,4 +500,7 @@ tr:hover td { background: var(--fill-1); }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .test-result { display: block; margin-top: 6px; font-size: 13px; line-height: 1.5; word-break: break-all; }
 /* 小号分段开关（如消息渠道的状态行） */
-.seg-sm .seg-item { padding: 3px 14px; font-size: 12px; }
+.seg-sm .seg-item { padding: 3px 14px; font-size: 12px; line-height: 18px; }
+/* 表单行内与标签垂直居中：默认开关 32px / 小号 28px，相对 36px 控件行各偏移 2px/4px */
+.form-row .control .segmented-control { margin-top: 2px; }
+.form-row .control .seg-sm { margin-top: 4px; }
