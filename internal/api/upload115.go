@@ -214,6 +214,8 @@ func rapidUploadInit115(client *driver115.Pan115Client, appVer string, fileSize 
 			retry = false
 		}
 	}
+	// 库的 RapidUpload 同款：SHA1 回填（UploadByOSS 上传后按它校验结果）
+	result.SHA1 = fileID
 	return result, nil
 }
 
