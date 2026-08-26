@@ -15,8 +15,10 @@ package api
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SheltonZhu/115driver/pkg/crypto/ec115"
 	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
 )
 
@@ -102,8 +105,10 @@ func (h *Handler) upload115File(cookie string, pid int64, filename string, data 
 	return fmt.Errorf("未找到可用的 115 凭据（OpenAPI 未授权且 Cookie 为空）")
 }
 
-// upload115FileCookie Cookie 通道上传（SheltonZhu/115driver：ECDH 加密
-// initupload + 秒传/OSS 直传/上传结果校验全由库完成，OpenList 同款）
+// upload115FileCookie Cookie 通道上传（ECDH 加密 initupload + 秒传/OSS 直传，
+// OpenList/115driver 同款协议）。init 请求自行实现：库内写死的 appversion
+// （27.x）已被 115 拒绝（报「请升级到最新版本」），这里注入动态获取的
+// 最新客户端版本号（与同步链路 getAppVerCached 同源）。
 func (h *Handler) upload115FileCookie(cookie string, pid int64, filename string, data []byte) error {
 	client := driver115.New(driver115.UA(h.get115UA()))
 	cr := &driver115.Credential{}
@@ -123,7 +128,7 @@ func (h *Handler) upload115FileCookie(cookie string, pid int64, filename string,
 
 	// 上传属写操作，纳入全局节流（复用 proapi 域名的间隔锚点）
 	throttle115(driver115.ApiUploadInfo)
-	init, err := client.RapidUpload(fileSize, filename, dirID, preID, fileID, bytes.NewReader(data))
+	init, err := rapidUploadInit115(client, getAppVerCached(), fileSize, filename, dirID, preID, fileID, bytes.NewReader(data))
 	throttle115Done(driver115.ApiUploadInfo)
 	if err != nil {
 		return fmt.Errorf("upload init 失败: %w", err)
@@ -136,6 +141,89 @@ func (h *Handler) upload115FileCookie(cookie string, pid int64, filename string,
 		return nil // 秒传完成
 	}
 	return client.UploadByOSS(&init.UploadOSSParams, bytes.NewReader(data), dirID)
+}
+
+// rapidUploadInit115 Cookie 通道 upload init（115driver RapidUpload 同款
+// 流程：ECDH 加密表单 + k_ec 令牌 + status 7 二次认证重试，可注入 appVer）
+func rapidUploadInit115(client *driver115.Pan115Client, appVer string, fileSize int64, fileName, dirID, preID, fileID string, r io.ReadSeeker) (*driver115.UploadInitResp, error) {
+	ecdh, err := ec115.NewEcdhCipher()
+	if err != nil {
+		return nil, err
+	}
+	if ok, err := client.UploadAvailable(); !ok || err != nil {
+		return nil, err
+	}
+	userID := strconv.FormatInt(client.UserID, 10)
+	target := "U_1_" + dirID
+	fileSizeStr := strconv.FormatInt(fileSize, 10)
+	form := url.Values{}
+	form.Set("appid", "0")
+	form.Set("appversion", appVer)
+	form.Set("userid", userID)
+	form.Set("filename", fileName)
+	form.Set("filesize", fileSizeStr)
+	form.Set("fileid", fileID)
+	form.Set("target", target)
+	form.Set("sig", client.GenerateSignature(fileID, target))
+	form.Set("topupload", "true")
+
+	signKey, signVal := "", ""
+	result := &driver115.UploadInitResp{}
+	for retry := true; retry; {
+		t := driver115.NowMilli()
+		encodedToken, err := ecdh.EncodeToken(t.ToInt64())
+		if err != nil {
+			return nil, err
+		}
+		form.Set("t", t.String())
+		form.Set("token", uploadToken115(client.UserID, fileID, preID, t.String(), fileSizeStr, signKey, signVal, appVer))
+		if signKey != "" && signVal != "" {
+			form.Set("sign_key", signKey)
+			form.Set("sign_val", signVal)
+		}
+		encrypted, err := ecdh.Encrypt([]byte(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.NewRequest().
+			SetQueryParams(map[string]string{"k_ec": encodedToken}).
+			SetBody(encrypted).
+			SetHeaderVerbatim("Content-Type", "application/x-www-form-urlencoded").
+			SetDoNotParseResponse(true).
+			Post(driver115.ApiUploadInit)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.RawBody())
+		resp.RawBody().Close()
+		if err != nil {
+			return nil, err
+		}
+		decrypted, err := ecdh.Decrypt(body)
+		if err != nil {
+			return nil, err
+		}
+		result = &driver115.UploadInitResp{}
+		if err := driver115.CheckErr(json.Unmarshal(decrypted, result), result, resp); err != nil {
+			return nil, err
+		}
+		if result.Status == 7 {
+			signKey = result.SignKey
+			signVal, _ = client.UploadDigestRange(r, result.SignCheck)
+		} else {
+			retry = false
+		}
+	}
+	return result, nil
+}
+
+// uploadToken115 115driver GenerateToken 同款算法，appVer 可注入最新版本
+func uploadToken115(userID int64, fileID, preID, timeStamp, fileSize, signKey, signVal, appVer string) string {
+	uid := strconv.FormatInt(userID, 10)
+	uidMd5 := md5.Sum([]byte(uid))
+	tokenMd5 := md5.Sum([]byte("Qclm8MGWUv59TnrR0XPg" + fileID + fileSize + signKey + signVal +
+		uid + timeStamp + hex.EncodeToString(uidMd5[:]) + appVer))
+	return hex.EncodeToString(tokenMd5[:])
 }
 
 // upload115FileOpen OpenAPI 通道上传
