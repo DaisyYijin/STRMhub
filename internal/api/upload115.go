@@ -2,19 +2,18 @@ package api
 
 // ==================== 115 文件上传 + 监控上传引擎 ====================
 //
-// 上传走 115 OpenAPI（LitePan 同款流程，需要「账号管理 → OpenAPI 授权」）：
-//  1. POST {open}/open/upload/init（fileid=全量SHA1, preid=前128KB SHA1,
-//     file_name/file_size/target=U_1_{pid}, topupload=0，Bearer 鉴权）
-//     status=2 秒传直接完成；status=6/7/8 触发二次认证（sign_check 指定
-//     偏移区间的 SHA1 复验）；status=1 返回 OSS bucket/object/callback
-//  2. GET {open}/open/upload/get_token → OSS 临时凭证（含 endpoint）
-//  3. PUT https://{bucket}.{endpoint}/{object}，OSS 签名 + x-oss-callback
-//     回调头，由 115 服务端确认入库
+// 上传双通道（与同步一致：OpenAPI 优先，Cookie 回退）：
+//  · OpenAPI：POST {open}/open/upload/init（fileid=全量SHA1, preid=前128KB
+//    SHA1, Bearer 鉴权）status=2 秒传 / 6/7/8 二次认证 / 1 走 OSS；
+//    凭证 /open/upload/get_token，PUT {bucket}.{endpoint}/{object} 带回调头
+//  · Cookie：SheltonZhu/115driver 库（OpenList 同款）——ECDH 加密的
+//    uplb.115.com/4.0/initupload.php，秒传 + OSS 直传 + 结果校验全内置
 //
 // 监控上传（CMS media_moni 同款）：定期扫描本地媒体目录中 Emby 新生成的
 // 图片，按目录结构对应上传到 115 剧集目录（本地 strm 结构与网盘一致）。
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -31,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
 )
 
 // flexStatus 兼容数字/字符串两种 status 形态
@@ -88,12 +89,57 @@ func openOSSTokenFromMap(raw map[string]any) openOSSCredential {
 	}
 }
 
-// upload115File 上传文件内容到 115 指定目录（OpenAPI 通道；秒传或 OSS 直传）
-func (h *Handler) upload115File(pid int64, filename string, data []byte) error {
-	oc := h.getOpen115()
-	if oc == nil || !oc.authorized() {
-		return fmt.Errorf("上传需要 115 OpenAPI 授权，请到「账号管理」完成 OpenAPI 授权后重试")
+// upload115File 上传文件内容到 115 指定目录（秒传或 OSS 直传）。
+// 双通道：OpenAPI 已授权走官方开放接口；否则回退 Cookie 通道
+// （115driver 库，OpenList/CMS 同款，扫码登录即可上传）。
+func (h *Handler) upload115File(cookie string, pid int64, filename string, data []byte) error {
+	if oc := h.getOpen115(); oc != nil && oc.authorized() {
+		return h.upload115FileOpen(oc, pid, filename, data)
 	}
+	if cookie != "" {
+		return h.upload115FileCookie(cookie, pid, filename, data)
+	}
+	return fmt.Errorf("未找到可用的 115 凭据（OpenAPI 未授权且 Cookie 为空）")
+}
+
+// upload115FileCookie Cookie 通道上传（SheltonZhu/115driver：ECDH 加密
+// initupload + 秒传/OSS 直传/上传结果校验全由库完成，OpenList 同款）
+func (h *Handler) upload115FileCookie(cookie string, pid int64, filename string, data []byte) error {
+	client := driver115.New(driver115.UA(h.get115UA()))
+	cr := &driver115.Credential{}
+	if err := cr.FromCookie(cookie); err != nil {
+		return fmt.Errorf("Cookie 格式异常: %w", err)
+	}
+	client.ImportCredential(cr)
+
+	fileSize := int64(len(data))
+	fileID := strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data)))
+	preLen := len(data)
+	if preLen > 128*1024 {
+		preLen = 128 * 1024
+	}
+	preID := strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data[:preLen])))
+	dirID := strconv.FormatInt(pid, 10)
+
+	// 上传属写操作，纳入全局节流（复用 proapi 域名的间隔锚点）
+	throttle115(driver115.ApiUploadInfo)
+	init, err := client.RapidUpload(fileSize, filename, dirID, preID, fileID, bytes.NewReader(data))
+	throttle115Done(driver115.ApiUploadInfo)
+	if err != nil {
+		return fmt.Errorf("upload init 失败: %w", err)
+	}
+	fast, err := init.Ok()
+	if err != nil {
+		return fmt.Errorf("upload init 被拒: %w", err)
+	}
+	if fast {
+		return nil // 秒传完成
+	}
+	return client.UploadByOSS(&init.UploadOSSParams, bytes.NewReader(data), dirID)
+}
+
+// upload115FileOpen OpenAPI 通道上传
+func (h *Handler) upload115FileOpen(oc *open115Client, pid int64, filename string, data []byte) error {
 	sha := strings.ToUpper(fmt.Sprintf("%x", sha1.Sum(data)))
 	n := len(data)
 	if n > 128*1024 {
@@ -442,7 +488,7 @@ func monitorOnce(h *Handler) {
 		if err != nil {
 			continue
 		}
-		if err := h.upload115File(parseI64(cid), filepath.Base(img), data); err != nil {
+		if err := h.upload115File(cookie, parseI64(cid), filepath.Base(img), data); err != nil {
 			log.Printf("[上传] ✗ 上传失败 %s: %v", rel, err)
 			continue
 		}
@@ -575,7 +621,7 @@ func (h *Handler) uploadMetadataOnce() {
 		if err != nil {
 			continue
 		}
-		if err := h.upload115File(parseI64(cid), filepath.Base(f), data); err != nil {
+		if err := h.upload115File(cookie, parseI64(cid), filepath.Base(f), data); err != nil {
 			fail++
 			log.Printf("[元数据回传] ✗ 失败 %s: %v", rel, err)
 			continue
