@@ -144,10 +144,13 @@ func main() {
 	r.Static("/css", "./web/css")
 	r.Static("/js", "./web/js")
 	r.StaticFile("/cms-115.png", "./web/cms-115.png")
-	r.StaticFile("/", "./web/index.html")
-	r.NoRoute(func(c *gin.Context) {
+	// index.html 禁用启发式缓存：升级后浏览器总是重新校验，避免页面拿到旧 HTML 搭配新 ?v= 资产
+	serveIndex := func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
 		c.File("./web/index.html")
-	})
+	}
+	r.GET("/", serveIndex)
+	r.NoRoute(serveIndex)
 
 	// 启动302代理（独立端口）
 	go api.StartProxy(db, cfg)
