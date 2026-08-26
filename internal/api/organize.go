@@ -739,21 +739,13 @@ func checkExistsVerified(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAb
 	return true
 }
 
-// cloudPathExistsCk 校验网盘绝对路径是否存在（webapi files/getid）
+// cloudPathExistsCk 校验网盘绝对路径是否存在（webapi files/getid，复用 cloudPathCidE）
 func cloudPathExistsCk(cookie, absPath string) bool {
-	body, err := httpGet115UA("https://webapi.115.com/files/getid",
-		url.Values{"path": {absPath}}, cookie, ua115Unified(), 15*time.Second)
+	_, ok, err := cloudPathCidE(cookie, absPath)
 	if err != nil {
 		return true // 查询失败保守按存在
 	}
-	var r struct {
-		State bool                      `json:"state"`
-		Data  []map[string]interface{} `json:"data"`
-	}
-	if json.Unmarshal(body, &r) != nil {
-		return true
-	}
-	return r.State && len(r.Data) > 0
+	return ok
 }
 
 // recordMedia 记录已整理的媒体到数据库

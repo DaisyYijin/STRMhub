@@ -370,9 +370,16 @@ func (h *Handler) uploadMetadataOnce() {
 		}
 		cid, found := cloudPathCid(cookie, targetAbs)
 		if !found {
-			log.Printf("[元数据回传] ○ 云端目录不存在，跳过 %s（%s）", rel, targetAbs)
+			// 同一文件连续多轮查不到云端目录就停止重试（防每 5 分钟刷屏）
+			metaMissCount[f]++
+			if metaMissCount[f] <= 2 {
+				log.Printf("[元数据回传] ○ 云端目录不存在，跳过 %s（%s）", rel, targetAbs)
+			} else if metaMissCount[f] == 3 {
+				log.Printf("[元数据回传] ○ %s 连续 3 轮未找到云端目录，本会话内不再重试（如目录确实存在请反馈日志）", rel)
+			}
 			continue
 		}
+		delete(metaMissCount, f)
 		data, err := os.ReadFile(f)
 		if err != nil {
 			continue
@@ -394,6 +401,9 @@ func (h *Handler) uploadMetadataOnce() {
 // metaUploadedMark 已回传路径标记（会话级）
 var metaUploadedMark = map[string]bool{}
 
+// metaMissCount 云端目录连续未命中计数（会话级；达到上限后不再重试防刷屏）
+var metaMissCount = map[string]int{}
+
 // isStandardMediaImageName Emby/Jellyfin 标准媒体图片命名
 //（poster/fanart/banner/logo/clearart/disc…及 seasonXX-poster 等变体）
 func isStandardMediaImageName(lowerName string) bool {
@@ -414,23 +424,72 @@ func isStandardMediaImageName(lowerName string) bool {
 	return false
 }
 
-// cloudPathCid 按绝对路径查询 115 目录 cid（files/getid）
+// cloudPathCid 按绝对路径查询 115 目录 cid（webapi files/getid）。
+// path 参数不带前导斜杠（openStrm 生产验证的调用形态）；
+// 响应顶层是 id 字段（非 data 数组），同时兼容 data 数组/对象等历史形态。
+// 查询失败/解析异常时打印原始响应，便于排查。
 func cloudPathCid(cookie, absPath string) (string, bool) {
+	cid, ok, _ := cloudPathCidE(cookie, absPath)
+	return cid, ok
+}
+
+// cloudPathCidE 同 cloudPathCid，额外返回请求/解析错误（区分「目录不存在」与「查询失败」）
+func cloudPathCidE(cookie, absPath string) (cid string, found bool, reqErr error) {
+	pathParam := strings.TrimLeft(absPath, "/")
 	body, err := httpGet115UA("https://webapi.115.com/files/getid",
-		url.Values{"path": {absPath}}, cookie, ua115Unified(), 15*time.Second)
+		url.Values{"path": {pathParam}}, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
-		return "", false
+		log.Printf("[元数据回传] files/getid 请求失败（%s）: %v", pathParam, err)
+		return "", false, err
 	}
+	return getidCidFromResponse(body, pathParam)
+}
+
+// getidCidFromResponse 解析 files/getid 响应（纯函数，便于测试）。
+// found=false 表示目录不存在（正常业务结果）；err 非 nil 表示响应异常。
+func getidCidFromResponse(body []byte, pathParam string) (cid string, found bool, err error) {
 	var r struct {
-		State bool `json:"state"`
-		Data  []struct {
+		State bool            `json:"state"`
+		ID    json.Number     `json:"id"`
+		Data  json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		log.Printf("[元数据回传] files/getid 响应解析失败（%s）: %s", pathParam, truncateStr(string(body), 160))
+		return "", false, err
+	}
+	// 主形态：顶层 id（openStrm 生产验证）
+	if s := r.ID.String(); s != "" && s != "0" {
+		return s, true, nil
+	}
+	// 兼容形态：data 数组 [{"cid":...}]
+	if len(r.Data) > 0 && r.Data[0] == '[' {
+		var arr []struct {
 			Cid string `json:"cid"`
-		} `json:"data"`
+		}
+		if json.Unmarshal(r.Data, &arr) == nil && len(arr) > 0 && arr[0].Cid != "" {
+			return arr[0].Cid, true, nil
+		}
 	}
-	if json.Unmarshal(body, &r) != nil || !r.State || len(r.Data) == 0 {
-		return "", false
+	// 兼容形态：data 对象 {"id":...} / {"cid":...}
+	if len(r.Data) > 0 && r.Data[0] == '{' {
+		var obj struct {
+			ID  json.Number `json:"id"`
+			Cid string      `json:"cid"`
+		}
+		if json.Unmarshal(r.Data, &obj) == nil {
+			if s := obj.ID.String(); s != "" && s != "0" {
+				return s, true, nil
+			}
+			if obj.Cid != "" && obj.Cid != "0" {
+				return obj.Cid, true, nil
+			}
+		}
 	}
-	return r.Data[0].Cid, true
+	// state=true 却没取到 id：响应形态又变了，打印原始内容供排查
+	if r.State {
+		log.Printf("[元数据回传] files/getid 响应缺少 id 字段（%s）: %s", pathParam, truncateStr(string(body), 160))
+	}
+	return "", false, nil
 }
 
 // cookieUserID 从 Cookie 的 UID 字段提取用户 id（UID=xxx_格式）
