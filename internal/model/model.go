@@ -136,6 +136,16 @@ type MediaLibrary struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// UploadMark 已上传元数据文件的指纹（监控/兜底两引擎共用）。
+// 持久化到 DB：重启后不再重复上传；Emby 重新刮削覆盖文件时
+// mtime/size 变化，指纹不匹配即触发重传。
+type UploadMark struct {
+	ID      uint   `json:"id" gorm:"primaryKey"`
+	Path    string `json:"path" gorm:"uniqueIndex;size:500"`
+	ModTime int64  `json:"mod_time"` // unix nano
+	Size    int64  `json:"size"`
+}
+
 // SyncEvent 115 生活事件落库（增量同步两阶段：先落库去重，再应用到本地）
 type SyncEvent struct {
 	ID        uint   `json:"id" gorm:"primaryKey"`
@@ -213,6 +223,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&MediaLibrary{},
 		&SyncEvent{},
 		&SyncedFile{},
+		&UploadMark{},
 	); err != nil {
 		return nil, err
 	}

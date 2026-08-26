@@ -35,6 +35,10 @@ import (
 
 	"github.com/SheltonZhu/115driver/pkg/crypto/ec115"
 	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"strmhub/internal/model"
 )
 
 // flexStatus 兼容数字/字符串两种 status 形态
@@ -450,7 +454,22 @@ func (a fileStamp) same(b fileStamp) bool {
 	return a.size == b.size && a.modTime.Equal(b.modTime)
 }
 
-var uploadedState = map[string]fileStamp{} // 监控上传：已上传文件指纹（会话级）
+// uploadStampDone 该文件是否已按当前指纹上传过（DB 持久化，重启不重复上传）
+func uploadStampDone(db *gorm.DB, path string, st fileStamp) bool {
+	var m model.UploadMark
+	if err := db.Where("path = ?", path).First(&m).Error; err != nil {
+		return false
+	}
+	return m.ModTime == st.modTime.UnixNano() && m.Size == st.size
+}
+
+// markUploadedStamp 记录上传指纹（存在则更新；Emby 覆盖文件后指纹变化触发重传）
+func markUploadedStamp(db *gorm.DB, path string, st fileStamp) {
+	db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{"mod_time", "size"}),
+	}).Create(&model.UploadMark{Path: path, ModTime: st.modTime.UnixNano(), Size: st.size})
+}
 
 // StartMonitorUploader 启动监控上传：定期扫描监控目录中新生成的图片，
 // 按本地目录结构对应上传到 115 媒体库（本地 strm 树与网盘一致）
@@ -534,8 +553,8 @@ func monitorOnce(h *Handler) {
 		}
 		if info, err := d.Info(); err == nil && info.ModTime().After(cutoff) {
 			st := fileStamp{modTime: info.ModTime(), size: info.Size()}
-			if prev, ok := uploadedState[p]; ok && prev.same(st) {
-				return nil // 已上传且未变化
+			if uploadStampDone(h.DB, p, st) {
+				return nil // 已上传且未变化（DB 持久，重启不重复）
 			}
 			imgs = append(imgs, p)
 		}
@@ -583,7 +602,7 @@ func monitorOnce(h *Handler) {
 			continue
 		}
 		if st, ok := stampOfPath(img); ok {
-			uploadedState[img] = st
+			markUploadedStamp(h.DB, img, st)
 		}
 		log.Printf("[上传] ✓ 上传成功: %s → %s", rel, targetAbs)
 	}
@@ -667,8 +686,8 @@ func (h *Handler) uploadMetadataOnce() {
 			}
 		}
 		if st, ok := stampOf(d); ok {
-			// 已上传且内容未变（mtime/size 一致）才跳过；Emby 重新刮削覆盖后会重传
-			if prev, ok2 := metaUploadedState[p]; ok2 && prev.same(st) {
+			// 已上传且内容未变（指纹一致）才跳过；Emby 重新刮削覆盖后会重传
+			if uploadStampDone(h.DB, p, st) {
 				return nil
 			}
 		}
@@ -717,7 +736,7 @@ func (h *Handler) uploadMetadataOnce() {
 			continue
 		}
 		if st, ok := stampOfPath(f); ok {
-			metaUploadedState[f] = st
+			markUploadedStamp(h.DB, f, st)
 		}
 		ok++
 		log.Printf("[元数据回传] ✓ %s → %s", rel, targetAbs)
@@ -726,10 +745,6 @@ func (h *Handler) uploadMetadataOnce() {
 		log.Printf("[元数据回传] 本轮完成: 成功 %d，失败 %d", ok, fail)
 	}
 }
-
-// metaUploadedState 已回传文件指纹（会话级）：mtime/size 变化即视为
-// Emby 重新刮削覆盖，下一轮重新上传；内容未变时 115 秒传命中不产生重复
-var metaUploadedState = map[string]fileStamp{}
 
 // metaMissCount 云端目录连续未命中计数（会话级；达到上限后不再重试防刷屏）
 var metaMissCount = map[string]int{}
