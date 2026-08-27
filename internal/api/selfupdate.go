@@ -159,6 +159,16 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	}
 	insp, err := dockerRequestJSON(client, "GET", "/containers/"+selfID+"/json", nil)
 	if err != nil {
+		// ID 未命中（cgroup namespace 隐藏真实 ID / HOSTNAME 异常）：按镜像名兜底，
+		// 找"唯一运行中的 strmhub 镜像容器"即视为自身
+		if fallbackID, ferr := dockerFindSelfByImage(client); ferr == nil && fallbackID != "" && fallbackID != selfID {
+			if finsp, ierr := dockerRequestJSON(client, "GET", "/containers/"+fallbackID+"/json", nil); ierr == nil {
+				log.Printf("[自更新] HOSTNAME(%s) 未命中，已按镜像名兜底定位容器 %s", selfID, fallbackID[:12])
+				selfID, insp, err = fallbackID, finsp, nil
+			}
+		}
+	}
+	if err != nil {
 		// 附带诊断：列出该 socket 对应守护进程里可见的容器，区分"自定义 hostname"与"挂错 socket"
 		hint := ""
 		if names, lerr := dockerListContainerNames(client); lerr == nil && len(names) > 0 {
@@ -333,6 +343,39 @@ func selfContainerID() string {
 		}
 	}
 	return os.Getenv("HOSTNAME")
+}
+
+// dockerFindSelfByImage 按镜像名兜底定位自身：唯一运行中的 strmhub 镜像容器视为自己
+func dockerFindSelfByImage(client *http.Client) (string, error) {
+	resp, err := dockerDo(client, "GET", "/containers/json?all=1", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var list []struct {
+		ID    string   `json:"Id"`
+		Names []string `json:"Names"`
+		Image string   `json:"Image"`
+		State string   `json:"State"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return "", err
+	}
+	hit := ""
+	for _, it := range list {
+		img := strings.ToLower(it.Image)
+		name := ""
+		if len(it.Names) > 0 {
+			name = strings.TrimPrefix(it.Names[0], "/")
+		}
+		if it.State == "running" && (strings.Contains(img, "/strmhub") || strings.HasSuffix(img, "strmhub:latest") || strings.Contains(name, "strmhub")) {
+			if hit != "" {
+				return "", fmt.Errorf("发现多个 strmhub 容器，无法确定自身")
+			}
+			hit = it.ID
+		}
+	}
+	return hit, nil
 }
 
 // dockerListContainerNames 列出守护进程内所有容器名（自更新失败时诊断用）
