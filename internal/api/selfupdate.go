@@ -183,11 +183,30 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
 		return
 	}
-	imageRef, _ := insp["Config"].(map[string]interface{})["Image"].(string)
+	cfgMap, _ := insp["Config"].(map[string]interface{})
+	hostCfg, _ := insp["HostConfig"].(map[string]interface{})
+	imageRef, _ := cfgMap["Image"].(string)
 	containerName := strings.TrimPrefix(insp["Name"].(string), "/")
 	ref := normalizeImageRef(imageRef)
+	cfgCmd, cfgEnv, cfgLabels := cfgMap["Cmd"], cfgMap["Env"], cfgMap["Labels"]
+	cfgEntry, cfgWD, cfgUser := cfgMap["Entrypoint"], cfgMap["WorkingDir"], cfgMap["User"]
+	// compose 自定义网络需要显式 EndpointsConfig（静态 IP/别名缺失会导致启动失败）
+	endpoints := map[string]interface{}{}
+	if ns, ok := insp["NetworkSettings"].(map[string]interface{})["Networks"].(map[string]interface{}); ok {
+		for netName, nv := range ns {
+			if m, ok := nv.(map[string]interface{}); ok {
+				ep := map[string]interface{}{}
+				for _, k := range []string{"IPAMConfig", "Aliases", "MacAddress"} {
+					if v, ok := m[k]; ok && v != nil {
+						ep[k] = v
+					}
+				}
+				endpoints[netName] = ep
+			}
+		}
+	}
 	// 先清理上次失败残留的 -updating/-old 容器，避免本次改名冲突
-	for _, suffix := range []string{"-updating", "-old"} {
+	for _, suffix := range []string{"-updating", "-old", "-updater"} {
 		if resp, err := dockerDo(client, "DELETE", "/containers/"+containerName+suffix+"?force=1", nil); err == nil {
 			resp.Body.Close()
 		}
@@ -200,16 +219,72 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	}
 	log.Printf("[自更新] ✓ 镜像已拉取: %s（当前 v%s → v%s）", ref, buildVersion[:7], latest[:7])
 
-	// 3. 先应答客户端，再异步重建（stop 自身会切断连接）
-	go func() {
-		time.Sleep(800 * time.Millisecond)
-		if err := dockerRecreateSelf(client, selfID, containerName, ref, insp); err != nil {
-			log.Printf("[自更新] ✗ 重建容器失败: %v（旧容器仍在运行，可手动处理）", err)
-			return
+	// 3. 创建新容器（临时名；此刻旧容器仍在运行，无任何影响）
+	tmpName := containerName + "-updating"
+	if resp, err := dockerDo(client, "DELETE", "/containers/"+tmpName+"?force=1", nil); err == nil {
+		resp.Body.Close()
+	}
+	createCfg := map[string]interface{}{
+		"Image":      ref,
+		"Cmd":        cfgCmd, "Env": cfgEnv, "Labels": cfgLabels,
+		"Entrypoint": cfgEntry, "WorkingDir": cfgWD, "User": cfgUser,
+		"HostConfig": hostCfg,
+	}
+	if len(endpoints) > 0 {
+		createCfg["NetworkingConfig"] = map[string]interface{}{"EndpointsConfig": endpoints}
+	}
+	createBody, _ := json.Marshal(createCfg)
+	resp, err := dockerDo(client, "POST", "/containers/create?name="+url.QueryEscape(tmpName), createBody)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "创建新容器失败: " + err.Error()})
+		return
+	}
+	var created struct {
+		ID string `json:"Id"`
+	}
+	createCode := resp.StatusCode
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if createCode >= 400 || created.ID == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("创建新容器失败: HTTP %d", createCode)})
+		return
+	}
+	log.Printf("[自更新] ✓ 新容器已创建（%s）", tmpName)
+
+	// 4. 双改名（运行中容器可安全改名）：旧→bak 让出原名，新→原名
+	oldBak := containerName + "-old"
+	if resp, err := dockerDo(client, "DELETE", "/containers/"+oldBak+"?force=1", nil); err == nil {
+		resp.Body.Close()
+	}
+	if resp, err := dockerDo(client, "POST", "/containers/"+selfID+"/rename?name="+url.QueryEscape(oldBak), nil); err == nil {
+		resp.Body.Close()
+	} else {
+		_ = resp
+	}
+	if resp, err := dockerDo(client, "POST", "/containers/"+created.ID+"/rename?name="+url.QueryEscape(containerName), nil); err == nil {
+		resp.Body.Close()
+	} else {
+		_ = resp
+	}
+	log.Printf("[自更新] ✓ 改名完成（%s → %s，新容器已占用原名）", oldBak, containerName)
+
+	// 5. 启动更新辅助容器（独立进程）完成停旧/启新/清理——主容器不能停自己
+	if err := dockerLaunchUpdater(client, ref, selfID, created.ID, hostCfg); err != nil {
+		// 辅助容器失败：回滚改名，一切如旧
+		log.Printf("[自更新] ✗ %v，回滚改名", err)
+		if resp, e := dockerDo(client, "POST", "/containers/"+created.ID+"/rename?name="+url.QueryEscape(tmpName), nil); e == nil {
+			resp.Body.Close()
 		}
-		log.Printf("[自更新] ✓ 容器已用新镜像重建并启动")
-	}()
-	c.JSON(http.StatusAccepted, gin.H{"message": "镜像已拉取，容器即将重启（预计 10~30 秒），页面恢复后请刷新",
+		if resp, e := dockerDo(client, "POST", "/containers/"+selfID+"/rename?name="+url.QueryEscape(containerName), nil); e == nil {
+			resp.Body.Close()
+		}
+		if resp, e := dockerDo(client, "DELETE", "/containers/"+created.ID+"?force=1", nil); e == nil {
+			resp.Body.Close()
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error() + "（已回滚，服务未受影响）"})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"message": "镜像已拉取，容器切换中（约 10~30 秒），页面将自动刷新",
 		"latest": latest})
 }
 
@@ -258,105 +333,124 @@ func dockerPull(client *http.Client, ref string) error {
 	}
 }
 
-// dockerRecreateSelf 用相同配置重建容器（安全顺序 + 失败自动回滚）：
-// create(tmp) → stop(old) → rename(old→bak) → rename(tmp→原名) → start(new)
-// → 任一步失败自动回滚：删除未启动的新容器、旧容器改回原名并重新启动。
-func dockerRecreateSelf(client *http.Client, oldID, name, imageRef string, insp map[string]interface{}) error {
-	cfg := insp["Config"].(map[string]interface{})
-	hostCfg := insp["HostConfig"].(map[string]interface{})
-
-	// compose 自定义网络需要显式 EndpointsConfig（静态 IP/别名缺失会导致 start 失败）
-	endpoints := map[string]interface{}{}
-	if ns, ok := insp["NetworkSettings"].(map[string]interface{})["Networks"].(map[string]interface{}); ok {
-		for netName, nv := range ns {
-			if m, ok := nv.(map[string]interface{}); ok {
-				ep := map[string]interface{}{}
-				for _, k := range []string{"IPAMConfig", "Aliases", "MacAddress"} {
-					if v, ok := m[k]; ok && v != nil {
-						ep[k] = v
-					}
-				}
-				endpoints[netName] = ep
+// dockerLaunchUpdater 启动「更新辅助容器」执行更新收尾。
+// 主容器不能停自己（docker stop 会杀掉本进程，后续步骤无法执行），
+// 因此用一个独立容器（同一镜像、以 update-finish 子命令运行、挂同一 docker.sock）
+// 完成：停旧 → 启动新 → 删除旧。此前主容器已完成：创建新容器 + 双改名。
+func dockerLaunchUpdater(client *http.Client, imageRef, oldID, newID string, hostCfg map[string]interface{}) error {
+	// 从自身挂载里找 docker.sock 的 bind（辅助容器需要同样的 socket）
+	sockBind := ""
+	if binds, ok := hostCfg["Binds"].([]interface{}); ok {
+		for _, b := range binds {
+			if bs, ok := b.(string); ok && strings.HasSuffix(bs, ":"+dockerSockPath) {
+				sockBind = bs
+				break
 			}
 		}
 	}
-	create := map[string]interface{}{
-		"Image":      imageRef,
-		"Cmd":        cfg["Cmd"],
-		"Env":        cfg["Env"],
-		"Labels":     cfg["Labels"],
-		"Entrypoint": cfg["Entrypoint"],
-		"WorkingDir": cfg["WorkingDir"],
-		"User":       cfg["User"],
-		"HostConfig": hostCfg,
+	if sockBind == "" {
+		sockBind = dockerSockPath + ":" + dockerSockPath
 	}
-	if len(endpoints) > 0 {
-		create["NetworkingConfig"] = map[string]interface{}{"EndpointsConfig": endpoints}
-	}
-	createBody, _ := json.Marshal(create)
-
-	// 步骤辅助：执行并校验状态码（2xx/304 均视为成功）
-	step := func(desc, method, path string, ok304 bool) error {
-		resp, err := dockerDo(client, method, path, nil)
-		if err != nil {
-			return fmt.Errorf("%s: %w", desc, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode >= 400 || (resp.StatusCode == 304 && !ok304) {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-			return fmt.Errorf("%s: HTTP %d %s", desc, resp.StatusCode, truncateStr(string(b), 150))
-		}
-		log.Printf("[自更新] ✓ %s", desc)
-		return nil
-	}
-
-	// 1. 先创建新容器（临时名；端口冲突只在 start 时生效，create 不受影响）
-	tmpName := name + "-updating"
-	_ = step("清理残留临时容器", "DELETE", "/containers/"+tmpName+"?force=1", false)
-	resp, err := dockerDo(client, "POST", "/containers/create?name="+url.QueryEscape(tmpName), createBody)
+	body, _ := json.Marshal(map[string]interface{}{
+		"Image": imageRef,
+		"Cmd":   []string{"update-finish", oldID, newID},
+		"HostConfig": map[string]interface{}{
+			"Binds":        []string{sockBind},
+			"NetworkMode":  "none",
+			"AutoRemove":   false, // 保留现场便于排查，下次更新时自动清理
+		},
+		"Labels": map[string]string{"strmhub-role": "updater"},
+	})
+	resp, err := dockerDo(client, "POST", "/containers/create?name=strmhub-updater", body)
 	if err != nil {
-		return fmt.Errorf("create: %w", err)
+		return fmt.Errorf("创建辅助容器: %w", err)
 	}
 	var created struct {
 		ID string `json:"Id"`
 	}
-	createHTTP := resp.StatusCode
+	code := resp.StatusCode
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	if createHTTP >= 400 || created.ID == "" {
-		return fmt.Errorf("create 新容器: HTTP %d", createHTTP)
+	if code >= 400 || created.ID == "" {
+		return fmt.Errorf("创建辅助容器 HTTP %d", code)
 	}
-	log.Printf("[自更新] ✓ 新容器已创建（%s）", tmpName)
-
-	oldBak := name + "-old"
-	rollback := func(cause error) error {
-		log.Printf("[自更新] ✗ %v，自动回滚…", cause)
-		_ = step("删除未启动的新容器", "DELETE", "/containers/"+created.ID+"?force=1", false)
-		_ = step("旧容器改回原名", "POST", "/containers/"+oldID+"/rename?name="+url.QueryEscape(name), false)
-		if err := step("重新启动旧容器", "POST", "/containers/"+oldID+"/start", true); err != nil {
-			return fmt.Errorf("回滚失败：%v（旧容器 %s 需手动 docker start 恢复）", err, oldBak)
-		}
-		return fmt.Errorf("启动新容器失败，已自动回滚到旧版本：%v", cause)
+	resp2, err := dockerDo(client, "POST", "/containers/"+created.ID+"/start", nil)
+	if err != nil {
+		return fmt.Errorf("启动辅助容器: %w", err)
 	}
-
-	// 2. 停旧 → 旧改名让出原名
-	if err := step("停止旧容器", "POST", "/containers/"+oldID+"/stop?t=10", true); err != nil {
-		return rollback(err)
-	}
-	_ = step("清理残留备份名", "DELETE", "/containers/"+oldBak+"?force=1", false)
-	if err := step("旧容器改名为 "+oldBak, "POST", "/containers/"+oldID+"/rename?name="+url.QueryEscape(oldBak), false); err != nil {
-		return rollback(err)
-	}
-	// 3. 新容器改名回原名并启动
-	if err := step("新容器改名为 "+name, "POST", "/containers/"+created.ID+"/rename?name="+url.QueryEscape(name), false); err != nil {
-		return rollback(err)
-	}
-	if err := step("启动新容器", "POST", "/containers/"+created.ID+"/start", true); err != nil {
-		return rollback(err)
-	}
-	// 4. 新容器已运行，删除旧容器
-	_ = step("删除旧容器 "+oldBak, "DELETE", "/containers/"+oldID+"?force=1", false)
+	resp2.Body.Close()
+	log.Printf("[自更新] ✓ 更新辅助容器已启动（strmhub-updater），将由它完成停旧/启新")
 	return nil
+}
+
+// RunUpdateFinish 更新收尾（在辅助容器进程内运行）：停旧 → 启动新 → 清理旧。
+// 新容器启动失败时回滚：把旧容器重新启动（旧容器只是被停，配置未动）。
+func RunUpdateFinish(oldID, newID string) {
+	log.Printf("[更新辅助] ▶ 收尾开始：旧=%s 新=%s", truncateStr(oldID, 12), truncateStr(newID, 12))
+	client := dockerHTTPClient(3 * time.Minute)
+
+	// 等 2 秒让主容器把 HTTP 应答发出去
+	time.Sleep(2 * time.Second)
+
+	// 1. 停旧容器
+	if resp, err := dockerDo(client, "POST", "/containers/"+oldID+"/stop?t=15", nil); err == nil {
+		resp.Body.Close()
+	} else {
+		log.Printf("[更新辅助] ○ 停止旧容器返回: %v（可能已退出，继续）", err)
+	}
+	// 2. 等旧容器真正停止（端口释放），最多 30 秒
+	stopped := false
+	for i := 0; i < 15; i++ {
+		insp, err := dockerRequestJSON(client, "GET", "/containers/"+oldID+"/json", nil)
+		if err != nil {
+			stopped = true // 已查不到（异常但可继续）
+			break
+		}
+		if st, ok := insp["State"].(map[string]interface{}); ok {
+			if run, _ := st["Running"].(bool); !run {
+				stopped = true
+				break
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !stopped {
+		log.Printf("[更新辅助] ✗ 旧容器 30 秒未停止，中止（新容器未启动，服务未受影响）")
+		return
+	}
+	log.Printf("[更新辅助] ✓ 旧容器已停止")
+
+	// 3. 启动新容器（端口已释放）
+	resp, err := dockerDo(client, "POST", "/containers/"+newID+"/start", nil)
+	if err != nil {
+		log.Printf("[更新辅助] ✗ 启动新容器失败: %v —— 回滚：重新启动旧容器", err)
+		if r2, e2 := dockerDo(client, "POST", "/containers/"+oldID+"/start", nil); e2 == nil {
+			r2.Body.Close()
+			log.Printf("[更新辅助] ✓ 旧容器已回滚启动，服务恢复")
+		} else {
+			log.Printf("[更新辅助] ✗ 回滚失败：%v（请手动 docker start 旧容器）", e2)
+		}
+		return
+	}
+	resp.Body.Close()
+	log.Printf("[更新辅助] ✓ 新容器已启动")
+
+	// 4. 等新容器确认运行（最多 20 秒），然后删除旧容器
+	for i := 0; i < 10; i++ {
+		insp, err := dockerRequestJSON(client, "GET", "/containers/"+newID+"/json", nil)
+		if err == nil {
+			if st, ok := insp["State"].(map[string]interface{}); ok {
+				if run, _ := st["Running"].(bool); run {
+					break
+				}
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if resp, err := dockerDo(client, "DELETE", "/containers/"+oldID+"?force=1", nil); err == nil {
+		resp.Body.Close()
+	}
+	log.Printf("[更新辅助] ✅ 更新完成（旧容器已清理）")
 }
 
 func dockerDo(client *http.Client, method, path string, body []byte) (*http.Response, error) {

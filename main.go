@@ -54,6 +54,14 @@ func (w *rotatingWriter) rotate() {
 }
 
 func main() {
+	// 子命令：update-finish <旧容器ID> <新容器ID>
+	// 由「更新辅助容器」执行（同一镜像 + docker.sock），负责停旧容器→启动新容器→清理。
+	// 更新流程里主容器不能停自己（进程会被杀，后续步骤无法执行），收尾必须由独立进程完成。
+	if len(os.Args) >= 4 && os.Args[1] == "update-finish" {
+		api.RunUpdateFinish(os.Args[2], os.Args[3])
+		return
+	}
+
 	// 初始化配置
 	cfg := config.Load()
 
