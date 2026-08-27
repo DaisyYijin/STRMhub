@@ -1330,6 +1330,8 @@ function applyEmbyNotify(v) {
   if (!embyNotifyToken) {
     saveEmbyNotifyToken(genEmbyNotifyToken());
   }
+  const input = document.getElementById('emby-notify-token');
+  if (input && document.activeElement !== input) input.value = embyNotifyToken;
   renderEmbyWebhookUrl();
 }
 function genEmbyNotifyToken() {
@@ -1338,17 +1340,29 @@ function genEmbyNotifyToken() {
   return [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 function saveEmbyNotifyToken(t) {
+  if (!t) { toast('token 不能为空'); return; }
+  if (!/^[a-zA-Z0-9_-]{4,64}$/.test(t)) { toast('token 仅支持 4-64 位字母/数字/中横线/下划线'); return; }
   embyNotifyToken = t;
   api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'emby-notify', value: JSON.stringify({ token: t }) }) })
-    .then(() => { renderEmbyWebhookUrl(); })
+    .then(() => {
+      const input = document.getElementById('emby-notify-token');
+      if (input) input.value = embyNotifyToken;
+      renderEmbyWebhookUrl();
+    })
     .catch(() => { toast('token 保存失败'); });
 }
 function renderEmbyWebhookUrl() {
+  // token 输入框编辑中实时取输入值预览；展示地址与后端校验一致（保存后生效）
+  const input = document.getElementById('emby-notify-token');
+  if (input && document.activeElement === input) embyNotifyToken = input.value.trim();
   const el = document.getElementById('emby-webhook-url');
-  if (el) el.textContent = location.origin + '/api/emby/webhook?token=' + embyNotifyToken;
+  if (el) el.textContent = location.origin + '/api/emby/webhook?token=' + (embyNotifyToken || '');
 }
 function rotateEmbyWebhookToken() {
-  saveEmbyNotifyToken(genEmbyNotifyToken());
+  const t = genEmbyNotifyToken();
+  const input = document.getElementById('emby-notify-token');
+  if (input) input.value = t;
+  saveEmbyNotifyToken(t);
   toast('已生成新 token，请到 Emby 更新回调地址');
 }
 function copyEmbyWebhook(btn) {
