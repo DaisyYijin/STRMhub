@@ -505,5 +505,3 @@ tr:hover td { background: var(--fill-1); }
 /* 表单行内与标签垂直居中：开关统一 32px，相对 36px 控件行偏移 2px */
 .form-row .control .segmented-control { margin-top: 2px; }
 
-/* 离线任务列表：限高滚动，容纳更多任务 */
-#offline-tasks { max-height: 480px; overflow-y: auto; padding-right: 4px; }

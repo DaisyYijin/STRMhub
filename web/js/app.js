@@ -859,39 +859,82 @@ function setTransferOrganize(v, silent) {
   });
 }
 
-// ==================== 离线任务面板 ====================
+// ==================== 离线任务面板（表格 + 进度条 + 分页） ====================
 let offlineTasksTimer = null;
+let offlineTasksCache = [];
+let offlineTasksPage = 1;
+const OFFLINE_PAGE_SIZE = 20;
+
 async function loadOfflineTasks() {
   const box = document.getElementById('offline-tasks');
-  const hint = document.getElementById('offline-tasks-hint');
   if (!box) return;
+  const hint = document.getElementById('offline-tasks-hint');
   try {
     const d = await api('/offline/tasks');
     let items = d.data || [];
     if (!Array.isArray(items)) items = items.tasks || items.list || [];
+    offlineTasksCache = items;
     if (!items.length) {
       box.innerHTML = '<span style="color:var(--text-3)">暂无离线任务</span>';
+      document.getElementById('offline-tasks-pager').innerHTML = '';
       hint.textContent = '';
       return;
     }
-    hint.textContent = items.length + ' 个任务 · ' + new Date().toLocaleTimeString();
-    box.innerHTML = items.slice(0, 100).map(t => {
-      const name = escHtml(t.name || t.task_name || '?');
-      let right = '';
-      const p = t.percent;
-      if (typeof p === 'number' && p >= 0) right = p.toFixed(1) + '%';
-      else if (typeof p === 'string' && p && p !== '-1') right = escHtml(p);
-      const st = t.status;
-      if (st === -1 || String(st).includes('fail') || String(st).includes('失败')) right = '<span style="color:var(--danger)">失败</span>';
-      else if (st === 2 || String(st).includes('完成')) right = '<span style="color:var(--success)">完成</span>';
-      const size = t.size && Number(t.size) > 0 ? ' <span style="color:var(--text-3)">' + fmtSize(Number(t.size)) + '</span>' : '';
-      return '<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);align-items:baseline">' +
-        '<span style="flex:1;word-break:break-all">' + name + size + '</span>' +
-        '<span style="flex:none;min-width:56px;text-align:right">' + right + '</span></div>';
-    }).join('') + (items.length > 100 ? '<div style="color:var(--text-3);padding-top:4px">… 仅显示前 100 个</div>' : '');
+    hint.textContent = '共 ' + items.length + ' 个 · ' + new Date().toLocaleTimeString();
+    renderOfflineTasks();
   } catch (e) {
     box.innerHTML = '<span style="color:var(--danger)">' + escHtml(e.message) + '</span>';
   }
+}
+
+function offlineTaskRow(t) {
+  const name = escHtml(t.name || t.task_name || '?');
+  const st = t.status;
+  const pct = (() => {
+    const p = t.percent;
+    if (typeof p === 'number') return p >= 0 ? p : -1;
+    if (typeof p === 'string' && p && !isNaN(parseFloat(p))) return parseFloat(p);
+    return -1;
+  })();
+  let badge = '', progress = '<span style="color:var(--text-3)">—</span>';
+  if (st === -1) badge = '<span style="color:var(--danger)">⚠ 失败</span>';
+  else if (st === 2) badge = '<span style="color:var(--success)">✓ 完成</span>';
+  else if (st === 1 || (pct >= 0 && pct < 100)) {
+    badge = '<span style="color:var(--primary)">⬇ 下载中</span>';
+    const w = Math.max(0, Math.min(100, pct < 0 ? 0 : pct)).toFixed(1);
+    progress = '<div style="display:flex;align-items:center;gap:6px">' +
+      '<div style="background:var(--fill-2);border-radius:4px;height:8px;width:90px;flex:none"><div style="background:var(--primary);height:100%;border-radius:4px;width:' + w + '%"></div></div>' +
+      '<span style="font-size:12px;color:var(--text-3);min-width:44px">' + w + '%</span></div>';
+  } else badge = '<span style="color:var(--text-3)">⏳ 等待</span>';
+  const size = t.size && Number(t.size) > 0 ? fmtSize(Number(t.size)) : '—';
+  return '<tr><td style="white-space:nowrap">' + badge + '</td>' +
+    '<td style="max-width:0;width:100%"><span style="word-break:break-all">' + name + '</span></td>' +
+    '<td style="white-space:nowrap;color:var(--text-3)">' + size + '</td>' +
+    '<td style="white-space:nowrap">' + progress + '</td></tr>';
+}
+
+function renderOfflineTasks() {
+  const box = document.getElementById('offline-tasks');
+  const pager = document.getElementById('offline-tasks-pager');
+  const total = offlineTasksCache.length;
+  const pages = Math.max(1, Math.ceil(total / OFFLINE_PAGE_SIZE));
+  if (offlineTasksPage > pages) offlineTasksPage = pages;
+  if (offlineTasksPage < 1) offlineTasksPage = 1;
+  const start = (offlineTasksPage - 1) * OFFLINE_PAGE_SIZE;
+  const slice = offlineTasksCache.slice(start, start + OFFLINE_PAGE_SIZE);
+  box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+    '<thead><tr style="text-align:left;color:var(--text-3);font-size:12px">' +
+    '<th style="padding:6px 8px;width:80px">状态</th><th style="padding:6px 8px">名称</th>' +
+    '<th style="padding:6px 8px;width:80px">大小</th><th style="padding:6px 8px;width:150px">进度</th></tr></thead>' +
+    '<tbody>' + slice.map(offlineTaskRow).join('') + '</tbody></table>';
+  pager.innerHTML = pages <= 1 ? '' :
+    '<button class="btn btn-outline btn-sm" ' + (offlineTasksPage <= 1 ? 'disabled' : '') + ' onclick="offlineTasksNav(-1)">‹ 上一页</button>' +
+    '<span style="font-size:13px;color:var(--text-3);align-self:center;margin:0 10px">第 ' + offlineTasksPage + ' / ' + pages + ' 页</span>' +
+    '<button class="btn btn-outline btn-sm" ' + (offlineTasksPage >= pages ? 'disabled' : '') + ' onclick="offlineTasksNav(1)">下一页 ›</button>';
+}
+function offlineTasksNav(d) {
+  offlineTasksPage += d;
+  renderOfflineTasks();
 }
 function startOfflineTasksPoll() {
   stopOfflineTasksPoll();

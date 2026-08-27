@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=30">
+  <link rel="stylesheet" href="/css/style.css?v=31">
 </head>
 <body>
 
@@ -696,7 +696,7 @@ av:
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">离线任务<i class="help-tip" tabindex="0">?<span class="tip-bubble">115 离线下载任务实时状态：名称 / 大小 / 进度。下载完成后按「转存后整理」配置自动入库。本页打开时每 30 秒自动刷新。</span></i></div><div class="control"><div class="btn-row"><button class="btn btn-outline" onclick="loadOfflineTasks()">刷新</button><span id="offline-tasks-hint" style="font-size:12px;color:var(--text-3);align-self:center"></span></div><div id="offline-tasks" style="margin-top:8px;font-size:13px"><span style="color:var(--text-3)">加载中...</span></div></div></div>
+          <div class="form-row"><div class="label">离线任务<i class="help-tip" tabindex="0">?<span class="tip-bubble">115 离线下载任务实时状态。下载完成后按「转存后整理」配置自动入库。本页打开时每 30 秒自动刷新（保持当前页）。</span></i></div><div class="control" style="max-width:none"><div class="btn-row"><button class="btn btn-outline" onclick="loadOfflineTasks()">刷新</button><span id="offline-tasks-hint" style="font-size:12px;color:var(--text-3);align-self:center"></span></div><div id="offline-tasks" style="margin-top:8px"><span style="color:var(--text-3)">加载中...</span></div><div class="btn-row" id="offline-tasks-pager" style="margin-top:8px;justify-content:center"></div></div></div>
         </div>
       </div>
       <div class="tab-panel" data-panel="ud-upload">
@@ -1038,6 +1038,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=95"></script>
+<script src="/js/app.js?v=96"></script>
 </body>
 </html>
