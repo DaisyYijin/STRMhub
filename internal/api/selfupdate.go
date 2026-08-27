@@ -39,12 +39,12 @@ func dockerHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// fetchLatestSHA 查询 GitHub main 最新提交（2 分钟缓存，force 时跳过；拉取失败返回缓存值）
+// fetchLatestSHA 查询 GitHub main 最新提交（15 秒内去重防狂刷，force 时跳过；失败返回上次已知值）
 func fetchLatestSHA(force bool) string {
 	latestVersionCache.Lock()
 	cached, cacheAt := latestVersionCache.sha, latestVersionCache.at
 	latestVersionCache.Unlock()
-	if !force && cached != "" && time.Since(cacheAt) < 2*time.Minute {
+	if !force && cached != "" && time.Since(cacheAt) < 15*time.Second {
 		return cached
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
