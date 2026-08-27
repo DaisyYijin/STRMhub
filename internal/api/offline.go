@@ -181,12 +181,13 @@ func classifyLink(raw string) string {
 		return "magnet"
 	case strings.HasPrefix(lower, "ed2k://"):
 		return "ed2k"
+	case strings.Contains(lower, "115.com/s/"):
+		// 分享链接需先于 http 判断（分享链接也是 http(s) 开头）
+		return "share"
 	case strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://"):
 		return "http"
 	case strings.HasPrefix(lower, "ftp://"):
 		return "ftp"
-	case strings.Contains(lower, "115.com/s/"):
-		return "share"
 	default:
 		return ""
 	}

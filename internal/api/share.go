@@ -36,45 +36,63 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写分享链接"})
 		return
 	}
-	shareCode := extractShareCode(req.URL)
-	if shareCode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无法从链接解析分享码"})
-		return
-	}
 	if req.Code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写提取码"})
 		return
 	}
+	msg, success, fail, err := h.shareReceiveCore(req.URL, req.Code, req.Target, req.Organize)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	if success == 0 && fail == 0 {
+		c.JSON(http.StatusOK, gin.H{"message": "分享为空", "count": 0})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": msg, "count": success, "failed": fail,
+		"note": "转存成功，增量同步已自动触发（约 30 秒后完成 STRM 生成）"})
+}
+
+// shareReceiveCore 转存核心（HTTP 接口与企微机器人共用）：
+// 解析分享码 → info → snap（翻页收全）→ sharepost → 逐项 receive；organize=true 时转存后触发整理+增量
+func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool) (msg string, success, fail int, err error) {
+	shareCode := extractShareCode(shareURL)
+	if shareCode == "" {
+		return "", 0, 0, fmt.Errorf("无法从链接解析分享码")
+	}
+	if code == "" {
+		return "", 0, 0, fmt.Errorf("请填写提取码")
+	}
 	// 目标目录：参数优先，否则取分享同步配置的接收文件夹
-	if req.Target == "" {
+	if target == "" {
 		var cfg struct {
 			Folder string `json:"folder"`
 		}
 		if err := json.Unmarshal([]byte(h.getSettingValue("share")), &cfg); err != nil {
 			log.Printf("[上传] ○ 分享配置解析失败: %v", err)
 		}
-		req.Target = cfg.Folder
+		target = cfg.Folder
 	}
-	if req.Target == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置接收文件夹（分享同步卡）"})
-		return
+	if target == "" {
+		return "", 0, 0, fmt.Errorf("未配置接收文件夹（分享同步卡）")
 	}
 
 	cookie, err := h.get115Cookie()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return "", 0, 0, err
 	}
+	req := struct {
+		Organize bool
+	}{organize}
 
-	log.Printf("[上传] ▶ 分享转存开始: %s（提取码 %q）", truncateStr(req.URL, 70), req.Code)
+	log.Printf("[上传] ▶ 分享转存开始: %s（提取码 %q）", truncateStr(shareURL, 70), code)
 
 	// 1. 分享信息（校验链接与提取码）
 	infoBody, err := httpPostForm115("https://webapi.115.com/share/info",
 		url.Values{"share_code": {shareCode}}, cookie, 15*time.Second)
 	if err != nil {
 		log.Printf("[上传] ✗ 获取分享信息失败: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "获取分享信息失败: " + err.Error()})
-		return
+		return "", 0, 0, fmt.Errorf("获取分享信息失败: " + err.Error())
 	}
 	var info struct {
 		State bool `json:"state"`
@@ -85,8 +103,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 	}
 	if json.Unmarshal(infoBody, &info) != nil || !info.State {
 		log.Printf("[上传] ✗ 分享信息校验失败: %s", truncateStr(string(infoBody), 120))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "分享信息校验失败: " + truncateStr(string(infoBody), 120)})
-		return
+		return "", 0, 0, fmt.Errorf("分享信息校验失败: " + truncateStr(string(infoBody), 120))
 	}
 
 	// 2. 文件列表（顶层收全部；1150/页翻页收取——此前只取第一页，
@@ -102,7 +119,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		snapBody, err := httpPostForm115("https://webapi.115.com/share/snap",
 			url.Values{
 				"share_code":  {shareCode},
-				"receive_code": {req.Code},
+				"receive_code": {code},
 				"cid":         {"0"},
 				"offset":      {fmt.Sprint(offset)},
 				"limit":       {"1150"},
@@ -110,8 +127,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 				"fc_mix":      {"0"},
 			}, cookie, 15*time.Second)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "获取分享文件列表失败: " + err.Error()})
-			return
+			return "", 0, 0, fmt.Errorf("获取分享文件列表失败: " + err.Error())
 		}
 		var snap struct {
 			State bool `json:"state"`
@@ -122,8 +138,7 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		}
 		if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
 			log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
-			c.JSON(http.StatusBadGateway, gin.H{"error": "文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120)})
-			return
+			return "", 0, 0, fmt.Errorf("文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120))
 		}
 		allItems = append(allItems, snap.Data.List...)
 		if len(snap.Data.List) < 1150 {
@@ -131,23 +146,21 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		}
 	}
 	if len(allItems) == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "分享为空", "count": 0})
-		return
+		return "分享为空", 0, 0, nil
 	}
 	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", info.Data.ShareTitle, len(allItems))
 
 	// 3. sharepost 拿 pick_code
 	form := url.Values{
 		"share_code":  {shareCode},
-		"receive_code": {req.Code},
+		"receive_code": {code},
 	}
 	for i, f := range allItems {
 		form.Set(fmt.Sprintf("file_id[%d]", i), f.Fid)
 	}
 	postBody, err := httpPostForm115("https://webapi.115.com/share/sharepost", form, cookie, 20*time.Second)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "sharepost 失败: " + err.Error()})
-		return
+		return "", 0, 0, fmt.Errorf("sharepost 失败: " + err.Error())
 	}
 	var post struct {
 		State bool `json:"state"`
@@ -162,19 +175,18 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 	}
 	if json.Unmarshal(postBody, &post) != nil || !post.State {
 		log.Printf("[上传] ✗ sharepost 被拒: %s", truncateStr(string(postBody), 120))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "sharepost 被拒: " + truncateStr(string(postBody), 120)})
-		return
+		return "", 0, 0, fmt.Errorf("sharepost 被拒: " + truncateStr(string(postBody), 120))
 	}
 
 	// 4. 逐个转存到目标目录
 	userid := cookieUserID(cookie)
-	success, fail := 0, 0
+	success, fail = 0, 0
 	for _, item := range post.Data.List {
 		rForm := url.Values{
 			"user_id":   {fmt.Sprint(userid)},
 			"file_id":   {item.Fid},
 			"pick_code": {item.PickCode},
-			"cid":       {req.Target},
+			"cid":       {target},
 		}
 		rBody, err := httpPostForm115("https://webapi.115.com/files/receive", rForm, cookie, 20*time.Second)
 		if err != nil {
@@ -197,16 +209,14 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	msg := fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
+	msg = fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
 	log.Printf("[上传] %s", msg)
 
 	// 转存成功且开启自动整理 → 触发「整理+增量」
 	if success > 0 && req.Organize {
 		go h.triggerOrganizeAndSync()
 	}
-
-	c.JSON(http.StatusOK, gin.H{"message": msg, "count": success, "failed": fail,
-		"note": "转存成功，增量同步已自动触发（约 30 秒后完成 STRM 生成）"})
+	return msg, success, fail, nil
 }
 
 // extractShareCode 从分享链接提取 share_code

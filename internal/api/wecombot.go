@@ -126,11 +126,17 @@ func (h *Handler) wecomHandleCommand(text string) {
 		NotifyMessage("🤖 StrmHub", strings.Join(lines, "\n"))
 	}
 	lower := strings.ToLower(text)
+	// 直接发链接（无需"下载"前缀）：磁力/ed2k/http/115分享 一键触发
+	if classifyLink(strings.TrimSpace(text)) != "" {
+		h.wecomHandleLink(strings.TrimSpace(text), reply)
+		return
+	}
 	switch {
 	case lower == "帮助" || lower == "help" || lower == "?":
 		reply(
 			"可用指令：",
-			"下载 <磁力/ed2k/分享链接> — 提交离线下载（自动整理入库）",
+			"直接发链接 — 磁力/ed2k/HTTP 提交离线下载；115 分享链接自动转存（自动整理入库）",
+			"下载 <链接> — 同上",
 			"状态 — 任务状态 + 转存目录 + 离线任务",
 			"搜索 <片名> — TMDB 搜片",
 			"整理 — 立即执行一次整理",
@@ -139,8 +145,7 @@ func (h *Handler) wecomHandleCommand(text string) {
 		)
 
 	case strings.HasPrefix(text, "下载"), strings.HasPrefix(lower, "dl "):
-		link := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "下载"), strings.TrimPrefix(lower, "dl ")))
-		link = strings.TrimSpace(strings.TrimPrefix(text, "下载"))
+		link := strings.TrimSpace(strings.TrimPrefix(text, "下载"))
 		if strings.HasPrefix(lower, "dl ") {
 			link = strings.TrimSpace(text[3:])
 		}
@@ -148,11 +153,7 @@ func (h *Handler) wecomHandleCommand(text string) {
 			reply("✗ 无法识别链接类型，支持：磁力 / ed2k / HTTP / 115分享")
 			return
 		}
-		if err := h.submitOfflineLink(link); err != nil {
-			reply("✗ 提交失败: "+err.Error())
-			return
-		}
-		reply("✓ 已提交离线下载：", truncateStr(link, 80), "下载完成后自动整理入库并通知。")
+		h.wecomHandleLink(link, reply)
 
 	case lower == "状态" || lower == "status":
 		running, name, since := TaskStatus()
@@ -239,6 +240,74 @@ func (h *Handler) wecomHandleCommand(text string) {
 	default:
 		reply("未识别的指令。发送「帮助」查看可用指令。")
 	}
+}
+
+// wecomHandleLink 企微消息里的下载链接分流：
+// 115 分享链接 → shareReceiveCore 转存（自动整理）；磁力/ed2k/http → 115 离线下载
+func (h *Handler) wecomHandleLink(link string, reply func(lines ...string)) {
+	if classifyLink(link) == "share" {
+		shareURL, code := splitShareLink(link)
+		if code == "" {
+			reply("✗ 115 分享链接缺少提取码：",
+				"把链接和提取码发在一起即可，例如：",
+				"https://115.com/s/abc123?password=xxxx",
+				"或：https://115.com/s/abc123 提取码：xxxx")
+			return
+		}
+		organize := true // 机器人触发的转存默认走「整理+增量」闭环
+		reply("⏳ 开始转存 115 分享…", truncateStr(shareURL, 70))
+		go func() {
+			msg, ok, fail, err := h.shareReceiveCore(shareURL, code, "", organize)
+			if err != nil {
+				NotifyMessage("🤖 StrmHub", "✗ 转存失败: "+err.Error())
+				return
+			}
+			if ok == 0 && fail == 0 {
+				NotifyMessage("🤖 StrmHub", "分享为空，未转存任何内容")
+				return
+			}
+			NotifyMessage("🤖 StrmHub", "✓ "+msg+"（整理入库已自动触发）")
+		}()
+		return
+	}
+	if err := h.submitOfflineLink(link); err != nil {
+		reply("✗ 提交失败: " + err.Error())
+		return
+	}
+	reply("✓ 已提交离线下载：", truncateStr(link, 80), "下载完成后自动整理入库并通知。")
+}
+
+// splitShareLink 从消息中拆出分享链接与提取码。
+// 支持：URL 自带 ?password=xxx；"链接 提取码：xxx"；"链接 xxx"（末尾独立字段）
+func splitShareLink(msg string) (shareURL, code string) {
+	fields := strings.Fields(msg)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	shareURL = fields[0]
+	if u, err := url.Parse(shareURL); err == nil {
+		if p := u.Query().Get("password"); p != "" {
+			return shareURL, p
+		}
+	}
+	// 其余字段里找提取码（"提取码：xxx" / "密码:xxx" / 纯 4-8 位字母数字）
+	for i := 1; i < len(fields); i++ {
+		f := strings.TrimPrefix(strings.TrimPrefix(fields[i], "提取码"), "密码")
+		f = strings.Trim(f, "：:，, ")
+		if len(f) >= 3 && len(f) <= 12 && isShareCode(f) {
+			return shareURL, f
+		}
+	}
+	return shareURL, ""
+}
+
+func isShareCode(s string) bool {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 // wecomSearchTMDB 搜片（独立轻实现：不加载完整整理客户端）
