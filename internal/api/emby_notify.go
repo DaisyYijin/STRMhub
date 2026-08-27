@@ -226,6 +226,12 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	// 事件归类（stop 归入暂停/停止，需先于 play 判断，避免 "Playback start" 误命中；resume 归入播放）
 	category, title := "", ""
 	switch {
+	case strings.Contains(event, "test"):
+		// Emby 侧点「测试通知」发来的连通测试事件：转发一条测试消息，方便确认全链路
+		log.Printf("[Emby Webhook] 收到 Emby 测试事件，转发连通测试通知")
+		go NotifyMessage("✅ Emby Webhook 连通测试", "Emby → StrmHub → 企微/TG 链路正常")
+		c.JSON(http.StatusOK, gin.H{"message": "ok（测试事件，已转发）"})
+		return
 	case strings.Contains(event, "add"):
 		category, title = "added", "🎬 Emby 入库"
 	case strings.Contains(event, "delete"), strings.Contains(event, "remove"):
