@@ -1,0 +1,271 @@
+package api
+
+// ==================== 入库通知：聚合防抖 + Emby 封面优先 ====================
+//
+// 两级入库语义（借鉴 EmbyPulse）：
+//   第一级：整理完成（StrmHub 移库成功）——TMDB 封面（AV 无封面走纯文本）
+//   第二级：Emby 扫描入库完成（Webhook item.added）——封面/评分直接取自 Emby，
+//           AV 条目因 Emby 刮削插件同样有封面
+// 同级通知 15 秒防抖聚合（上限 120 秒强制发送）：多部影视合并为一条，
+// 企微 news 多卡片（每部一张封面），TG 一图 + 汇总列表。
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// mediaNotifEntry 一条待聚合的入库通知
+type mediaNotifEntry struct {
+	Title       string
+	Year        string
+	Line        string // 一行描述（类型/分类/重命名/评分）
+	PosterURL   string // 公网封面 URL（TMDB）
+	PosterAlt   string // Emby 直链封面（内网，企微 picurl 可尝试）
+	PosterData  []byte // 封面字节（Emby 下载，TG 上传用）
+	Link        string
+}
+
+var mediaNotif struct {
+	mu      sync.Mutex
+	items   []mediaNotifEntry
+	timer   *time.Timer
+	firstAt time.Time
+}
+
+// QueueMediaNotif 入队入库通知（15 秒防抖；累计超 105 秒立即冲刷）
+func QueueMediaNotif(e mediaNotifEntry) {
+	if e.Title == "" {
+		return
+	}
+	mediaNotif.mu.Lock()
+	defer mediaNotif.mu.Unlock()
+	mediaNotif.items = append(mediaNotif.items, e)
+	if mediaNotif.timer != nil {
+		mediaNotif.timer.Stop()
+	}
+	if mediaNotif.firstAt.IsZero() {
+		mediaNotif.firstAt = time.Now()
+	}
+	wait := 15 * time.Second
+	if time.Since(mediaNotif.firstAt) > 105*time.Second {
+		wait = 0
+	}
+	mediaNotif.timer = time.AfterFunc(wait, FlushMediaNotif)
+}
+
+// FlushMediaNotif 冲刷并发送（单条富格式 / 多条合并）
+func FlushMediaNotif() {
+	mediaNotif.mu.Lock()
+	items := mediaNotif.items
+	mediaNotif.items = nil
+	mediaNotif.firstAt = time.Time{}
+	mediaNotif.timer = nil
+	mediaNotif.mu.Unlock()
+	if len(items) == 0 {
+		return
+	}
+	cfg, err := loadMessageConfig()
+	if err != nil {
+		return
+	}
+	if len(items) == 1 {
+		e := items[0]
+		sendMediaNotifSingle(cfg, e)
+		return
+	}
+	sendMediaNotifBatch(cfg, items)
+}
+
+func sendMediaNotifSingle(cfg *MessageConfig, e mediaNotifEntry) {
+	title := e.Title
+	if e.Year != "" {
+		title += "（" + e.Year + "）"
+	}
+	// 企微 news 卡片（picurl 优先公网 TMDB，其次 Emby 直链）
+	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
+		go sendWecomNews(cfg.Wecom, title, e.Line, pickPicURL(e), e.Link)
+	}
+	// TG：有字节直接上传（内网 Emby 图 TG 服务器拉不到），否则 URL，再退文本
+	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
+		caption := title
+		if e.Line != "" {
+			caption += "\n" + e.Line
+		}
+		switch {
+		case len(e.PosterData) > 0:
+			go sendTelegramPhotoData(cfg.TG, caption, e.PosterData)
+		case e.PosterURL != "":
+			go sendTelegramPhoto(cfg.TG, title, e.Line, e.PosterURL)
+		default:
+			go sendTelegram(cfg.TG, caption)
+		}
+	}
+	log.Printf("[通知] 入库通知已发送: %s", title)
+}
+
+func sendMediaNotifBatch(cfg *MessageConfig, items []mediaNotifEntry) {
+	title := fmt.Sprintf("🎬 本轮入库 %d 部", len(items))
+	lines := make([]string, 0, len(items))
+	for i, e := range items {
+		l := fmt.Sprintf("%d. %s", i+1, e.Title)
+		if e.Year != "" {
+			l += "（" + e.Year + "）"
+		}
+		if e.Line != "" {
+			l += " — " + e.Line
+		}
+		lines = append(lines, truncateStr(l, 120))
+	}
+	// 企微：news 多卡片（每部一张封面，最多 8 张）
+	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
+		go sendWecomNewsMulti(cfg.Wecom, title, items)
+	}
+	// TG：首图 + 汇总列表
+	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
+		caption := title + "\n" + strings.Join(lines, "\n")
+		first := items[0]
+		switch {
+		case len(first.PosterData) > 0:
+			go sendTelegramPhotoData(cfg.TG, caption, first.PosterData)
+		case first.PosterURL != "":
+			go sendTelegramPhoto(cfg.TG, title, strings.Join(lines, "\n"), first.PosterURL)
+		default:
+			go sendTelegram(cfg.TG, caption)
+		}
+	}
+	log.Printf("[通知] 聚合入库通知已发送: %d 部", len(items))
+}
+
+func pickPicURL(e mediaNotifEntry) string {
+	if e.PosterURL != "" {
+		return e.PosterURL
+	}
+	return e.PosterAlt
+}
+
+// sendWecomNewsMulti 企微多卡片图文（每部一张封面，news 最多 8 条 article）
+func sendWecomNewsMulti(cfg WecomConfig, title string, items []mediaNotifEntry) error {
+	token, err := wecomAccessToken(cfg)
+	if err != nil {
+		return err
+	}
+	articles := []map[string]string{}
+	for _, e := range items[:min(len(items), 8)] {
+		t := e.Title
+		if e.Year != "" {
+			t += "（" + e.Year + "）"
+		}
+		link := e.Link
+		if link == "" {
+			link = "https://github.com/DaisyYijin/STRMhub"
+		}
+		articles = append(articles, map[string]string{
+			"title":       truncateStr(t, 90),
+			"description": truncateStr(e.Line, 200),
+			"picurl":      pickPicURL(e),
+			"url":         link,
+		})
+	}
+	payload := map[string]interface{}{
+		"touser":  "@all",
+		"msgtype": "news",
+		"agentid": cfg.AgentID,
+		"news":    map[string]interface{}{"articles": articles},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	client := &http.Client{Timeout: 10 * time.Second}
+	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", cfg.apiBase(), token)
+	req, _ := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return sendWecom(cfg, title+"\n"+strings.Join(lineListOf(items), "\n"))
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var r struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.ErrCode != 0 {
+		log.Printf("企业微信多卡片发送失败: %d %s（退回纯文本）", r.ErrCode, r.ErrMsg)
+		return sendWecom(cfg, title+"\n"+strings.Join(lineListOf(items), "\n"))
+	}
+	log.Printf("企业微信多卡片发送成功: %d 部", len(items))
+	return nil
+}
+
+func lineListOf(items []mediaNotifEntry) []string {
+	lines := make([]string, 0, len(items))
+	for _, e := range items {
+		l := e.Title
+		if e.Year != "" {
+			l += "（" + e.Year + "）"
+		}
+		lines = append(lines, l)
+	}
+	return lines
+}
+
+// sendTelegramPhotoData 以文件上传方式发 TG 图片（内网图片字节直传，
+// 解决 TG 服务器拉不到内网 URL 的问题）；失败退回纯文本
+func sendTelegramPhotoData(cfg TGConfig, caption string, photo []byte) error {
+	client := &http.Client{Timeout: 20 * time.Second}
+	if proxyURL := getProxyURL(); proxyURL != "" {
+		if pu, err := parseProxyURL(proxyURL); err == nil {
+			client.Transport = &http.Transport{Proxy: pu}
+		}
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("chat_id", cfg.ChatID)
+	_ = w.WriteField("caption", truncateStr(caption, 1000))
+	fw, err := w.CreateFormFile("photo", "poster.jpg")
+	if err == nil {
+		_, err = fw.Write(photo)
+	}
+	w.Close()
+	if err != nil {
+		return sendTelegram(cfg, caption)
+	}
+	resp, err := client.Post(fmt.Sprintf("https://api.telegram.org/bot%s/sendPhoto", cfg.Token), w.FormDataContentType(), &buf)
+	if err != nil {
+		log.Printf("Telegram 图片上传失败（退回文本）: %v", err)
+		return sendTelegram(cfg, caption)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Telegram 图片上传失败: HTTP %d %s（退回文本）", resp.StatusCode, truncateStr(string(body), 120))
+		return sendTelegram(cfg, caption)
+	}
+	log.Printf("Telegram 图片上传成功")
+	return nil
+}
+
+// fetchHTTPBytes 下载图片字节（用于把 Emby 内网封面直传 TG）
+func fetchHTTPBytes(url string, timeout time.Duration) ([]byte, error) {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20)) // 封面最多 8MB
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}

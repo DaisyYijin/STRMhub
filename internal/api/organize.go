@@ -2339,20 +2339,17 @@ func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
 	if media.MediaType == "tv" {
 		typeLabel = "剧集"
 	}
-	title := fmt.Sprintf("🎬 入库成功：%s（%s）", media.Title, media.Year)
-	content := fmt.Sprintf("%s · %s/%s\n原名：%s\n标准名：%s",
+	content := fmt.Sprintf("整理入库 · %s · %s/%s\n原名：%s\n标准名：%s",
 		typeLabel, mediaTypeCategory(media.MediaType), category, truncateStr(oldName, 60), truncateStr(newName, 80))
 
-	if media.MediaType == "av" || media.TmdbID == 0 || media.PosterPath == "" {
-		go NotifyMessage(title, content)
-		return
+	entry := mediaNotifEntry{Title: media.Title, Year: media.Year, Line: content}
+	if media.MediaType != "av" && media.TmdbID != 0 && media.PosterPath != "" {
+		entry.PosterURL = tmdbImageBase() + "/t/p/w500" + media.PosterPath
+		if media.MediaType == "tv" {
+			entry.Link = fmt.Sprintf("https://www.themoviedb.org/tv/%d", media.TmdbID)
+		} else {
+			entry.Link = fmt.Sprintf("https://www.themoviedb.org/movie/%d", media.TmdbID)
+		}
 	}
-	poster := tmdbImageBase() + "/t/p/w500" + media.PosterPath
-	link := ""
-	if media.MediaType == "tv" {
-		link = fmt.Sprintf("https://www.themoviedb.org/tv/%d", media.TmdbID)
-	} else {
-		link = fmt.Sprintf("https://www.themoviedb.org/movie/%d", media.TmdbID)
-	}
-	NotifyMessageRich(title, content, poster, link)
+	QueueMediaNotif(entry)
 }

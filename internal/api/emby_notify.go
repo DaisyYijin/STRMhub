@@ -254,6 +254,13 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 		return
 	}
 
+	if category == "added" {
+		// 入库事件走聚合富通知（封面/评分取自 Emby；15 秒防抖合并）
+		go h.queueEmbyAddedNotif(payload)
+		log.Printf("[Emby Webhook] ▶ Emby 入库事件: %s", itemName)
+		c.JSON(http.StatusOK, gin.H{"message": "ok（已进入入库通知队列）"})
+		return
+	}
 	content := itemName
 	if content == "" {
 		content = event
@@ -264,6 +271,57 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	log.Printf("[Emby Webhook] %s %s", title, content)
 	go NotifyMessage(title, content)
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+// queueEmbyAddedNotif Emby 入库事件 → 聚合队列（Emby 封面优先 + 播放链接）
+func (h *Handler) queueEmbyAddedNotif(payload map[string]interface{}) {
+	item, _ := payload["Item"].(map[string]interface{})
+	str := func(m map[string]interface{}, keys ...string) string {
+		for _, k := range keys {
+			if v, ok := m[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	// 剧集条目用剧集名（单集标题没有辨识度）
+	title := str(item, "SeriesName")
+	year := ""
+	if title == "" {
+		title = str(item, "Name")
+	}
+	if y, ok := item["ProductionYear"].(float64); ok && y > 0 {
+		year = fmt.Sprintf("%d", int(y))
+	}
+	if title == "" {
+		return
+	}
+	typeLabel := "电影"
+	if t := str(item, "Type"); t == "Episode" || t == "Series" {
+		typeLabel = "剧集"
+	}
+	line := "Emby 入库 · " + typeLabel
+	if r, ok := item["CommunityRating"].(float64); ok && r > 0 {
+		line += fmt.Sprintf(" · ⭐ %.1f", r)
+	}
+
+	entry := mediaNotifEntry{Title: title, Year: year, Line: line}
+	// Emby 封面与播放链接
+	if base, apiKey, ok := h.embyServerInfo(); ok {
+		if id := str(item, "Id"); id != "" {
+			qs := ""
+			if apiKey != "" {
+				qs = "?api_key=" + apiKey
+			}
+			imgURL := base + "/Items/" + id + "/Images/Primary" + qs
+			entry.PosterAlt = imgURL
+			entry.Link = base + "/web/index.html#!/item?id=" + id
+			if data, err := fetchHTTPBytes(imgURL, 8*time.Second); err == nil && len(data) > 0 {
+				entry.PosterData = data
+			}
+		}
+	}
+	QueueMediaNotif(entry)
 }
 
 // TestEmbyConnection 测试 Emby 服务器连接
