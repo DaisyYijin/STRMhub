@@ -646,11 +646,7 @@ func loadGPTFallback() *gptFallbackCfg {
 	if gptFallbackCfgCache.val != nil && time.Since(gptFallbackCfgCache.at) < 5*time.Minute {
 		return gptFallbackCfgCache.val
 	}
-	v := ""
-	var sRow model.Setting
-	if err := model.DB.Where("`key` = ?", "org-gpt").First(&sRow).Error; err == nil {
-		v = sRow.Value
-	}
+	v := settingValueCompat("org-gpt")
 	var cfg struct {
 		URL   string `json:"url"`
 		Key   string `json:"key"`

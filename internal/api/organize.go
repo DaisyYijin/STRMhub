@@ -309,16 +309,12 @@ func moveQuietly(ops *pan115Ops, targetCid string, fids []string, label string, 
 	}
 }
 
-// loadReplaceRules 加载替换规则
+// loadReplaceRules 加载替换规则（YAML 优先，DB 回退）
 func loadReplaceRules() []ReplaceRule {
-	var s model.Setting
-	if err := model.DB.Where("key = ?", "org-recognize").First(&s).Error; err != nil {
-		return nil
-	}
 	var cfg struct {
 		ReplaceRules string `json:"replace_rules"`
 	}
-	json.Unmarshal([]byte(s.Value), &cfg)
+	json.Unmarshal([]byte(settingValueCompat("org-recognize")), &cfg)
 	if cfg.ReplaceRules == "" {
 		return nil
 	}
@@ -1838,13 +1834,10 @@ func isEpisodeOnly(title string) bool {
 	return isAllDigits(cleaned) && len(cleaned) <= 4
 }
 
-// modelSettingValue 从 DB Setting 表读配置值（organize.go 内用，不走 Handler）
+// modelSettingValue 读配置值：YAML 优先，DB 回退（配置由前端 SaveSetting 写入 YAML，
+// 旧的仅读 DB 写法会永远读到空——替换规则/重命名模板等在整理执行时全部失效）
 func modelSettingValue(key string) string {
-	var s model.Setting
-	if err := model.DB.Where("`key` = ?", key).First(&s).Error; err == nil {
-		return s.Value
-	}
-	return ""
+	return settingValueCompat(key)
 }
 
 // executeOrganizeWithConfig 用指定的 OrgConfig 执行整理（转存目录等场景）

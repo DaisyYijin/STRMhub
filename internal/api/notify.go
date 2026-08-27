@@ -21,16 +21,19 @@ import (
 // 包级函数无法拿 Handler，这里用注入的 Config 走"YAML 优先、DB 回退"读取。
 var notifyConfigSource *config.Config
 
-// settingValueCompat 读配置：YAML 优先，数据库回退（兼容旧数据）
+// settingValueCompat 读配置：YAML 优先，数据库回退（兼容旧数据）。
+// 配置由前端 saveConfig → Config.SaveSetting 写入 YAML；只读 DB 的旧写法永远读不到。
 func settingValueCompat(key string) string {
 	if notifyConfigSource != nil {
 		if v := notifyConfigSource.GetSetting(key); v != "" {
 			return v
 		}
 	}
-	var s model.Setting
-	if err := model.DB.Where("key = ?", key).First(&s).Error; err == nil {
-		return s.Value
+	if model.DB != nil {
+		var s model.Setting
+		if err := model.DB.Where("key = ?", key).First(&s).Error; err == nil {
+			return s.Value
+		}
 	}
 	return ""
 }

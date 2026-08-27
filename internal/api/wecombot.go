@@ -164,10 +164,25 @@ func (h *Handler) wecomHandleCommand(text string) {
 			lines = append(lines, "○ 当前无任务运行")
 		}
 		if cid := h.shareFolderCid(); cid != "" {
-			if ops, err := h.newPan115Ops(); err == nil {
-				if entries, _, lerr := ops.listEntries(cid, 0); lerr == nil {
-					lines = append(lines, fmt.Sprintf("转存目录待处理：%d 个条目", len(entries)))
+			// 115 目录查询加超时保护：网盘响应慢时不能拖住整个状态回复
+			type listRes struct{ count int; ok bool }
+			ch := make(chan listRes, 1)
+			go func() {
+				if ops, err := h.newPan115Ops(); err == nil {
+					if entries, _, lerr := ops.listEntries(cid, 0); lerr == nil {
+						ch <- listRes{len(entries), true}
+						return
+					}
 				}
+				ch <- listRes{}
+			}()
+			select {
+			case r := <-ch:
+				if r.ok {
+					lines = append(lines, fmt.Sprintf("转存目录待处理：%d 个条目", r.count))
+				}
+			case <-time.After(5 * time.Second):
+				lines = append(lines, "转存目录待处理：查询超时（115 响应慢）")
 			}
 		}
 		if runs := GetRecentRuns(); len(runs) > 0 {
