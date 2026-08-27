@@ -534,7 +534,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			sum.Structural++
 		default:
 			sum.Structural++
-			log.Printf("[同步] ○ 未处理的事件: 类型=%s 文件=%s", ev.Type, ev.FileName)
+			vlog("[同步] ○ 未处理的事件: 类型=%s 文件=%s", ev.Type, ev.FileName)
 		}
 	}
 
