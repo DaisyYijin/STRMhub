@@ -26,3 +26,7 @@ reference-projects/
 
 # 日志
 *.log
+
+# 本地测试构建产物
+strmhub-test.exe
+*.exe~
