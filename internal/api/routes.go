@@ -101,7 +101,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/dashboard", h.DashboardEnhanced)
 
 		// 账号
-		protected.POST("/auth/change-password", h.ChangePassword)
+		protected.POST("/auth/update-account", h.UpdateAccount)
 
 		// 代理测试
 		protected.POST("/proxy/test", h.TestProxyLatency)
@@ -280,11 +280,12 @@ func (h *Handler) AuthStatus(c *gin.Context) {
 	})
 }
 
-// ChangePassword POST /auth/change-password —— 修改当前账号密码（校验原密码，bcrypt 重新落盘）
-func (h *Handler) ChangePassword(c *gin.Context) {
+// UpdateAccount POST /auth/update-account —— 修改用户名和/或密码（校验原密码；改用户名后签发新 token）
+func (h *Handler) UpdateAccount(c *gin.Context) {
 	var req struct {
 		OldPassword string `json:"old_password" binding:"required"`
-		NewPassword string `json:"new_password" binding:"required"`
+		NewUsername string `json:"new_username"`
+		NewPassword string `json:"new_password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -299,16 +300,45 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "原密码错误"})
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少 6 位"})
+	newUsername := req.NewUsername
+	if newUsername == "" {
+		newUsername = username
+	}
+	if len(newUsername) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "用户名至少 2 个字符"})
 		return
 	}
-	if err := h.Config.SaveAuth(username, req.NewPassword); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+	changed := []string{}
+	if newUsername != username {
+		changed = append(changed, "用户名")
+	}
+	if req.NewPassword != "" {
+		if len(req.NewPassword) < 6 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少 6 位"})
+			return
+		}
+		if err := h.Config.SaveAuth(newUsername, req.NewPassword); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+			return
+		}
+		changed = append(changed, "密码")
+	} else if newUsername != username {
+		// 只改用户名：保留原密码哈希
+		if err := h.Config.UpdateAuthUsername(newUsername); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+			return
+		}
+	}
+	if len(changed) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有修改任何内容：新用户名与新密码至少填一项"})
 		return
 	}
-	log.Printf("[账号] 密码已修改：%s", username)
-	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功，下次登录请使用新密码"})
+	log.Printf("[账号] %s 已修改：%s → %s", strings.Join(changed, "和"), username, newUsername)
+	c.JSON(http.StatusOK, gin.H{
+		"message":  strings.Join(changed, "和") + "修改成功",
+		"token":    h.generateToken(1, newUsername),
+		"username": newUsername,
+	})
 }
 
 func (h *Handler) Register(c *gin.Context) {

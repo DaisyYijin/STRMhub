@@ -67,6 +67,20 @@ func (c *Config) SaveAuth(username, password string) error {
 	return os.WriteFile(c.AuthFile(), data, 0600)
 }
 
+// UpdateAuthUsername 只改用户名，保留原密码哈希
+func (c *Config) UpdateAuthUsername(newUsername string) error {
+	auth, err := c.LoadAuth()
+	if err != nil {
+		return err
+	}
+	auth.Username = newUsername
+	data, err := yaml.Marshal(&auth)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.AuthFile(), data, 0600)
+}
+
 // VerifyAuth 验证账号密码
 func (c *Config) VerifyAuth(username, password string) bool {
 	auth, err := c.LoadAuth()

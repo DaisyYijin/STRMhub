@@ -61,7 +61,7 @@
       <div><div class="page-title" id="page-title">全量同步</div><div class="page-desc" id="page-desc">115 媒体库目录 → 本地 STRM 文件</div></div>
       <div class="right">
         <button class="btn btn-outline" id="btn-log">系统日志</button>
-        <button class="btn btn-outline" onclick="openAccountModal()">账号</button>
+        <button class="btn btn-outline" onclick="toggleAccountMenu(event)">账号 ▾</button>
       </div>
     </div>
 
@@ -972,18 +972,23 @@ av:
 </div>
 
 <!-- Emby 建库配置弹窗 -->
+<div id="account-menu" style="display:none;position:fixed;top:56px;right:24px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-card);z-index:1200;min-width:170px;padding:4px 0">
+  <div style="padding:8px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)">当前登录：<b id="account-menu-user">-</b></div>
+  <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="toggleAccountMenu();openAccountModal()">账号设置</div>
+  <div style="padding:9px 14px;font-size:14px;color:var(--danger);cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="logoutNow()">退出登录</div>
+</div>
 <div class="modal-mask" id="account-modal" style="display:none" onclick="if(event.target===this)closeAccountModal()">
   <div class="modal" style="max-width:420px">
-    <h3>账号</h3>
-    <p>当前登录：<b id="account-username">-</b></p>
-    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">原密码</div><div class="control"><input type="password" id="acc-old-pwd" placeholder="当前密码"></div></div>
-    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">新密码</div><div class="control"><input type="password" id="acc-new-pwd" placeholder="至少 6 位"></div></div>
+    <h3>账号设置</h3>
+    <p style="font-size:12px;color:var(--text-3)">修改用户名或密码需验证原密码；两项至少修改一项。</p>
+    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">用户名</div><div class="control"><input type="text" id="acc-username" placeholder="用户名"></div></div>
+    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">原密码</div><div class="control"><input type="password" id="acc-old-pwd" placeholder="当前密码（必填）"></div></div>
+    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">新密码</div><div class="control"><input type="password" id="acc-new-pwd" placeholder="不改密码请留空"></div></div>
     <div class="form-row" style="margin-bottom:4px"><div class="label" style="width:80px">确认新密码</div><div class="control"><input type="password" id="acc-new-pwd2" placeholder="再输一遍"></div></div>
     <span id="account-msg" style="display:block;font-size:13px;margin-top:6px;min-height:18px"></span>
     <div class="actions">
-      <button class="btn btn-outline" onclick="logoutNow()" style="margin-right:auto">退出登录</button>
       <button class="btn btn-outline" onclick="closeAccountModal()">关闭</button>
-      <button class="btn btn-primary" onclick="changePassword(this)">修改密码</button>
+      <button class="btn btn-primary" onclick="saveAccount(this)">保存修改</button>
     </div>
   </div>
 </div>
@@ -1013,6 +1018,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=89"></script>
+<script src="/js/app.js?v=90"></script>
 </body>
 </html>

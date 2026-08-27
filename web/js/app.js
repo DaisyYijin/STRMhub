@@ -2112,10 +2112,25 @@ async function loadVersion() {
   } catch (e) {}
 }
 
-// ==================== 账号（修改密码 / 退出登录） ====================
+// ==================== 账号（下拉菜单 / 修改用户名密码 / 退出登录） ====================
+function toggleAccountMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const m = document.getElementById('account-menu');
+  m.style.display = m.style.display === 'none' ? '' : 'none';
+  if (m.style.display === '') {
+    document.getElementById('account-menu-user').textContent = localStorage.getItem('username') || '-';
+  }
+}
+document.addEventListener('click', e => {
+  const m = document.getElementById('account-menu');
+  if (m && m.style.display !== 'none' && !e.target.closest('#account-menu') && !e.target.textContent.includes('账号')) {
+    m.style.display = 'none';
+  }
+});
+
 function openAccountModal() {
   document.getElementById('account-modal').style.display = '';
-  document.getElementById('account-username').textContent = localStorage.getItem('username') || '-';
+  document.getElementById('acc-username').value = localStorage.getItem('username') || '';
   document.getElementById('acc-old-pwd').value = '';
   document.getElementById('acc-new-pwd').value = '';
   document.getElementById('acc-new-pwd2').value = '';
@@ -2124,20 +2139,33 @@ function openAccountModal() {
 }
 function closeAccountModal() { document.getElementById('account-modal').style.display = 'none'; }
 
-async function changePassword(btn) {
+async function saveAccount(btn) {
+  const newUsername = document.getElementById('acc-username').value.trim();
   const oldPwd = document.getElementById('acc-old-pwd').value;
   const newPwd = document.getElementById('acc-new-pwd').value;
   const newPwd2 = document.getElementById('acc-new-pwd2').value;
   const msg = document.getElementById('account-msg');
   msg.style.color = '';
-  if (!oldPwd || !newPwd) { msg.textContent = '请填写原密码和新密码'; return; }
-  if (newPwd.length < 6) { msg.textContent = '新密码至少 6 位'; return; }
-  if (newPwd !== newPwd2) { msg.textContent = '两次输入的新密码不一致'; return; }
+  const curUsername = localStorage.getItem('username') || '';
+  const changeUser = newUsername && newUsername !== curUsername;
+  const changePwd = !!newPwd;
+  if (!oldPwd) { msg.textContent = '请填写原密码'; return; }
+  if (!changeUser && !changePwd) { msg.textContent = '没有修改任何内容'; return; }
+  if (changeUser && newUsername.length < 2) { msg.textContent = '用户名至少 2 个字符'; return; }
+  if (changePwd) {
+    if (newPwd.length < 6) { msg.textContent = '新密码至少 6 位'; return; }
+    if (newPwd !== newPwd2) { msg.textContent = '两次输入的新密码不一致'; return; }
+  }
   btn.disabled = true; btn.textContent = '提交中...';
   try {
-    const d = await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPwd, new_password: newPwd }) });
+    const d = await api('/auth/update-account', { method: 'POST', body: JSON.stringify({
+      old_password: oldPwd, new_username: changeUser ? newUsername : '', new_password: newPwd,
+    }) });
+    // 后端签发了新 token（用户名可能已变），更新本地会话
+    if (d.token) localStorage.setItem('token', d.token);
+    if (d.username) localStorage.setItem('username', d.username);
     msg.style.color = 'var(--success)';
-    msg.textContent = '✓ ' + (d.message || '密码修改成功');
+    msg.textContent = '✓ ' + (d.message || '修改成功');
     document.getElementById('acc-old-pwd').value = '';
     document.getElementById('acc-new-pwd').value = '';
     document.getElementById('acc-new-pwd2').value = '';
@@ -2145,7 +2173,7 @@ async function changePassword(btn) {
     msg.style.color = 'var(--danger)';
     msg.textContent = '✗ ' + e.message;
   } finally {
-    btn.disabled = false; btn.textContent = '修改密码';
+    btn.disabled = false; btn.textContent = '保存修改';
   }
 }
 
