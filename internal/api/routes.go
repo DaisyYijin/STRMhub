@@ -38,6 +38,8 @@ var (
 func SetVersion(v string) { buildVersion = v }
 
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
+	// 注入通知配置读取源（YAML 优先，DB 回退）
+	notifyConfigSource = cfg
 	h := &Handler{DB: db, Config: cfg}
 	cfgGlobal = cfg
 

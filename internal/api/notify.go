@@ -10,10 +10,30 @@ import (
 	"strings"
 	"time"
 
+	"strmhub/internal/config"
 	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
 )
+
+// notifyConfigSource 配置读取源（SetupRoutes 注入）。
+// 配置保存在 YAML（Config.SaveSetting），数据库 Setting 表仅旧版本使用；
+// 包级函数无法拿 Handler，这里用注入的 Config 走"YAML 优先、DB 回退"读取。
+var notifyConfigSource *config.Config
+
+// settingValueCompat 读配置：YAML 优先，数据库回退（兼容旧数据）
+func settingValueCompat(key string) string {
+	if notifyConfigSource != nil {
+		if v := notifyConfigSource.GetSetting(key); v != "" {
+			return v
+		}
+	}
+	var s model.Setting
+	if err := model.DB.Where("key = ?", key).First(&s).Error; err == nil {
+		return s.Value
+	}
+	return ""
+}
 
 // ==================== 消息通知 ====================
 
@@ -52,12 +72,12 @@ type TGConfig struct {
 
 // loadMessageConfig 从数据库加载消息通知配置
 func loadMessageConfig() (*MessageConfig, error) {
-	var s model.Setting
-	if err := model.DB.Where("key = ?", "message").First(&s).Error; err != nil {
-		return nil, fmt.Errorf("未配置消息通知")
+	raw := settingValueCompat("message")
+	if raw == "" {
+		return nil, fmt.Errorf("尚未保存过消息配置：请到「消息配置」页填写并点击保存配置")
 	}
 	var cfg MessageConfig
-	if err := json.Unmarshal([]byte(s.Value), &cfg); err != nil {
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, fmt.Errorf("解析消息通知配置失败")
 	}
 	return &cfg, nil
@@ -228,6 +248,20 @@ func (h *Handler) TestMessage(c *gin.Context) {
 	successCount := 0
 	errorMsg := ""
 
+	// 渠道状态预检：给出比"发送失败"更明确的指引
+	if !cfg.Wecom.isEnabled() && !cfg.TG.isEnabled() {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "企业微信和 TG 渠道都是禁用状态：请启用对应渠道的「状态」开关后再保存并测试"})
+		return
+	}
+	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "企业微信已启用但「企业 ID」为空：请填写后再保存并测试"})
+		return
+	}
+	if cfg.TG.isEnabled() && cfg.TG.Token == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "TG 已启用但 Bot Token 为空：请填写后再保存并测试"})
+		return
+	}
+
 	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" {
 		if err := sendWecom(cfg.Wecom, testMsg); err != nil {
 			errorMsg += "企业微信: " + err.Error() + "; "
@@ -253,14 +287,10 @@ func (h *Handler) TestMessage(c *gin.Context) {
 
 // getProxyURL 从数据库读取代理配置
 func getProxyURL() string {
-	var s model.Setting
-	if err := model.DB.Where("key = ?", "proxy").First(&s).Error; err != nil {
-		return ""
-	}
 	var cfg struct {
 		URL string `json:"url"`
 	}
-	json.Unmarshal([]byte(s.Value), &cfg)
+	json.Unmarshal([]byte(settingValueCompat("proxy")), &cfg)
 	return cfg.URL
 }
 
