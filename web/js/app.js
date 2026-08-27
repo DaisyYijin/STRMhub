@@ -1986,8 +1986,15 @@ function setEnrichOpt(key, v) {
 }
 function loadEnrichOpts(v) {
   if (!v) return;
+  // 保存侧字段名是 conflict_low/conflict_high/full_named，回填侧历史用 clow/chigh/full——两者都兼容
+  const norm = {
+    mode: v.mode, missing: v.missing,
+    clow: v.conflict_low !== undefined ? v.conflict_low : v.clow,
+    chigh: v.conflict_high !== undefined ? v.conflict_high : v.chigh,
+    full: v.full_named !== undefined ? v.full_named : v.full,
+  };
   if (v.enabled !== undefined) setEnrichOpt('enabled', v.enabled === true || v.enabled === 'true');
-  ['mode', 'missing', 'clow', 'chigh', 'full'].forEach(k => { if (v[k]) setEnrichOpt(k, v[k]); });
+  ['mode', 'missing', 'clow', 'chigh', 'full'].forEach(k => { if (norm[k]) setEnrichOpt(k, norm[k]); });
 }
 // org-basic 保存时附带补全配置
 const _origCollectOrgBasic = null;
