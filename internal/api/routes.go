@@ -100,6 +100,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 仪表盘
 		protected.GET("/dashboard", h.DashboardEnhanced)
 
+		// 账号
+		protected.POST("/auth/change-password", h.ChangePassword)
+
 		// 代理测试
 		protected.POST("/proxy/test", h.TestProxyLatency)
 
@@ -275,6 +278,37 @@ func (h *Handler) AuthStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"initialized": h.Config.IsAuthExists(),
 	})
+}
+
+// ChangePassword POST /auth/change-password —— 修改当前账号密码（校验原密码，bcrypt 重新落盘）
+func (h *Handler) ChangePassword(c *gin.Context) {
+	var req struct {
+		OldPassword string `json:"old_password" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	username := c.GetString("username")
+	if username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
+		return
+	}
+	if !h.Config.VerifyAuth(username, req.OldPassword) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "原密码错误"})
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少 6 位"})
+		return
+	}
+	if err := h.Config.SaveAuth(username, req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+		return
+	}
+	log.Printf("[账号] 密码已修改：%s", username)
+	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功，下次登录请使用新密码"})
 }
 
 func (h *Handler) Register(c *gin.Context) {

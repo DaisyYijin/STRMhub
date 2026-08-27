@@ -2112,6 +2112,49 @@ async function loadVersion() {
   } catch (e) {}
 }
 
+// ==================== 账号（修改密码 / 退出登录） ====================
+function openAccountModal() {
+  document.getElementById('account-modal').style.display = '';
+  document.getElementById('account-username').textContent = localStorage.getItem('username') || '-';
+  document.getElementById('acc-old-pwd').value = '';
+  document.getElementById('acc-new-pwd').value = '';
+  document.getElementById('acc-new-pwd2').value = '';
+  const msg = document.getElementById('account-msg');
+  msg.textContent = ''; msg.style.color = '';
+}
+function closeAccountModal() { document.getElementById('account-modal').style.display = 'none'; }
+
+async function changePassword(btn) {
+  const oldPwd = document.getElementById('acc-old-pwd').value;
+  const newPwd = document.getElementById('acc-new-pwd').value;
+  const newPwd2 = document.getElementById('acc-new-pwd2').value;
+  const msg = document.getElementById('account-msg');
+  msg.style.color = '';
+  if (!oldPwd || !newPwd) { msg.textContent = '请填写原密码和新密码'; return; }
+  if (newPwd.length < 6) { msg.textContent = '新密码至少 6 位'; return; }
+  if (newPwd !== newPwd2) { msg.textContent = '两次输入的新密码不一致'; return; }
+  btn.disabled = true; btn.textContent = '提交中...';
+  try {
+    const d = await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPwd, new_password: newPwd }) });
+    msg.style.color = 'var(--success)';
+    msg.textContent = '✓ ' + (d.message || '密码修改成功');
+    document.getElementById('acc-old-pwd').value = '';
+    document.getElementById('acc-new-pwd').value = '';
+    document.getElementById('acc-new-pwd2').value = '';
+  } catch (e) {
+    msg.style.color = 'var(--danger)';
+    msg.textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '修改密码';
+  }
+}
+
+function logoutNow() {
+  localStorage.clear();
+  history.pushState(null, '', '/login');
+  location.reload();
+}
+
 // ==================== 应用内更新面板 ====================
 async function openUpdateModal() {
   const mask = document.getElementById('update-modal');
@@ -2233,7 +2276,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-log').addEventListener('click', openLog);
   const btnLogMobile = document.getElementById('btn-log-mobile');
   if (btnLogMobile) btnLogMobile.addEventListener('click', openLog);
-  document.getElementById('btn-logout').addEventListener('click', () => {
+  document.getElementById('btn-logout')?.addEventListener('click', () => {
     localStorage.clear();
     // 跳到 /login：地址栏立即反映登出状态，登录后回到仪表盘
     history.pushState(null, '', '/login');

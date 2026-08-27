@@ -50,7 +50,7 @@
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
       <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
-      <div class="menu-item" data-page="logs"><span class="icon">▤</span><span>实时日志</span></div>
+      <div class="menu-item" data-page="logs" style="display:none"><span class="icon">▤</span><span>实时日志</span></div>
     </div>
     <div class="footer" id="footer-version">StrmHub</div>
   </aside>
@@ -61,7 +61,7 @@
       <div><div class="page-title" id="page-title">全量同步</div><div class="page-desc" id="page-desc">115 媒体库目录 → 本地 STRM 文件</div></div>
       <div class="right">
         <button class="btn btn-outline" id="btn-log">系统日志</button>
-        <button class="btn btn-outline" id="btn-logout">退出</button>
+        <button class="btn btn-outline" onclick="openAccountModal()">账号</button>
       </div>
     </div>
 
@@ -972,6 +972,21 @@ av:
 </div>
 
 <!-- Emby 建库配置弹窗 -->
+<div class="modal-mask" id="account-modal" style="display:none" onclick="if(event.target===this)closeAccountModal()">
+  <div class="modal" style="max-width:420px">
+    <h3>账号</h3>
+    <p>当前登录：<b id="account-username">-</b></p>
+    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">原密码</div><div class="control"><input type="password" id="acc-old-pwd" placeholder="当前密码"></div></div>
+    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">新密码</div><div class="control"><input type="password" id="acc-new-pwd" placeholder="至少 6 位"></div></div>
+    <div class="form-row" style="margin-bottom:4px"><div class="label" style="width:80px">确认新密码</div><div class="control"><input type="password" id="acc-new-pwd2" placeholder="再输一遍"></div></div>
+    <span id="account-msg" style="display:block;font-size:13px;margin-top:6px;min-height:18px"></span>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="logoutNow()" style="margin-right:auto">退出登录</button>
+      <button class="btn btn-outline" onclick="closeAccountModal()">关闭</button>
+      <button class="btn btn-primary" onclick="changePassword(this)">修改密码</button>
+    </div>
+  </div>
+</div>
 <div class="modal-mask" id="update-modal" style="display:none" onclick="if(event.target===this)closeUpdateModal()">
   <div class="modal" style="max-width:600px">
     <h3 id="update-modal-title">发现新版本</h3>
@@ -998,6 +1013,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=88"></script>
+<script src="/js/app.js?v=89"></script>
 </body>
 </html>
