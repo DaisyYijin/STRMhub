@@ -850,6 +850,10 @@ function switchUDTab(tab) {
   document.querySelectorAll('#page-upload-download .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
 }
 let transferOrganizeVal = localStorage.getItem('transfer-organize') !== 'false';
+// 刷新后恢复开关高亮显示（值已从 localStorage 读取，只差 UI 状态）
+document.querySelectorAll('#transfer-organize-switch .seg-item').forEach(el => {
+  el.classList.toggle('active', String(el.dataset.value) === String(transferOrganizeVal));
+});
 function setTransferOrganize(v, silent) {
   transferOrganizeVal = v;
   localStorage.setItem('transfer-organize', v ? 'true' : 'false');
@@ -1953,7 +1957,7 @@ async function loadConfigs() {
       const data = await api('/config/setting?key=' + key);
       if (!data.value) return;
       applyConfig(key, JSON.parse(data.value));
-    } catch (e) {}
+    } catch (e) { console.error('[配置回填失败]', key, e && e.message); }
   }));
   // emby-notify 可能尚无配置（首次使用），走同一逻辑生成 token 并展示地址
   if (!document.getElementById('emby-webhook-url')?.textContent) applyEmbyNotify({});

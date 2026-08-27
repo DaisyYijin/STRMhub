@@ -2318,13 +2318,11 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 }
 
 
-// tmdbImageBase TMDB 图片地址（设置里的 image_url，默认官方）
+// tmdbImageBase TMDB 图片地址（读取 TMDB 配置卡保存的数据库配置，默认官方）
 func tmdbImageBase() string {
-	var cfg struct {
-		ImageURL string `json:"image_url"`
-	}
-	if json.Unmarshal([]byte(settingValueCompat("tmdb")), &cfg) == nil && cfg.ImageURL != "" {
-		return strings.TrimRight(cfg.ImageURL, "/")
+	var cfg model.TmdbConfig
+	if model.DB != nil && model.DB.First(&cfg).Error == nil && cfg.ImageApiUrl != "" {
+		return strings.TrimRight(cfg.ImageApiUrl, "/")
 	}
 	return "https://image.tmdb.org"
 }
