@@ -135,6 +135,7 @@ function showPage(id) {
   }
   if (id === 'sync') { loadConfigs(); previewCron(); }
   if (id === 'upload-download') { loadConfigs(); }
+  if (id === 'config-message') loadConfigs();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
