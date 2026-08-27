@@ -152,25 +152,35 @@ func (h *Handler) offlineTaskList(c *gin.Context) {
 		return
 	}
 
-	ver := getAppVerCached()
-	ua := fmt.Sprintf("Mozilla/5.0 115disk/%s 115Browser/%s 115wangpan_android/%s", ver, ver, ver)
-	payload, _ := json.Marshal(map[string]string{})
-	form := url.Values{"data": {encrypt115(payload)}}
-	body, err := post115Form("https://clouddownload.115.com/lixianssp/?ac=task_lists", form, cookie, ua, 15*time.Second)
+	raws, err := fetchLixianTasksRaw(cookie)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "查询失败: " + err.Error()})
 		return
 	}
-
-	var resp struct {
-		State bool `json:"state"`
-		Data  json.RawMessage `json:"data"`
+	// 规范化：name / size / percent / status(-1失败 1下载中 2完成)
+	items := make([]gin.H, 0, len(raws))
+	for _, m := range raws {
+		name := firstStr(m, "name", "task_name")
+		if name == "" {
+			continue
+		}
+		status := 0
+		switch v := m["status"].(type) {
+		case float64:
+			status = int(v)
+		case string:
+			switch {
+			case strings.Contains(strings.ToLower(v), "fail") || strings.Contains(v, "失败"):
+				status = -1
+			case strings.Contains(v, "完成") || strings.Contains(strings.ToLower(v), "done"):
+				status = 2
+			case strings.Contains(v, "下载"):
+				status = 1
+			}
+		}
+		items = append(items, gin.H{"name": name, "size": m["size"], "percent": m["percent"], "status": status})
 	}
-	if json.Unmarshal(body, &resp) != nil || !resp.State {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "查询被拒"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": json.RawMessage(resp.Data)})
+	c.JSON(http.StatusOK, gin.H{"data": items})
 }
 
 // classifyLink 判断链接类型
@@ -370,6 +380,44 @@ func StartOfflineTaskMonitor(h *Handler) {
 	}()
 }
 
+// fetchLixianTasksRaw 拉取离线任务原始列表（明文 web 接口，与 add_task_url 同通道；
+// 兼容 data/info、数组、{tasks}/{list} 多种响应形态）
+func fetchLixianTasksRaw(cookie string) ([]map[string]interface{}, error) {
+	body, err := post115Form("https://115.com/web/lixian/?ac=task_lists", url.Values{}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		State bool            `json:"state"`
+		Error string          `json:"error"`
+		Data  json.RawMessage `json:"data"`
+		Info  json.RawMessage `json:"info"`
+	}
+	if json.Unmarshal(body, &resp) != nil || !resp.State {
+		msg := resp.Error
+		if msg == "" {
+			msg = truncateStr(string(body), 120)
+		}
+		return nil, fmt.Errorf("115 拒绝: %s", msg)
+	}
+	raw := resp.Data
+	if len(raw) == 0 {
+		raw = resp.Info
+	}
+	var raws []map[string]interface{}
+	if json.Unmarshal(raw, &raws) != nil {
+		var wrapper struct {
+			Tasks []map[string]interface{} `json:"tasks"`
+			List  []map[string]interface{} `json:"list"`
+		}
+		if json.Unmarshal(raw, &wrapper) != nil {
+			return nil, fmt.Errorf("任务列表结构无法解析: %s", truncateStr(string(raw), 100))
+		}
+		raws = append(wrapper.Tasks, wrapper.List...)
+	}
+	return raws, nil
+}
+
 // offlineTaskInfo 离线任务摘要
 type offlineTaskInfo struct {
 	key    string // info_hash 优先，空则 name
@@ -379,32 +427,9 @@ type offlineTaskInfo struct {
 
 // fetchOfflineTaskList 拉取离线任务列表（web lixian 加密接口，防御式解析）
 func fetchOfflineTaskList(cookie string) ([]offlineTaskInfo, error) {
-	ver := getAppVerCached()
-	ua := fmt.Sprintf("Mozilla/5.0 115disk/%s 115Browser/%s 115wangpan_android/%s", ver, ver, ver)
-	payload, _ := json.Marshal(map[string]string{})
-	form := url.Values{"data": {encrypt115(payload)}}
-	body, err := post115Form("https://clouddownload.115.com/lixianssp/?ac=task_lists", form, cookie, ua, 15*time.Second)
+	raws, err := fetchLixianTasksRaw(cookie)
 	if err != nil {
 		return nil, err
-	}
-	var resp struct {
-		State bool            `json:"state"`
-		Data  json.RawMessage `json:"data"`
-	}
-	if json.Unmarshal(body, &resp) != nil || !resp.State {
-		return nil, fmt.Errorf("任务列表响应异常: %s", truncateStr(string(body), 80))
-	}
-	// data 可能是数组，也可能是 {tasks: [...]} 或 {list: [...]}，逐形态尝试
-	var raws []map[string]interface{}
-	if err := json.Unmarshal(resp.Data, &raws); err != nil {
-		var wrapper struct {
-			Tasks []map[string]interface{} `json:"tasks"`
-			List  []map[string]interface{} `json:"list"`
-		}
-		if err2 := json.Unmarshal(resp.Data, &wrapper); err2 != nil {
-			return nil, fmt.Errorf("任务列表结构无法解析")
-		}
-		raws = append(wrapper.Tasks, wrapper.List...)
 	}
 	tasks := make([]offlineTaskInfo, 0, len(raws))
 	for _, m := range raws {
