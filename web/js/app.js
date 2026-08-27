@@ -2092,12 +2092,23 @@ async function loadLogLevel() {
   } catch (e) {}
 }
 
-// 版本号（侧边栏显示，对照 GitHub 最新提交确认是否已更新）
+// 版本号（左下角 footer 显示）+ 刷新时自动检查 GitHub 是否有新版本
 async function loadVersion() {
+  let local = '';
   try {
     const data = await api('/version');
-    const el = document.getElementById('sidebar-version');
-    if (el && data.version) el.textContent = '版本 ' + String(data.version).slice(0, 7);
+    local = String(data.version || '');
+  } catch (e) {}
+  const el = document.getElementById('footer-version');
+  if (el && local) el.textContent = 'StrmHub v' + local.slice(0, 7);
+  // 本地 dev 构建无版本可比，跳过更新检查
+  if (!el || !local || local === 'dev') return;
+  try {
+    const d = await api('/version/latest');
+    if (d.latest && d.latest.slice(0, 7) !== local.slice(0, 7)) {
+      el.innerHTML = 'StrmHub v' + local.slice(0, 7) +
+        ' <a href="https://github.com/DaisyYijin/STRMhub/commits/main" target="_blank" rel="noopener" style="color:var(--warning);text-decoration:none;font-weight:600">有新版本 ↗</a>';
+    }
   } catch (e) {}
 }
 
