@@ -169,9 +169,8 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 // 可选鉴权：配置的 Webhook 地址带 ?token=xxx 时，请求需携带相同 token 才被接受
 func (h *Handler) EmbyWebhook(c *gin.Context) {
 	var notifyCfg struct {
-		Webhook string          `json:"webhook"`
-		Token   string          `json:"token"`
-		Events  map[string]bool `json:"events"`
+		Webhook string `json:"webhook"`
+		Token   string `json:"token"`
 	}
 	if v := h.getSettingValue("emby-notify"); v != "" {
 		_ = json.Unmarshal([]byte(v), &notifyCfg)
@@ -252,18 +251,6 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	if category == "" {
 		log.Printf("[Emby Webhook] 未识别的事件类型 %q，已忽略", event)
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
-		return
-	}
-
-	// 按通知事件开关过滤（默认全部开启）
-	events := map[string]bool{"added": true, "deleted": true, "play": true, "pause": true}
-	if notifyCfg.Events != nil {
-		for k, v := range notifyCfg.Events {
-			events[k] = v
-		}
-	}
-	if !events[category] {
-		c.JSON(http.StatusOK, gin.H{"message": "ok（该事件未开启通知）"})
 		return
 	}
 

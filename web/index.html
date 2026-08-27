@@ -53,7 +53,7 @@
       <div class="menu-item" data-page="logs"><span class="icon">▤</span><span>实时日志</span></div>
       <div id="sidebar-version" style="padding:10px 16px;font-size:11px;color:rgba(255,255,255,.35);border-top:1px solid rgba(255,255,255,.06);margin-top:8px"></div>
     </div>
-    <div class="footer">StrmHub v1.0</div>
+    <div class="footer">StrmHub</div>
   </aside>
 
   <!-- 内容区 -->
@@ -675,7 +675,7 @@ av:
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('share')">保存目录</button></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">链接<i class="help-tip" tabindex="0">?<span class="tip-bubble">支持磁力 / ed2k / HTTP / 115 分享链接（需提取码），提交后自动整理入库。</span></i></div><div class="control"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()"></div></div>
+          <div class="form-row"><div class="label">链接<i class="help-tip" tabindex="0">?<span class="tip-bubble">支持磁力 / ed2k / HTTP / 115 分享链接，提交后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="transfer-link" placeholder="粘贴磁力 / ed2k / 115分享链接" onkeydown="if(event.key==='Enter')transfer()" style="flex:1"><input type="text" id="transfer-code" placeholder="提取码" style="width:110px;flex:none"></div><div class="hint">115 分享链接需提取码：填在旁边输入框，或直接附在链接后（?password=xxxx / 空格加提取码均可）。</div></div></div>
           <div class="form-row"><div class="label">转存后整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后：转存/下载完成自动识别入库并生成 STRM（识别→分类→重命名→同步全流程）。</span></i></div><div class="control"><div class="segmented-control" id="transfer-organize-switch"><div class="seg-item active" data-value="true" onclick="setTransferOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="setTransferOrganize(false)">关闭</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="transfer()">开始转存</button></div></div>
         </div>
@@ -987,6 +987,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=85"></script>
+<script src="/js/app.js?v=86"></script>
 </body>
 </html>

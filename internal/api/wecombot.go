@@ -135,13 +135,10 @@ func (h *Handler) wecomHandleCommand(text string) {
 	case lower == "帮助" || lower == "help" || lower == "?":
 		reply(
 			"可用指令：",
-			"直接发链接 — 磁力/ed2k/HTTP 提交离线下载；115 分享链接自动转存（自动整理入库）",
-			"下载 <链接> — 同上",
+			"直接发链接 — 磁力/ed2k/HTTP 提交离线下载；115 分享链接（连同提取码一起发）自动转存并整理入库",
 			"状态 — 任务状态 + 转存目录 + 离线任务",
 			"搜索 <片名> — TMDB 搜片",
-			"整理 — 立即执行一次整理",
-			"同步 — 立即执行一次增量同步",
-			"补全 — 扫描缺画质信息的文件，探测后规范命名",
+			"整理 / 同步 / 补全 — 手动触发整理、增量同步、画质补全",
 		)
 
 	case strings.HasPrefix(text, "下载"), strings.HasPrefix(lower, "dl "):

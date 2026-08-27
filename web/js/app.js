@@ -866,15 +866,21 @@ async function transfer() {
   const isShare = url.includes('115.com/s/');
   const endpoint = isShare ? '/share/receive' : '/offline/add';
 
-  // 115 分享链接自动从 URL 提取提取码（?password=xxx 或 #xxx）
-  let code = '';
+  // 提取码：行内输入框优先；其次从 URL 提取（?password=xxx 或 #xxx）；再试链接后附加的字段
+  let code = (document.getElementById('transfer-code')?.value || '').trim();
   let cleanUrl = url;
   if (isShare) {
     const m = url.match(/[?#](?:password=)?([a-zA-Z0-9]{4,})/);
-    if (m) { code = m[1]; cleanUrl = url.split(/[?#]/)[0]; }
+    if (m && !code) { code = m[1]; cleanUrl = url.split(/[?#]/)[0]; }
     if (!code) {
-      code = prompt('115 分享需要提取码，请输入：') || '';
-      if (!code) { toast('已取消'); return; }
+      // "链接 提取码" 同框写法
+      const parts = url.split(/\s+/);
+      if (parts.length >= 2) { cleanUrl = parts[0]; code = parts[1]; }
+    }
+    if (!code) {
+      toast('115 分享链接需要提取码，请填写后重试');
+      document.getElementById('transfer-code')?.focus();
+      return;
     }
   }
 

@@ -378,48 +378,8 @@ func (h *Handler) AuthMiddleware() gin.HandlerFunc {
 }
 
 // ==================== 仪表盘 ====================
-
-func (h *Handler) Dashboard(c *gin.Context) {
-	// 统计数据
-	var strmCount int64
-	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Count(&strmCount)
-
-	var storageCount int64
-	h.DB.Model(&model.Storage{}).Count(&storageCount)
-
-	var invalidCount int64
-	h.DB.Model(&model.StrmFile{}).Where("status = ?", "invalid").Count(&invalidCount)
-
-	c.JSON(http.StatusOK, gin.H{
-		"pan115": h.pan115CapacityCached(),
-		"server": gin.H{
-			"cpu":    "23%",
-			"memory": "1.2G/8G",
-			"disk":   "45G/500G",
-			"uptime": "7d",
-		},
-		"emby": gin.H{
-			"connected":    false,
-			"libraries":    0,
-			"media_count":  strmCount,
-			"playing":      0,
-			"today_added":  0,
-		},
-		"storage": gin.H{
-			"total":  storageCount,
-			"online": storageCount,
-		},
-		"strm": gin.H{
-			"total":   strmCount,
-			"invalid": invalidCount,
-		},
-		"proxy": gin.H{
-			"enabled":  true,
-			"port":     h.Config.ProxyPort,
-			"running":  true,
-		},
-	})
-}
+// （旧版 Dashboard 接口已删除：返回写死的假系统信息（CPU/内存/运行时间），
+//   实际路由使用 DashboardEnhanced，见各 handler 文件）
 
 // ==================== 存储管理（占位） ====================
 
