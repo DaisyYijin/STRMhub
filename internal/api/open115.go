@@ -840,7 +840,12 @@ type pan115Ops struct {
 // newPan115Ops 构造操作通道：OpenAPI 启用且已授权则优先
 func (h *Handler) newPan115Ops() (*pan115Ops, error) {
 	if oc := h.getOpen115(); oc != nil && oc.authorized() {
-		return &pan115Ops{open: oc}, nil
+		ops := &pan115Ops{open: oc}
+		// 重命名等操作 OpenAPI 暂无接口，带上 Cookie 作回退（有则可用）
+		if ck, err := h.get115Cookie(); err == nil && ck != "" {
+			ops.cookie = ck
+		}
+		return ops, nil
 	}
 	cookie, err := h.get115Cookie()
 	if err != nil {
@@ -922,21 +927,22 @@ func (o *pan115Ops) openEnsurePath(parent, dirPath string) (string, error) {
 	return current, nil
 }
 
-// rename 重命名网盘文件（字幕随视频新名对齐用；OpenAPI 通道暂不支持）
+// rename 重命名网盘文件（字幕随视频新名对齐用）。
+// OpenAPI 暂无重命名接口：回退 Cookie 通道（未配置 Cookie 时明确报错）
 func (o *pan115Ops) rename(fid, newName string) error {
-	if o.open != nil {
-		return fmt.Errorf("OpenAPI 通道暂不支持重命名")
+	if o.open != nil && o.cookie == "" {
+		return fmt.Errorf("OpenAPI 通道暂不支持重命名，且未配置 Cookie 无法回退（账号管理 → 二维码登录可补 Cookie）")
 	}
 	return rename115(o.cookie, fid, newName)
 }
 
-// renameBatch 批量重命名（一次调用；OpenAPI 通道暂不支持）
+// renameBatch 批量重命名（一次调用）；OpenAPI 模式同样回退 Cookie 通道
 func (o *pan115Ops) renameBatch(names map[string]string) error {
 	if len(names) == 0 {
 		return nil
 	}
-	if o.open != nil {
-		return fmt.Errorf("OpenAPI 通道暂不支持批量重命名")
+	if o.open != nil && o.cookie == "" {
+		return fmt.Errorf("OpenAPI 通道暂不支持批量重命名，且未配置 Cookie 无法回退（账号管理 → 二维码登录可补 Cookie）")
 	}
 	return rename115Batch(o.cookie, names)
 }
