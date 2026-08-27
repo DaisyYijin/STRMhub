@@ -296,29 +296,6 @@ func (h *Handler) executeEnrichScan() (int, int, error) {
 	return len(videos), queued, nil
 }
 
-// EnrichQueueAll 批量入队：扫描媒体库中所有缺画质信息的视频。
-// POST /enrich/scan —— 手动触发对存量库的补全
-func (h *Handler) EnrichQueueAll(c *gin.Context) {
-	if !fullSyncMu.TryLock() {
-		c.JSON(http.StatusConflict, gin.H{"error": "任务正在进行中"})
-		return
-	}
-	defer fullSyncMu.Unlock()
-	beginTask("媒体补全扫描")
-	defer endTask()
-
-	if policy := loadEnrichPolicy(); !policy.Enabled {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "补全功能未开启（自动整理 → 基础配置 → 媒体补全）"})
-		return
-	}
-	total, queued, err := h.executeEnrichScan()
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "扫描完成", "total_videos": total, "queued": queued})
-}
-
 // EnrichList 队列状态。GET /enrich/list
 func (h *Handler) EnrichList(c *gin.Context) {
 	var tasks []model.MediaEnrich

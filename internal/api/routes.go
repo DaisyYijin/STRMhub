@@ -201,7 +201,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/strm/cleanup", h.OrphanCleanup)
 
 		// 媒体信息补全（探测队列）
-		protected.POST("/enrich/scan", h.EnrichQueueAll)
 		protected.GET("/enrich/list", h.EnrichList)
 
 		// 插件：一键创建 Emby 媒体库

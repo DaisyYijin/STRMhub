@@ -220,7 +220,7 @@
       <div class="tab-panel" data-panel="enrich">
       <div class="alert alert-info">媒体补全：文件名缺分辨率/编码时（如 蜘蛛侠.2016.mkv），用 ffprobe 读取 115 直链头部探测真实画质（只拉几 MB，不下载全文件），按下方策略规范命名。探测是"事实"、命名为"声明"：默认只在缺失或名实冲突时修改；片名/集数/年份/来源/发布组等原有信息一律保留。</div>
       <div class="card">
-        <div class="form-row"><div class="label">媒体补全<i class="help-tip" tabindex="0">?<span class="tip-bubble">文件名缺分辨率/编码时自动探测规范命名。开启后新整理文件生效，扫描补全按钮可处理存量库。</span></i></div><div class="control"><div class="segmented-control" id="enrich-enabled-switch">
+        <div class="form-row"><div class="label">媒体补全<i class="help-tip" tabindex="0">?<span class="tip-bubble">文件名缺分辨率/编码时自动探测规范命名。开启后新整理文件生效。</span></i></div><div class="control"><div class="segmented-control" id="enrich-enabled-switch">
             <div class="seg-item active" data-value="true" onclick="setEnrichOpt('enabled', true)">开启</div>
             <div class="seg-item" data-value="false" onclick="setEnrichOpt('enabled', false)">关闭</div>
           </div></div></div>
@@ -245,7 +245,7 @@
             <div class="seg-item active" data-value="keep" onclick="setEnrichOpt('full', 'keep')">保留</div>
             <div class="seg-item" data-value="rename" onclick="setEnrichOpt('full', 'rename')">以探测为准</div>
           </div></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存策略</button> <button class="btn btn-outline" onclick="enrichScan(this)">扫描补全（存量库）</button></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存策略</button></div></div>
       </div>
     </div>
 
@@ -1038,6 +1038,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=99"></script>
+<script src="/js/app.js?v=100"></script>
 </body>
 </html>
