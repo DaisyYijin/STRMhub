@@ -276,6 +276,9 @@ tr:hover td { background: var(--fill-1); }
   .tabs::-webkit-scrollbar { display: none; }
   .tab { padding: 8px 14px; font-size: 13px; }
 
+  /* 账号下拉：手机端顶栏下方 */
+  #account-menu { top: 60px; right: 12px; }
+
   /* 工具栏 */
   .toolbar { gap: 6px; }
   .toolbar input, .toolbar select { width: 100%; }

@@ -134,7 +134,8 @@ function showPage(id) {
     loadWash();
   }
   if (id === 'sync') { loadConfigs(); previewCron(); }
-  if (id === 'upload-download') { loadConfigs(); }
+  if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
+  else stopOfflineTasksPoll();
   if (id === 'config-message') loadConfigs();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
@@ -858,6 +859,53 @@ function setTransferOrganize(v, silent) {
   });
 }
 
+// ==================== 离线任务面板 ====================
+let offlineTasksTimer = null;
+async function loadOfflineTasks() {
+  const box = document.getElementById('offline-tasks');
+  const hint = document.getElementById('offline-tasks-hint');
+  if (!box) return;
+  try {
+    const d = await api('/offline/tasks');
+    let items = d.data || [];
+    if (!Array.isArray(items)) items = items.tasks || items.list || [];
+    if (!items.length) {
+      box.innerHTML = '<span style="color:var(--text-3)">暂无离线任务</span>';
+      hint.textContent = '';
+      return;
+    }
+    hint.textContent = items.length + ' 个任务 · ' + new Date().toLocaleTimeString();
+    box.innerHTML = items.slice(0, 30).map(t => {
+      const name = escHtml(t.name || t.task_name || '?');
+      let right = '';
+      const p = t.percent;
+      if (typeof p === 'number' && p >= 0) right = p.toFixed(1) + '%';
+      else if (typeof p === 'string' && p && p !== '-1') right = escHtml(p);
+      const st = t.status;
+      if (st === -1 || String(st).includes('fail') || String(st).includes('失败')) right = '<span style="color:var(--danger)">失败</span>';
+      else if (st === 2 || String(st).includes('完成')) right = '<span style="color:var(--success)">完成</span>';
+      const size = t.size && Number(t.size) > 0 ? ' <span style="color:var(--text-3)">' + fmtSize(Number(t.size)) + '</span>' : '';
+      return '<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);align-items:baseline">' +
+        '<span style="flex:1;word-break:break-all">' + name + size + '</span>' +
+        '<span style="flex:none;min-width:56px;text-align:right">' + right + '</span></div>';
+    }).join('') + (items.length > 30 ? '<div style="color:var(--text-3);padding-top:4px">… 仅显示前 30 个</div>' : '');
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--danger)">' + escHtml(e.message) + '</span>';
+  }
+}
+function startOfflineTasksPoll() {
+  stopOfflineTasksPoll();
+  loadOfflineTasks();
+  offlineTasksTimer = setInterval(() => {
+    const page = document.getElementById('page-upload-download');
+    if (!page || !page.classList.contains('active')) { stopOfflineTasksPoll(); return; }
+    loadOfflineTasks();
+  }, 30000);
+}
+function stopOfflineTasksPoll() {
+  if (offlineTasksTimer) { clearInterval(offlineTasksTimer); offlineTasksTimer = null; }
+}
+
 async function transfer() {
   const url = document.getElementById('transfer-link').value.trim();
   if (!url) { toast('请填写链接'); return; }
@@ -896,6 +944,7 @@ async function transfer() {
     const d = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
     toast(d.message || '完成');
     appendLog(`✓ ${isShare ? '转存' : '离线下载'}: ${d.message || ''}`);
+    loadOfflineTasks();
     // 清空输入框
     document.getElementById('transfer-link').value = '';
     if (transferOrganizeVal) {
@@ -2143,7 +2192,7 @@ function toggleAccountMenu(ev) {
 }
 document.addEventListener('click', e => {
   const m = document.getElementById('account-menu');
-  if (m && m.style.display !== 'none' && !e.target.closest('#account-menu') && !e.target.textContent.includes('账号')) {
+  if (m && m.style.display !== 'none' && !e.target.closest('#account-menu') && !e.target.closest('[data-account-btn]')) {
     m.style.display = 'none';
   }
 });

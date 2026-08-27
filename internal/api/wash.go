@@ -349,18 +349,43 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	}
 		if len(fids) > 0 {
 			oldDir := path.Dir(targetDir)
-			destCid := cfg.Redundant
-			switch oldTarget {
-			case "existing":
-				destCid = cfg.Existing
-			case "delete":
-				onLog("○ 洗版旧版去向配置为「删除」，暂不支持网盘删除，按冗余处理")
-			}
-			junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
-			if err == nil {
-				if err := ops.moveFiles(junkCid, fids); err != nil {
-					onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
-					return washSkip
+			if oldTarget == "delete" {
+				// 真删除：定位旧版父目录 cid 后 rb/delete（移入 115 回收站，可恢复）；失败降级为移入冗余
+				deleted := false
+				if ops.cookie != "" {
+					if parentCid, found, cerr := cloudPathCidE(ops.cookie, oldDir); cerr == nil && found {
+						if derr := ops.deleteFiles(parentCid, fids); derr == nil {
+							onLog(fmt.Sprintf("🗑 已删除旧版 %d 个文件（115 回收站可恢复）", len(fids)))
+							deleted = true
+						} else {
+							onLog(fmt.Sprintf("○ 删除旧版失败（%v），降级为移入冗余", truncateStr(derr.Error(), 80)))
+						}
+					} else {
+						onLog("○ 无法定位旧版父目录，降级为移入冗余")
+					}
+				} else {
+					onLog("○ 删除需要 Cookie 通道（未配置），降级为移入冗余")
+				}
+				if !deleted {
+					junkCid, err := ops.ensurePath(cfg.Redundant, "洗版-旧版本/"+path.Base(oldDir))
+					if err == nil {
+						if err := ops.moveFiles(junkCid, fids); err != nil {
+							onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
+							return washSkip
+						}
+					}
+				}
+			} else {
+				destCid := cfg.Redundant
+				if oldTarget == "existing" {
+					destCid = cfg.Existing
+				}
+				junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
+				if err == nil {
+					if err := ops.moveFiles(junkCid, fids); err != nil {
+						onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
+						return washSkip
+					}
 				}
 			}
 			// 按查到的行精确清理台账（避免前缀字符串推导）

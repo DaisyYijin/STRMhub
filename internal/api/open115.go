@@ -936,6 +936,32 @@ func (o *pan115Ops) rename(fid, newName string) error {
 	return rename115(o.cookie, fid, newName)
 }
 
+// deleteFiles 删除网盘文件（移入 115 回收站，可恢复）。OpenAPI 模式回退 Cookie 通道。
+func (o *pan115Ops) deleteFiles(pid string, fids []string) error {
+	if len(fids) == 0 {
+		return nil
+	}
+	if o.cookie == "" {
+		return fmt.Errorf("删除暂需 Cookie 通道（OpenAPI 未支持且未配置 Cookie）")
+	}
+	form := url.Values{"pid": {pid}}
+	for _, f := range fids {
+		form.Add("fid[]", f)
+	}
+	body, err := post115Form("https://webapi.115.com/rb/delete", form, o.cookie, ua115Unified(), 20*time.Second)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		State bool   `json:"state"`
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &resp) != nil || !resp.State {
+		return fmt.Errorf("115 拒绝: %s", truncateStr(string(body), 100))
+	}
+	return nil
+}
+
 // renameBatch 批量重命名（一次调用）；OpenAPI 模式同样回退 Cookie 通道
 func (o *pan115Ops) renameBatch(names map[string]string) error {
 	if len(names) == 0 {
