@@ -39,12 +39,12 @@ func dockerHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// fetchLatestSHA 查询 GitHub main 最新提交（10 分钟缓存；拉取失败返回缓存值）
-func fetchLatestSHA() string {
+// fetchLatestSHA 查询 GitHub main 最新提交（2 分钟缓存，force 时跳过；拉取失败返回缓存值）
+func fetchLatestSHA(force bool) string {
 	latestVersionCache.Lock()
 	cached, cacheAt := latestVersionCache.sha, latestVersionCache.at
 	latestVersionCache.Unlock()
-	if cached != "" && time.Since(cacheAt) < 10*time.Minute {
+	if !force && cached != "" && time.Since(cacheAt) < 2*time.Minute {
 		return cached
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -75,7 +75,7 @@ func fetchLatestSHA() string {
 // VersionChanges GET /version/changes —— 当前版本与最新版本之间的提交列表（更新内容）
 func (h *Handler) VersionChanges(c *gin.Context) {
 	current := buildVersion
-	latest := fetchLatestSHA()
+	latest := fetchLatestSHA(true)
 	if current == "dev" || latest == "" || strings.HasPrefix(latest, current[:7]) {
 		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil,
 			"uptodate": current != "dev" && latest != "" && strings.HasPrefix(latest, current[:7])})
@@ -139,9 +139,9 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "未挂载 Docker socket，无法自更新。\n配置方法：在 docker-compose.yml 的 strmhub 服务 volumes 中加一行 /var/run/docker.sock:/var/run/docker.sock，然后 docker compose up -d 重建一次，之后即可在界面内一键更新"})
 		return
 	}
-	latest := fetchLatestSHA()
+	latest := fetchLatestSHA(true)
 	if latest == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "无法获取最新版本（GitHub 不可达），稍后再试"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "无法获取最新版本（GitHub 不可达，可在系统配置代理卡配置代理），稍后再试"})
 		return
 	}
 	if strings.HasPrefix(latest, buildVersion[:7]) {

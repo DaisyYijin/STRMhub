@@ -2100,7 +2100,13 @@ async function loadVersion() {
     local = String(data.version || '');
   } catch (e) {}
   const el = document.getElementById('footer-version');
-  if (el && local) el.textContent = 'StrmHub v' + local.slice(0, 7);
+  if (el && local) {
+    el.textContent = 'StrmHub v' + local.slice(0, 7);
+    // 版本号可点击：随时手动检查更新（不依赖"有新版本"提示出现）
+    el.style.cursor = 'pointer';
+    el.title = '点击检查更新';
+    el.onclick = openUpdateModal;
+  }
   // 本地 dev 构建无版本可比，跳过更新检查
   if (!el || !local || local === 'dev') return;
   try {
