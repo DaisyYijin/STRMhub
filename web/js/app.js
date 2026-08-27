@@ -2221,8 +2221,13 @@ async function loadVersion() {
   try {
     const d = await api('/version/latest');
     if (d.latest && d.latest.slice(0, 7) !== local.slice(0, 7)) {
-      el.innerHTML = 'StrmHub v' + local.slice(0, 7) +
-        ' <button class="btn btn-sm" onclick="openUpdateModal()" style="background:var(--warning);color:#fff;border:none;margin-left:8px;font-size:11px;height:24px;padding:0 10px;border-radius:4px;cursor:pointer;vertical-align:middle">有新版本</button>';
+      // 版本号右侧同行显示蓝色小按钮（flex 不换行，避免窄侧栏下被挤到下一行）
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.gap = '6px';
+      el.style.whiteSpace = 'nowrap';
+      el.innerHTML = '<span>StrmHub v' + local.slice(0, 7) + '</span>' +
+        '<button class="btn btn-sm" onclick="openUpdateModal()" style="background:var(--primary);color:#fff;border:none;flex:none;font-size:11px;height:22px;padding:0 8px;border-radius:4px;cursor:pointer">有新版本</button>';
     }
   } catch (e) {}
 }
