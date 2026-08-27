@@ -46,39 +46,7 @@ var latestVersionCache struct {
 
 // LatestVersion GET /version/latest —— 查询 GitHub main 分支最新提交（前端刷新时比对是否有新版本）
 func (h *Handler) LatestVersion(c *gin.Context) {
-	latestVersionCache.Lock()
-	cached, cacheAt := latestVersionCache.sha, latestVersionCache.at
-	latestVersionCache.Unlock()
-	if cached != "" && time.Since(cacheAt) < 10*time.Minute {
-		c.JSON(http.StatusOK, gin.H{"latest": cached})
-		return
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	if pu := getProxyURL(); pu != "" {
-		if p, err := parseProxyURL(pu); err == nil {
-			client.Transport = &http.Transport{Proxy: p}
-		}
-	}
-	req, _ := http.NewRequest("GET", "https://api.github.com/repos/DaisyYijin/STRMhub/commits/main", nil)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := client.Do(req)
-	if err != nil {
-		// 网络不通（如未配代理直连 GitHub 失败）：回退缓存，没有就返回空，前端保持静默
-		c.JSON(http.StatusOK, gin.H{"latest": cached, "error": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-	var out struct {
-		Sha string `json:"sha"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&out)
-	if out.Sha != "" {
-		latestVersionCache.Lock()
-		latestVersionCache.sha, latestVersionCache.at = out.Sha, time.Now()
-		latestVersionCache.Unlock()
-	}
-	c.JSON(http.StatusOK, gin.H{"latest": out.Sha})
+	c.JSON(http.StatusOK, gin.H{"latest": fetchLatestSHA()})
 }
 
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
@@ -242,6 +210,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 			c.JSON(http.StatusOK, gin.H{"version": buildVersion})
 		})
 		protected.GET("/version/latest", h.LatestVersion)
+		protected.GET("/version/changes", h.VersionChanges)
+		protected.POST("/update/apply", h.ApplyUpdate)
 		protected.POST("/system/log-level", func(c *gin.Context) {
 			var req struct {
 				Level string `json:"level"` // simple / verbose

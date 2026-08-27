@@ -2107,9 +2107,75 @@ async function loadVersion() {
     const d = await api('/version/latest');
     if (d.latest && d.latest.slice(0, 7) !== local.slice(0, 7)) {
       el.innerHTML = 'StrmHub v' + local.slice(0, 7) +
-        ' <a href="https://github.com/DaisyYijin/STRMhub/commits/main" target="_blank" rel="noopener" style="color:var(--warning);text-decoration:none;font-weight:600">有新版本 ↗</a>';
+        ' <a href="javascript:void(0)" onclick="openUpdateModal()" style="color:var(--warning);text-decoration:none;font-weight:600">有新版本 ↗</a>';
     }
   } catch (e) {}
+}
+
+// ==================== 应用内更新面板 ====================
+async function openUpdateModal() {
+  const mask = document.getElementById('update-modal');
+  const body = document.getElementById('update-modal-body');
+  const btn = document.getElementById('update-apply-btn');
+  mask.style.display = '';
+  body.textContent = '获取更新内容中...';
+  btn.disabled = false; btn.textContent = '立即更新';
+  try {
+    const d = await api('/version/changes');
+    document.getElementById('update-modal-title').textContent =
+      '发现新版本 v' + String(d.latest || '').slice(0, 7) + '（当前 v' + String(d.current || '').slice(0, 7) + '）';
+    if (!d.commits || !d.commits.length) {
+      body.innerHTML = d.error
+        ? '<p>更新内容获取失败：' + escHtml(d.error) + '</p><p>可点「查看 GitHub」直接查看提交记录。</p>'
+        : '<p>未获取到提交记录，可点「查看 GitHub」查看。</p>';
+      return;
+    }
+    body.innerHTML = '<p style="margin-bottom:6px"><b>更新内容（' + d.commits.length + ' 个提交）：</b></p>' +
+      d.commits.map(cm =>
+        '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:baseline">' +
+        '<code style="color:var(--text-3);flex:none">' + String(cm.sha).slice(0, 7) + '</code>' +
+        '<span>' + escHtml(cm.message) + '</span></div>').join('');
+  } catch (e) {
+    body.innerHTML = '<p>获取失败：' + escHtml(e.message) + '</p>';
+  }
+}
+function closeUpdateModal() { document.getElementById('update-modal').style.display = 'none'; }
+
+async function applyUpdate(btn) {
+  btn.disabled = true; btn.textContent = '更新中...';
+  const body = document.getElementById('update-modal-body');
+  let latest = '';
+  try {
+    const d = await api('/update/apply', { method: 'POST' });
+    if (d.message && d.message.includes('已是最新')) {
+      btn.textContent = '已是最新'; body.insertAdjacentHTML('afterbegin', '<p>✓ ' + escHtml(d.message) + '</p>');
+      return;
+    }
+    latest = d.latest || '';
+    body.insertAdjacentHTML('afterbegin',
+      '<p>✓ 镜像已拉取，容器重启中（预计 10~30 秒）…页面将自动刷新。</p>');
+    btn.textContent = '重启中...';
+  } catch (e) {
+    // 无 docker.sock 等场景：错误信息自带配置指引
+    btn.disabled = false; btn.textContent = '立即更新';
+    body.insertAdjacentHTML('afterbegin',
+      '<p style="color:var(--danger);white-space:pre-line">✗ ' + escHtml(e.message || '更新失败') + '</p>');
+    return;
+  }
+  // 轮询服务恢复：版本变化或服务可达即刷新
+  let tries = 0;
+  const timer = setInterval(async () => {
+    tries++;
+    try {
+      const d = await api('/version');
+      const v = String(d.version || '');
+      if (v && v !== 'dev' && (!latest || v.slice(0, 7) === latest.slice(0, 7))) {
+        clearInterval(timer); toast('✓ 已更新到 v' + v.slice(0, 7));
+        setTimeout(() => location.reload(), 800);
+      }
+    } catch (e) { /* 重启期间不可达，继续等 */ }
+    if (tries > 60) { clearInterval(timer); btn.textContent = '请手动刷新'; }
+  }, 3000);
 }
 
 // ==================== 日志 ====================

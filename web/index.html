@@ -972,6 +972,18 @@ av:
 </div>
 
 <!-- Emby 建库配置弹窗 -->
+<div class="modal-mask" id="update-modal" style="display:none" onclick="if(event.target===this)closeUpdateModal()">
+  <div class="modal" style="max-width:600px">
+    <h3 id="update-modal-title">发现新版本</h3>
+    <div id="update-modal-body" style="font-size:13px;max-height:48vh;overflow-y:auto">获取更新内容中...</div>
+    <div class="actions">
+      <a id="update-modal-gh" href="https://github.com/DaisyYijin/STRMhub/commits/main" target="_blank" rel="noopener" class="btn btn-outline" style="text-decoration:none">查看 GitHub</a>
+      <span class="spacer"></span>
+      <button class="btn btn-outline" onclick="closeUpdateModal()">关闭</button>
+      <button class="btn btn-primary" id="update-apply-btn" onclick="applyUpdate(this)">立即更新</button>
+    </div>
+  </div>
+</div>
 <div class="modal-mask" id="emby-lib-modal" style="display:none">
   <div class="modal" style="max-width:680px">
     <h3>一键创建 Emby 媒体库 · 配置规则</h3>
@@ -986,6 +998,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=87"></script>
+<script src="/js/app.js?v=88"></script>
 </body>
 </html>
