@@ -222,6 +222,14 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	}
 	itemName := getNested([]string{"Item", "Metadata"}, []string{"Name", "title", "fullTitle"})
 	userName := getNested([]string{"User", "Account"}, []string{"Name", "title"})
+	// 剧集单集的 Name 通常只有"第 11 集"，拼上剧集名与季名（Emby: SeriesName/SeasonName；Plex 兼容: grandparentTitle/parentTitle）
+	if series := getNested([]string{"Item", "Metadata"}, []string{"SeriesName", "grandparentTitle"}); series != "" && !strings.Contains(itemName, series) {
+		ep := itemName
+		if season := getNested([]string{"Item", "Metadata"}, []string{"SeasonName", "parentTitle"}); season != "" && !strings.Contains(itemName, season) {
+			ep = season + " " + ep
+		}
+		itemName = series + " " + ep
+	}
 
 	// 事件归类（stop 归入暂停/停止，需先于 play 判断，避免 "Playback start" 误命中；resume 归入播放）
 	category, title := "", ""
