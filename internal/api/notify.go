@@ -30,7 +30,17 @@ type WecomConfig struct {
 	AgentID        string `json:"agent_id"`
 	Token          string `json:"token"`
 	EncodingAESKey string `json:"encoding_aes_key"`
+	APIURL         string `json:"api_url"`
 	Enabled        any    `json:"enabled"`
+}
+
+// apiBase 企微 API 地址（海外部署可配反代；默认官方地址）
+func (c *WecomConfig) apiBase() string {
+	base := strings.TrimRight(strings.TrimSpace(c.APIURL), "/")
+	if base == "" {
+		base = "https://qyapi.weixin.qq.com"
+	}
+	return base
 }
 
 // TGConfig Telegram 配置
@@ -101,8 +111,8 @@ func sendWecom(cfg WecomConfig, msg string) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Step 1: 获取 access_token
-	tokenURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
-		cfg.CorpID, cfg.Secret)
+	tokenURL := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
+		cfg.apiBase(), cfg.CorpID, cfg.Secret)
 
 	resp, err := client.Get(tokenURL)
 	if err != nil {
@@ -126,8 +136,8 @@ func sendWecom(cfg WecomConfig, msg string) error {
 	}
 
 	// Step 2: 发送消息
-	sendURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s",
-		tokenResult.AccessToken)
+	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s",
+		cfg.apiBase(), tokenResult.AccessToken)
 
 	payload := map[string]interface{}{
 		"touser":  "@all",

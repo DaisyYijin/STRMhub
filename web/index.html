@@ -852,6 +852,7 @@ av:
           <div class="form-row"><div class="label">企业 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">企业微信「我的企业」页的 CorpID（ww 开头）。</span></i></div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
           <div class="form-row"><div class="label">应用 Secret<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的凭证，泄露后请在企微后台重置。</span></i></div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
           <div class="form-row"><div class="label">Agent ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的数字 ID。</span></i></div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
+          <div class="form-row"><div class="label">API 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">企业微信 API 地址，默认官方 https://qyapi.weixin.qq.com；海外部署访问官方 API 慢或不通时，可改为自己搭的反代地址。一般保持默认即可。</span></i></div><div class="control"><input type="text" id="msg-wecom-api-url" value="https://qyapi.weixin.qq.com"></div></div>
           <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 Token——机器人互动必填，仅发通知可不填。</span></i></div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
           <div class="form-row"><div class="label">EncodingAESKey<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 43 位密钥——机器人互动必填。</span></i></div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
           <div class="alert alert-info">机器人互动：企业微信后台「接收消息」填写 URL http://&lt;公网IP&gt;:6086/wecom/callback 及上面的 Token/AESKey，然后给应用发消息即可用指令（下载/状态/搜索/整理/同步/帮助）。</div>
@@ -986,6 +987,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=83"></script>
+<script src="/js/app.js?v=84"></script>
 </body>
 </html>
