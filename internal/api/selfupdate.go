@@ -252,12 +252,28 @@ func dockerPull(client *http.Client, ref string) error {
 	}
 }
 
-// dockerRecreateSelf 用相同配置重建容器（安全顺序：先建新再删旧，失败可恢复）：
-// create(tmp) → stop(old) → rename(old→xxx-old) → rename(tmp→原名) → start(new) → remove(old)
+// dockerRecreateSelf 用相同配置重建容器（安全顺序 + 失败自动回滚）：
+// create(tmp) → stop(old) → rename(old→bak) → rename(tmp→原名) → start(new)
+// → 任一步失败自动回滚：删除未启动的新容器、旧容器改回原名并重新启动。
 func dockerRecreateSelf(client *http.Client, oldID, name, imageRef string, insp map[string]interface{}) error {
 	cfg := insp["Config"].(map[string]interface{})
 	hostCfg := insp["HostConfig"].(map[string]interface{})
 
+	// compose 自定义网络需要显式 EndpointsConfig（静态 IP/别名缺失会导致 start 失败）
+	endpoints := map[string]interface{}{}
+	if ns, ok := insp["NetworkSettings"].(map[string]interface{})["Networks"].(map[string]interface{}); ok {
+		for netName, nv := range ns {
+			if m, ok := nv.(map[string]interface{}); ok {
+				ep := map[string]interface{}{}
+				for _, k := range []string{"IPAMConfig", "Aliases", "MacAddress"} {
+					if v, ok := m[k]; ok && v != nil {
+						ep[k] = v
+					}
+				}
+				endpoints[netName] = ep
+			}
+		}
+	}
 	create := map[string]interface{}{
 		"Image":      imageRef,
 		"Cmd":        cfg["Cmd"],
@@ -268,13 +284,29 @@ func dockerRecreateSelf(client *http.Client, oldID, name, imageRef string, insp 
 		"User":       cfg["User"],
 		"HostConfig": hostCfg,
 	}
+	if len(endpoints) > 0 {
+		create["NetworkingConfig"] = map[string]interface{}{"EndpointsConfig": endpoints}
+	}
 	createBody, _ := json.Marshal(create)
 
-	// 1. 旧容器还在运行时先创建新容器（临时名；端口冲突只在 start 时生效，create 不受影响）
-	tmpName := name + "-updating"
-	if resp, err := dockerDo(client, "DELETE", "/containers/"+tmpName+"?force=1", nil); err == nil {
-		resp.Body.Close() // 清理上次失败残留
+	// 步骤辅助：执行并校验状态码（2xx/304 均视为成功）
+	step := func(desc, method, path string, ok304 bool) error {
+		resp, err := dockerDo(client, method, path, nil)
+		if err != nil {
+			return fmt.Errorf("%s: %w", desc, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 || (resp.StatusCode == 304 && !ok304) {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+			return fmt.Errorf("%s: HTTP %d %s", desc, resp.StatusCode, truncateStr(string(b), 150))
+		}
+		log.Printf("[自更新] ✓ %s", desc)
+		return nil
 	}
+
+	// 1. 先创建新容器（临时名；端口冲突只在 start 时生效，create 不受影响）
+	tmpName := name + "-updating"
+	_ = step("清理残留临时容器", "DELETE", "/containers/"+tmpName+"?force=1", false)
 	resp, err := dockerDo(client, "POST", "/containers/create?name="+url.QueryEscape(tmpName), createBody)
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
@@ -282,36 +314,42 @@ func dockerRecreateSelf(client *http.Client, oldID, name, imageRef string, insp 
 	var created struct {
 		ID string `json:"Id"`
 	}
+	createHTTP := resp.StatusCode
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	if resp.StatusCode >= 400 || created.ID == "" {
-		return fmt.Errorf("create HTTP %d: %s", resp.StatusCode, truncateStr(fmt.Sprint(created.ID), 200))
+	if createHTTP >= 400 || created.ID == "" {
+		return fmt.Errorf("create 新容器: HTTP %d", createHTTP)
 	}
+	log.Printf("[自更新] ✓ 新容器已创建（%s）", tmpName)
 
-	// 2. 停旧 → 旧改名让出原名 → 新改名回原名 → 启动新
-	if resp, err := dockerDo(client, "POST", "/containers/"+oldID+"/stop?t=10", nil); err == nil {
-		resp.Body.Close()
-	}
 	oldBak := name + "-old"
-	if resp, err := dockerDo(client, "DELETE", "/containers/"+oldBak+"?force=1", nil); err == nil {
-		resp.Body.Close()
+	rollback := func(cause error) error {
+		log.Printf("[自更新] ✗ %v，自动回滚…", cause)
+		_ = step("删除未启动的新容器", "DELETE", "/containers/"+created.ID+"?force=1", false)
+		_ = step("旧容器改回原名", "POST", "/containers/"+oldID+"/rename?name="+url.QueryEscape(name), false)
+		if err := step("重新启动旧容器", "POST", "/containers/"+oldID+"/start", true); err != nil {
+			return fmt.Errorf("回滚失败：%v（旧容器 %s 需手动 docker start 恢复）", err, oldBak)
+		}
+		return fmt.Errorf("启动新容器失败，已自动回滚到旧版本：%v", cause)
 	}
-	if resp, err := dockerDo(client, "POST", "/containers/"+oldID+"/rename?name="+url.QueryEscape(oldBak), nil); err == nil {
-		resp.Body.Close()
-	}
-	if resp, err := dockerDo(client, "POST", "/containers/"+created.ID+"/rename?name="+url.QueryEscape(name), nil); err == nil {
-		resp.Body.Close()
-	}
-	resp2, err := dockerDo(client, "POST", "/containers/"+created.ID+"/start", nil)
-	if err != nil {
-		return fmt.Errorf("start 新容器失败（旧容器保留为 %s，可手动 docker start 恢复）: %w", oldBak, err)
-	}
-	resp2.Body.Close()
 
-	// 3. 新容器已启动，删除旧容器
-	if resp, err := dockerDo(client, "DELETE", "/containers/"+oldID+"?force=1", nil); err == nil {
-		resp.Body.Close()
+	// 2. 停旧 → 旧改名让出原名
+	if err := step("停止旧容器", "POST", "/containers/"+oldID+"/stop?t=10", true); err != nil {
+		return rollback(err)
 	}
+	_ = step("清理残留备份名", "DELETE", "/containers/"+oldBak+"?force=1", false)
+	if err := step("旧容器改名为 "+oldBak, "POST", "/containers/"+oldID+"/rename?name="+url.QueryEscape(oldBak), false); err != nil {
+		return rollback(err)
+	}
+	// 3. 新容器改名回原名并启动
+	if err := step("新容器改名为 "+name, "POST", "/containers/"+created.ID+"/rename?name="+url.QueryEscape(name), false); err != nil {
+		return rollback(err)
+	}
+	if err := step("启动新容器", "POST", "/containers/"+created.ID+"/start", true); err != nil {
+		return rollback(err)
+	}
+	// 4. 新容器已运行，删除旧容器
+	_ = step("删除旧容器 "+oldBak, "DELETE", "/containers/"+oldID+"?force=1", false)
 	return nil
 }
 
