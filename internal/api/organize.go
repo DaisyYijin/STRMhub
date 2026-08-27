@@ -1842,6 +1842,8 @@ func modelSettingValue(key string) string {
 
 // executeOrganizeWithConfig 用指定的 OrgConfig 执行整理（转存目录等场景）
 func (h *Handler) executeOrganizeWithConfig(cfg *OrgConfig, syncAfter bool) ([]gin.H, []OrganizeResult, error) {
+	orgStart := time.Now()
+	log.Printf("[整理] ▶ 开始整理（待整理目录 cid=%s）", cfg.Pending)
 	ops, err := h.newPan115Ops()
 	if err != nil {
 		return nil, nil, err
@@ -1849,6 +1851,17 @@ func (h *Handler) executeOrganizeWithConfig(cfg *OrgConfig, syncAfter bool) ([]g
 
 	logFn := func(msg string) { log.Println(msg) }
 	orgResults, successCount := runOrganizeEngineWithConfig(ops, cfg, logFn)
+	existsN, failN := 0, 0
+	for _, r := range orgResults {
+		if r.Status == "exists" {
+			existsN++
+		}
+		if r.Status == "failed" {
+			failN++
+		}
+	}
+	log.Printf("[整理] ✅ 整理完成（成功 %d · 已存在 %d · 失败 %d，耗时 %s）",
+		successCount, existsN, failN, time.Since(orgStart).Truncate(time.Second))
 
 	steps := []gin.H{}
 	totalFiles := len(orgResults)

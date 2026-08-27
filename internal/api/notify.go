@@ -230,7 +230,7 @@ func sendTelegram(cfg TGConfig, msg string) error {
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Telegram 发送消息失败: HTTP %d: %s", resp.StatusCode, string(body))
+		log.Printf("Telegram 发送消息失败: HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 

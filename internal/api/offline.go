@@ -72,7 +72,7 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "离线下载请求失败: " + err.Error()})
 		return
 	}
-	log.Printf("[上传] 离线下载响应: %s", truncateStr(string(body), 300))
+	vlog("[上传] 离线下载响应: %s", truncateStr(string(body), 150))
 
 	// 解析响应（兼容多种错误字段名）
 	var resp struct {

@@ -162,9 +162,10 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		}
 	}
 
+	log.Printf("[同步] ▶ 全量同步开始（媒体库 cid=%s → %s）", req.Cid, req.LocalPath)
 	// 整理工作区不参与同步（见 orgSkipCids）；打印各槽位配置情况，配错配漏一眼可见
 	skipCids, slots := h.orgSkipCids(req.Cid)
-	log.Printf("[同步] ○ 整理工作区排除: %s（✗ 的槽位对应目录会被当成媒体同步，请到对应配置卡重新选择目录）", strings.Join(slots, " "))
+	vlog("[同步] ○ 整理工作区排除: %s（✗ 的槽位对应目录会被当成媒体同步，请到对应配置卡重新选择目录）", strings.Join(slots, " "))
 
 	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
 	var videos, assets []remoteFile
