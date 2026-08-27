@@ -388,10 +388,8 @@ func fetchLixianTasksRaw(cookie string) ([]map[string]interface{}, error) {
 		return nil, err
 	}
 	var resp struct {
-		State bool            `json:"state"`
-		Error string          `json:"error"`
-		Data  json.RawMessage `json:"data"`
-		Info  json.RawMessage `json:"info"`
+		State bool   `json:"state"`
+		Error string `json:"error"`
 	}
 	if json.Unmarshal(body, &resp) != nil || !resp.State {
 		msg := resp.Error
@@ -400,22 +398,62 @@ func fetchLixianTasksRaw(cookie string) ([]map[string]interface{}, error) {
 		}
 		return nil, fmt.Errorf("115 拒绝: %s", msg)
 	}
-	raw := resp.Data
-	if len(raw) == 0 {
-		raw = resp.Info
+	items, ok := extractTaskItems(body)
+	if !ok {
+		return nil, fmt.Errorf("任务列表结构无法解析: %s", truncateStr(string(body), 150))
 	}
-	var raws []map[string]interface{}
-	if json.Unmarshal(raw, &raws) != nil {
-		var wrapper struct {
-			Tasks []map[string]interface{} `json:"tasks"`
-			List  []map[string]interface{} `json:"list"`
-		}
-		if json.Unmarshal(raw, &wrapper) != nil {
-			return nil, fmt.Errorf("任务列表结构无法解析: %s", truncateStr(string(raw), 100))
-		}
-		raws = append(wrapper.Tasks, wrapper.List...)
+	return items, nil
+}
+
+// extractTaskItems 从 115 离线任务响应中形态宽容地提取任务数组：
+// 依次尝试 顶层数组 / {data|info: [...] } / {data|info: {tasks|list|info: [...]}} / 顶层 {tasks|list|info: [...]}
+func extractTaskItems(body []byte) ([]map[string]interface{}, bool) {
+	// 顶层直接是数组
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(body, &arr); err == nil && len(arr) > 0 {
+		return arr, true
 	}
-	return raws, nil
+	var top map[string]interface{}
+	if err := json.Unmarshal(body, &top); err != nil {
+		return nil, false
+	}
+	for _, k := range []string{"data", "info"} {
+		if v, ok := top[k]; ok {
+			if items, ok := unwrapItems(v); ok {
+				return items, true
+			}
+		}
+	}
+	if items, ok := unwrapItems(top); ok {
+		return items, true
+	}
+	return nil, false
+}
+
+func unwrapItems(v interface{}) ([]map[string]interface{}, bool) {
+	switch t := v.(type) {
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(t))
+		for _, it := range t {
+			if m, ok := it.(map[string]interface{}); ok {
+				out = append(out, m)
+			}
+		}
+		return out, true
+	case map[string]interface{}:
+		for _, k := range []string{"tasks", "list", "info"} {
+			if arr, ok := t[k].([]interface{}); ok {
+				out := make([]map[string]interface{}, 0, len(arr))
+				for _, it := range arr {
+					if m, ok := it.(map[string]interface{}); ok {
+						out = append(out, m)
+					}
+				}
+				return out, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // offlineTaskInfo 离线任务摘要

@@ -357,7 +357,7 @@ func dockerLaunchUpdater(client *http.Client, imageRef, oldID, newID string, hos
 		"HostConfig": map[string]interface{}{
 			"Binds":        []string{sockBind},
 			"NetworkMode":  "none",
-			"AutoRemove":   false, // 保留现场便于排查，下次更新时自动清理
+			"AutoRemove":   true, // 退出后自动删除（收尾日志已写入主流程可观测的结果）
 		},
 		"Labels": map[string]string{"strmhub-role": "updater"},
 	})
