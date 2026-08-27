@@ -2230,7 +2230,7 @@ async function loadVersion() {
     const d = await api('/version/latest');
     if (d.latest && d.latest.slice(0, 7) !== local.slice(0, 7)) {
       el.innerHTML = 'StrmHub v' + local.slice(0, 7) +
-        ' <a href="javascript:void(0)" onclick="openUpdateModal()" style="color:var(--warning);text-decoration:none;font-weight:600">有新版本 ↗</a>';
+        ' <button class="btn btn-sm" onclick="openUpdateModal()" style="background:var(--warning);color:#fff;border:none;margin-left:8px;font-size:11px;height:24px;padding:0 10px;border-radius:4px;cursor:pointer;vertical-align:middle">有新版本</button>';
     }
   } catch (e) {}
 }
