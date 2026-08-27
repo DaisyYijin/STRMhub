@@ -362,6 +362,7 @@ func StartOfflineTaskMonitor(h *Handler) {
 				case 2: // 完成
 					log.Printf("[离线] ✓ 下载完成: %s（触发整理）", truncateStr(t.name, 60))
 					notified[key] = true
+					go NotifyMessage("✅ 离线下载完成", truncateStr(t.name, 120)+"\n已自动开始整理入库，完成后另行通知")
 					go h.triggerOrganizeAndSync()
 				case -1: // 失败
 					log.Printf("[离线] ✗ 磁力下载失败: %s（115 离线任务报错，请检查资源或重新提交）", truncateStr(t.name, 60))

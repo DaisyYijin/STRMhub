@@ -1516,6 +1516,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 记录到数据库
 	recordMedia(media, category, targetDir+"/"+pathBase(newPath))
 
+	// 入库成功通知：TMDB 封面 + 重命名信息 + 详情链接（企微图文卡 / TG 图片）
+	notifyMediaStored(media, dir.Name, pathBase(newPath), category)
+
 	// 生成结果
 	for _, vf := range videoFiles {
 		results = append(results, OrganizeResult{
@@ -2312,4 +2315,44 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 		})
 	}
 	return results
+}
+
+
+// tmdbImageBase TMDB 图片地址（设置里的 image_url，默认官方）
+func tmdbImageBase() string {
+	var cfg struct {
+		ImageURL string `json:"image_url"`
+	}
+	if json.Unmarshal([]byte(settingValueCompat("tmdb")), &cfg) == nil && cfg.ImageURL != "" {
+		return strings.TrimRight(cfg.ImageURL, "/")
+	}
+	return "https://image.tmdb.org"
+}
+
+// notifyMediaStored 入库成功富通知：TMDB 封面（企微图文卡 / TG 图片），
+// 内容带原名 → 标准名（重命名信息）与分类；AV 无 TMDB 数据走纯文本
+func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
+	if media == nil {
+		return
+	}
+	typeLabel := "电影"
+	if media.MediaType == "tv" {
+		typeLabel = "剧集"
+	}
+	title := fmt.Sprintf("🎬 入库成功：%s（%s）", media.Title, media.Year)
+	content := fmt.Sprintf("%s · %s/%s\n原名：%s\n标准名：%s",
+		typeLabel, mediaTypeCategory(media.MediaType), category, truncateStr(oldName, 60), truncateStr(newName, 80))
+
+	if media.MediaType == "av" || media.TmdbID == 0 || media.PosterPath == "" {
+		go NotifyMessage(title, content)
+		return
+	}
+	poster := tmdbImageBase() + "/t/p/w500" + media.PosterPath
+	link := ""
+	if media.MediaType == "tv" {
+		link = fmt.Sprintf("https://www.themoviedb.org/tv/%d", media.TmdbID)
+	} else {
+		link = fmt.Sprintf("https://www.themoviedb.org/movie/%d", media.TmdbID)
+	}
+	NotifyMessageRich(title, content, poster, link)
 }

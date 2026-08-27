@@ -129,38 +129,147 @@ func NotifyMessage(title, content string) {
 	}
 }
 
-// sendWecom 发送企业微信应用消息
-func sendWecom(cfg WecomConfig, msg string) error {
-	client := &http.Client{Timeout: 10 * time.Second}
+// NotifyMessageRich 富媒体通知：带封面图与链接。
+// Telegram 直接发图片（sendPhoto）；企业微信应用消息发 news 图文卡片（picurl 外链封面）。
+// posterURL 为空时自动退回纯文本通知。
+func NotifyMessageRich(title, content, posterURL, linkURL string) {
+	cfg, err := loadMessageConfig()
+	if err != nil {
+		return
+	}
+	if posterURL == "" {
+		NotifyMessage(title, content)
+		return
+	}
+	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
+		go sendWecomNews(cfg.Wecom, title, content, posterURL, linkURL)
+	}
+	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
+		go sendTelegramPhoto(cfg.TG, title, content, posterURL)
+	}
+}
 
-	// Step 1: 获取 access_token
+// wecomAccessToken 获取企业微信 access_token
+func wecomAccessToken(cfg WecomConfig) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
 	tokenURL := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
 		cfg.apiBase(), cfg.CorpID, cfg.Secret)
-
 	resp, err := client.Get(tokenURL)
 	if err != nil {
 		log.Printf("企业微信获取 token 失败: %v", err)
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-
 	var tokenResult struct {
 		ErrCode     int    `json:"errcode"`
 		ErrMsg      string `json:"errmsg"`
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &tokenResult); err != nil {
-		return err
+		return "", err
 	}
 	if tokenResult.ErrCode != 0 {
 		log.Printf("企业微信获取 token 失败: %d %s", tokenResult.ErrCode, tokenResult.ErrMsg)
-		return fmt.Errorf(tokenResult.ErrMsg)
+		return "", fmt.Errorf("%s", tokenResult.ErrMsg)
 	}
+	return tokenResult.AccessToken, nil
+}
+
+// sendWecomNews 发送企业微信图文卡片（封面 + 标题 + 描述 + 链接）
+func sendWecomNews(cfg WecomConfig, title, desc, picurl, linkURL string) error {
+	token, err := wecomAccessToken(cfg)
+	if err != nil {
+		return err
+	}
+	if linkURL == "" {
+		linkURL = "https://github.com/DaisyYijin/STRMhub"
+	}
+	payload := map[string]interface{}{
+		"touser":  "@all",
+		"msgtype": "news",
+		"agentid": cfg.AgentID,
+		"news": map[string]interface{}{
+			"articles": []map[string]string{{
+				"title":       truncateStr(title, 90),
+				"description": truncateStr(desc, 300),
+				"picurl":      picurl,
+				"url":         linkURL,
+			}},
+		},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	client := &http.Client{Timeout: 10 * time.Second}
+	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", cfg.apiBase(), token)
+	req, err := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("企业微信图文发送失败: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var r struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.ErrCode != 0 {
+		log.Printf("企业微信图文发送失败: %d %s（退回纯文本）", r.ErrCode, r.ErrMsg)
+		// 图文被拒（如 picurl 不可达）时退回纯文本，保证消息不丢
+		return sendWecom(cfg, title+"\\n"+desc)
+	}
+	log.Printf("企业微信图文消息发送成功: %s", truncateStr(title, 40))
+	return nil
+}
+
+// sendTelegramPhoto 发送 Telegram 图片（caption 带正文；失败退回文本）
+func sendTelegramPhoto(cfg TGConfig, title, content, photoURL string) error {
+	client := &http.Client{Timeout: 15 * time.Second}
+	if proxyURL := getProxyURL(); proxyURL != "" {
+		if pu, err := parseProxyURL(proxyURL); err == nil {
+			client.Transport = &http.Transport{Proxy: pu}
+		}
+	}
+	caption := title
+	if content != "" {
+		caption += "\\n" + content
+	}
+	form := url.Values{
+		"chat_id": {cfg.ChatID},
+		"photo":   {photoURL},
+		"caption": {truncateStr(caption, 1000)},
+	}
+	resp, err := client.PostForm(fmt.Sprintf("https://api.telegram.org/bot%s/sendPhoto", cfg.Token), form)
+	if err != nil {
+		log.Printf("Telegram 发送图片失败（退回文本）: %v", err)
+		return sendTelegram(cfg, caption)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Telegram 发送图片失败: HTTP %d %s（退回文本）", resp.StatusCode, truncateStr(string(body), 120))
+		return sendTelegram(cfg, caption)
+	}
+	log.Printf("Telegram 图片消息发送成功: %s", truncateStr(title, 40))
+	return nil
+}
+
+// sendWecom 发送企业微信应用消息
+func sendWecom(cfg WecomConfig, msg string) error {
+	token, err := wecomAccessToken(cfg)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Step 2: 发送消息
 	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s",
-		cfg.apiBase(), tokenResult.AccessToken)
+		cfg.apiBase(), token)
 
 	payload := map[string]interface{}{
 		"touser":  "@all",
