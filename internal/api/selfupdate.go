@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -150,11 +151,26 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 
 	client := dockerHTTPClient(5 * time.Minute)
 
-	// 1. 定位当前容器（docker 把容器 ID 写进 HOSTNAME）
-	selfID := os.Getenv("HOSTNAME")
+	// 1. 定位当前容器（优先 cgroup 里的真实 ID；HOSTNAME 可能被自定义 hostname 覆盖）
+	selfID := selfContainerID()
+	if selfID == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "无法确定当前容器 ID（cgroup 与 HOSTNAME 均不可用）"})
+		return
+	}
 	insp, err := dockerRequestJSON(client, "GET", "/containers/"+selfID+"/json", nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "查询当前容器失败: " + err.Error()})
+		// 附带诊断：列出该 socket 对应守护进程里可见的容器，区分"自定义 hostname"与"挂错 socket"
+		hint := ""
+		if names, lerr := dockerListContainerNames(client); lerr == nil && len(names) > 0 {
+			hint = "该 Docker 守护进程可见容器：" + strings.Join(names, ", ")
+		} else if lerr == nil {
+			hint = "该 Docker 守护进程下没有任何容器（疑似挂载了别的 docker.sock）"
+		}
+		errMsg := "查询当前容器失败（" + selfID + "）: " + err.Error()
+		if hint != "" {
+			errMsg += "\n" + hint
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
 		return
 	}
 	imageRef, _ := insp["Config"].(map[string]interface{})["Image"].(string)
@@ -302,6 +318,43 @@ func dockerDo(client *http.Client, method, path string, body []byte) (*http.Resp
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return client.Do(req)
+}
+
+// selfContainerID 定位自身容器 ID：
+// /proc/self/cgroup 形如 .../docker-<64位ID>.scope（cgroup v2）或 /docker/<64位ID>（v1），最可靠；
+// HOSTNAME 默认等于容器短 ID，但用户自定义 hostname 时会失效，仅作兜底。
+func selfContainerID() string {
+	if b, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		re := regexp.MustCompile(`docker[/-]([0-9a-f]{12,64})`)
+		for _, line := range strings.Split(string(b), "\n") {
+			if m := re.FindStringSubmatch(line); m != nil {
+				return m[1]
+			}
+		}
+	}
+	return os.Getenv("HOSTNAME")
+}
+
+// dockerListContainerNames 列出守护进程内所有容器名（自更新失败时诊断用）
+func dockerListContainerNames(client *http.Client) ([]string, error) {
+	resp, err := dockerDo(client, "GET", "/containers/json?all=1", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var list []struct {
+		Names []string `json:"Names"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, it := range list {
+		if len(it.Names) > 0 {
+			names = append(names, strings.TrimPrefix(it.Names[0], "/"))
+		}
+	}
+	return names, nil
 }
 
 func dockerRequestJSON(client *http.Client, method, path string, body []byte) (map[string]interface{}, error) {
