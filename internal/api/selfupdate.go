@@ -186,6 +186,12 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	imageRef, _ := insp["Config"].(map[string]interface{})["Image"].(string)
 	containerName := strings.TrimPrefix(insp["Name"].(string), "/")
 	ref := normalizeImageRef(imageRef)
+	// 先清理上次失败残留的 -updating/-old 容器，避免本次改名冲突
+	for _, suffix := range []string{"-updating", "-old"} {
+		if resp, err := dockerDo(client, "DELETE", "/containers/"+containerName+suffix+"?force=1", nil); err == nil {
+			resp.Body.Close()
+		}
+	}
 
 	// 2. 拉取最新镜像（同步等待，可能需要几十秒）
 	if err := dockerPull(client, ref); err != nil {
