@@ -875,7 +875,7 @@ async function loadOfflineTasks() {
       return;
     }
     hint.textContent = items.length + ' 个任务 · ' + new Date().toLocaleTimeString();
-    box.innerHTML = items.slice(0, 30).map(t => {
+    box.innerHTML = items.slice(0, 100).map(t => {
       const name = escHtml(t.name || t.task_name || '?');
       let right = '';
       const p = t.percent;
@@ -888,7 +888,7 @@ async function loadOfflineTasks() {
       return '<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);align-items:baseline">' +
         '<span style="flex:1;word-break:break-all">' + name + size + '</span>' +
         '<span style="flex:none;min-width:56px;text-align:right">' + right + '</span></div>';
-    }).join('') + (items.length > 30 ? '<div style="color:var(--text-3);padding-top:4px">… 仅显示前 30 个</div>' : '');
+    }).join('') + (items.length > 100 ? '<div style="color:var(--text-3);padding-top:4px">… 仅显示前 100 个</div>' : '');
   } catch (e) {
     box.innerHTML = '<span style="color:var(--danger)">' + escHtml(e.message) + '</span>';
   }

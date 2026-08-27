@@ -502,8 +502,8 @@ tr:hover td { background: var(--fill-1); }
 /* 按钮组：同一行弹性排列；测试结果文字独立成行（长错误信息不再挤断按钮） */
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .test-result { display: block; margin-top: 6px; font-size: 13px; line-height: 1.5; word-break: break-all; }
-/* 小号分段开关（如消息渠道的状态行） */
-.seg-sm .seg-item { padding: 3px 14px; font-size: 12px; line-height: 18px; }
-/* 表单行内与标签垂直居中：默认开关 32px / 小号 28px，相对 36px 控件行各偏移 2px/4px */
+/* 表单行内与标签垂直居中：开关统一 32px，相对 36px 控件行偏移 2px */
 .form-row .control .segmented-control { margin-top: 2px; }
-.form-row .control .seg-sm { margin-top: 4px; }
+
+/* 离线任务列表：限高滚动，容纳更多任务 */
+#offline-tasks { max-height: 480px; overflow-y: auto; padding-right: 4px; }

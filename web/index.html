@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
-  <link rel="stylesheet" href="/css/style.css?v=29">
+  <link rel="stylesheet" href="/css/style.css?v=30">
 </head>
 <body>
 
@@ -221,8 +221,8 @@
       <div class="alert alert-info">媒体补全：文件名缺分辨率/编码时（如 蜘蛛侠.2016.mkv），用 ffprobe 读取 115 直链头部探测真实画质（只拉几 MB，不下载全文件），按下方策略规范命名。探测是"事实"、命名为"声明"：默认只在缺失或名实冲突时修改；片名/集数/年份/来源/发布组等原有信息一律保留。</div>
       <div class="card">
         <div class="form-row"><div class="label">媒体补全<i class="help-tip" tabindex="0">?<span class="tip-bubble">文件名缺分辨率/编码时自动探测规范命名。开启后新整理文件生效，扫描补全按钮可处理存量库。</span></i></div><div class="control"><div class="segmented-control" id="enrich-enabled-switch">
-            <div class="seg-item active" data-value="false" onclick="setEnrichOpt('enabled', false)">关闭</div>
-            <div class="seg-item" data-value="true" onclick="setEnrichOpt('enabled', true)">开启</div>
+            <div class="seg-item active" data-value="true" onclick="setEnrichOpt('enabled', true)">开启</div>
+            <div class="seg-item" data-value="false" onclick="setEnrichOpt('enabled', false)">关闭</div>
           </div></div></div>
           <div class="form-row"><div class="label">保守度<i class="help-tip" tabindex="0">?<span class="tip-bubble">保守=只补缺失信息；标准=缺失补充+名实冲突按探测修改（完整命名不动）；激进=完整命名冲突也按探测修改。</span></i></div><div class="control"><div class="segmented-control" id="enrich-mode-switch">
             <div class="seg-item" data-value="conservative" onclick="setEnrichOpt('mode', 'conservative')">保守</div>
@@ -753,7 +753,7 @@ av:
           </div>
         </div></div></div>
         <div class="form-row"><div class="label">Cookie 设备<i class="help-tip" tabindex="0">?<span class="tip-bubble">网页端 Cookie 与 115Browser UA 配套，兼容性最好（默认推荐）。App 端 Cookie 有设备槽位校验，与桌面 UA 不匹配会报"服务器开小差"。避免选常用设备导致被挤下线。</span></i></div><div class="control"><div class="form-inline-group"><select id="acc-device" class="inline-input"><option value="web" selected>115浏览器_网页端(推荐)</option><option value="115ios">115生活_iOS端</option><option value="115android">115生活_Android端</option><option value="alipaymini">115生活_支付宝小程序</option><option value="wechatmini">115生活_微信小程序</option><option value="tv">115生活_TV端</option><option value="qandroid">115浏览器_Android端</option></select><button class="btn btn-primary" onclick="openQrCode()"><span class="qr-icon">▦</span> 二维码登录</button></div></div></div>
-        <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip" tabindex="0">?<span class="tip-bubble">强烈推荐！使用 115 官方开放平台接口（同 LitePan/QMediaSync 方案），无 UA 风控、无"服务器开小差"，token 自动续期。Cookie 通道作为回退保留。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="false" onclick="setOpenapi(false)">禁用</div><div class="seg-item" data-value="true" onclick="setOpenapi(true)">启用(推荐)</div></div></div></div>
+        <div class="form-row"><div class="label">启用 OPENAPI<i class="help-tip" tabindex="0">?<span class="tip-bubble">强烈推荐！使用 115 官方开放平台接口（同 LitePan/QMediaSync 方案），无 UA 风控、无"服务器开小差"，token 自动续期。Cookie 通道作为回退保留。</span></i></div><div class="control"><div class="segmented-control" id="openapi-switch"><div class="seg-item active" data-value="true" onclick="setOpenapi(true)">启用(推荐)</div><div class="seg-item" data-value="false" onclick="setOpenapi(false)">禁用</div></div></div></div>
         <div class="form-row"><div class="label">开放平台 AppID<i class="help-tip" tabindex="0">?<span class="tip-bubble">在 115 开放平台（open.115.com）申请应用后获取。填入后点击"扫码授权"，用 115 App 扫码完成 OAuth 授权。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-appid" placeholder="请输入 115 开放平台 AppID" style="flex:1"><button class="btn btn-success" onclick="saveAccount().then(openQrCode)">保存并扫码授权</button></div></div></div>
         <div class="form-row"><div class="label">API请求间隔<i class="help-tip" tabindex="0">?<span class="tip-bubble">设置 API 请求间隔可以减少风控概率。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="acc-interval" value="3.0" step="0.5" min="0.5" style="max-width:120px"><div class="input-suffix">秒</div></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveAccount()">保存配置</button> <button class="btn btn-warning" onclick="resetAccount()">重置配置</button></div></div>
@@ -875,7 +875,7 @@ av:
           <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 Token——机器人互动必填，仅发通知可不填。</span></i></div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
           <div class="form-row"><div class="label">EncodingAESKey<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 43 位密钥——机器人互动必填。</span></i></div><div class="control"><input type="text" id="msg-wecom-aes-key" placeholder="接收消息服务器配置的 EncodingAESKey（43位）"></div></div>
           <div class="alert alert-info">机器人互动：企业微信后台「接收消息」填写 URL http://&lt;公网IP&gt;:6086/wecom/callback 及上面的 Token/AESKey。给应用直接发消息即可：<b>磁力/ed2k/HTTP 链接</b>提交离线下载，<b>115 分享链接</b>（链接与提取码发在一起）自动转存并整理入库；另支持指令：下载/状态/搜索/整理/同步/补全/帮助。</div>
-          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送企业微信通知；配置 Token/AESKey 后可用机器人远程控制。</span></i></div><div class="control"><div class="segmented-control seg-sm" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送企业微信通知；配置 Token/AESKey 后可用机器人远程控制。</span></i></div><div class="control"><div class="segmented-control" id="msg-wecom-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('wecom', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('wecom', false)">禁用</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
         </div>
       </div>
@@ -883,7 +883,7 @@ av:
         <div class="card">
           <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
           <div class="form-row"><div class="label">Chat ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram 目标会话 ID，向 @userinfobot 发消息可查到。</span></i></div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
-          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送 Telegram 通知。</span></i></div><div class="control"><div class="segmented-control seg-sm" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div><div class="seg-item" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div></div></div></div>
+          <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送 Telegram 通知。</span></i></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
         </div>
       </div>
@@ -1038,6 +1038,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=94"></script>
+<script src="/js/app.js?v=95"></script>
 </body>
 </html>
