@@ -208,6 +208,7 @@ func portalHLS(c *gin.Context) {
 	var body struct {
 		Pick string `json:"pick"`
 		A    int    `json:"a"`
+		VC   string `json:"vc"`
 	}
 	_ = c.ShouldBindJSON(&body)
 	pick := body.Pick
@@ -254,17 +255,31 @@ func portalHLS(c *gin.Context) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// ffmpeg：-c copy 无损转封装 HLS（MKV→TS）。字幕轨不进 HLS（单独提取）。
-	segArgs := append([]string{"-hide_banner", "-loglevel", "error"},
-		append(ffmpegHeaderArgs(headers),
-			"-probesize", "5M", "-analyzeduration", "5M",
-			"-i", urlStr,
-			"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioRel),
-			"-c", "copy",
-			"-f", "hls",
-			"-hls_time", "4",
-			"-hls_list_size", "0",
-			"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
-			filepath.Join(dir, "index.m3u8"))...)
+	// vc=copy：无损转封装（H.264 源）；vc=transcode：H.265→H.264 转码（浏览器能播）
+	vc := body.VC
+	if vc == "" {
+		vc = c.Query("vc")
+	}
+	if vc == "" {
+		vc = "copy"
+	}
+	codecArgs := []string{"-c", "copy"}
+	if vc == "transcode" {
+		codecArgs = []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+			"-c:a", "aac", "-b:a", "128k", "-ac", "2"}
+	}
+	segArgs := []string{"-hide_banner", "-loglevel", "error"}
+	segArgs = append(segArgs, ffmpegHeaderArgs(headers)...)
+	segArgs = append(segArgs, "-probesize", "5M", "-analyzeduration", "5M",
+		"-i", urlStr,
+		"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioRel))
+	segArgs = append(segArgs, codecArgs...)
+	segArgs = append(segArgs,
+		"-f", "hls",
+		"-hls_time", "4",
+		"-hls_list_size", "0",
+		"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
+		filepath.Join(dir, "index.m3u8"))
 	cmd := exec.CommandContext(ctx, ffmpegBinOrPath(), segArgs...)
 	if err := cmd.Start(); err != nil {
 		cancel()

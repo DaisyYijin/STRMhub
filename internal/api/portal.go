@@ -839,19 +839,18 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   // MKV 等浏览器放不了：Emby 引擎（H.265 等不兼容编码由 Emby 转码）
   const okEmby=await startEmby(f,startPct);
   if(okEmby){v.playbackRate=curRate;return}
-  // Emby 未命中：如果是 H.265/HEVC，ffmpeg 转封装也救不了（编码不变浏览器仍解不了）——提前告知
-  if(/265|hevc/i.test(f.name)){
-    dbgStage('不支持 H.265',0,'浏览器无法解码 HEVC，需 Emby 转码引擎（请检查 Emby 配置/媒体库扫描）');
-    $('fail').style.display='block';$('faillink').value=f.url;
-    $('pnow').textContent=f.name+'（H.265 需要 Emby 转码，当前 Emby 未命中）';
-    return
-  }
+  // Emby 不可用：门户 ffmpeg 转码（H.265 自动转 H.264）
   if(window.noHls||typeof Hls==='undefined'){
     $('fail').style.display='block';$('faillink').value=f.url;
-    v.src=f.url; // 兜底尝试直出
+    v.src=f.url;
     probeTracks(f);
   }else{
-    await startHLS(f,audioRel||0);
+    const isH265=/265|hevc/i.test(f.name);
+    if(isH265){
+      dbgStage('H.265 转码',0,'Emby 不可用，门户 ffmpeg 转码 H.265→H.264');
+      $('pnow').textContent=f.name+'（H.265 转码中，首次加载稍慢）';
+    }
+    await startHLS(f,audioRel||0,isH265?'transcode':'copy');
   }
   v.playbackRate=curRate;
   v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];dbgStage('错误',performance.now()-t0,E[v.error.code]||('code '+v.error.code));$('fail').style.display='block';$('faillink').value=f.url};
@@ -904,13 +903,13 @@ async function startEmby(f,startPct){
     return true
   }catch(e){pdbg('Emby 异常：',e.message);return false}
 }
-async function startHLS(f,audioRel){
+async function startHLS(f,audioRel,vc){
   const v=$('video');const t0=performance.now();
   curEngine='ffmpeg';
   $('pnow').textContent=f.name+'（转封装中…）';
   pdbg('引擎=ffmpeg 转封装');
   try{
-    const d=await tlog('转封装会话启动',()=>fetch('/api/portal/hls/start',{method:'POST',body:JSON.stringify({pick:f.pick,a:audioRel})}).then(r=>r.json()));
+    const d=await tlog('转封装会话启动',()=>fetch('/api/portal/hls/start',{method:'POST',body:JSON.stringify({pick:f.pick,a:audioRel,vc:vc||'copy'})}).then(r=>r.json()));
     if(d.error){throw new Error(d.error)}
     curSid=d.sid;
     pdbg('会话 sid='+d.sid,'m3u8='+d.m3u8);
