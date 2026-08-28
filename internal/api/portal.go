@@ -808,25 +808,28 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   curAudioRel=audioRel||0;
   if(hls){hls.destroy();hls=null}
   curProbe=null;curSid='';embyPlay=null;embyAudio=-1;embySub=-1;
-  // 首选引擎：Emby（秒拖/内嵌轨道切换/自动转码全由 Emby 服务端处理）
-  const okEmby=await startEmby(f,startPct);
-  if(okEmby){v.playbackRate=curRate;return}
-  // 回退：浏览器直出（mp4）或门户自带 ffmpeg 转封装
+  // 引擎优先级：① 浏览器直出（302 直连 115，零服务器消耗）→
+  // ② Emby 转码（秒拖/内嵌轨道/自动转码）→ ③ 门户自带 ffmpeg 转封装
   const ext=(f.name.split('.').pop()||'').toLowerCase();
   const direct=['mp4','webm','m4v','mov'].includes(ext)&&!forceHLS;
   if(direct){
     curEngine='direct';
+    $('pnow').textContent=f.name+'（302 直连）';
     v.src=f.url;
-    probeTracks(f); // mp4 也探测（可能有多音轨，HLS 模式才可切）
+    v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
+    v.playbackRate=curRate;
+    return
+  }
+  // MKV 等浏览器放不了：Emby 引擎（视频经 Emby 转码服务器中转）
+  const okEmby=await startEmby(f,startPct);
+  if(okEmby){v.playbackRate=curRate;return}
+  // Emby 不可用：门户自带 ffmpeg 转封装
+  if(window.noHls||typeof Hls==='undefined'){
+    $('fail').style.display='block';$('faillink').value=f.url;
+    v.src=f.url; // 兜底尝试直出
+    probeTracks(f);
   }else{
-    // MKV/TS 等 → 服务端转封装 HLS
-    if(window.noHls||typeof Hls==='undefined'){
-      $('fail').style.display='block';$('faillink').value=f.url;
-      v.src=f.url; // 兜底尝试直出
-      probeTracks(f);
-    }else{
-      await startHLS(f,audioRel||0);
-    }
+    await startHLS(f,audioRel||0);
   }
   v.playbackRate=curRate;
   v.onerror=()=>{$('fail').style.display='block';$('faillink').value=f.url};
