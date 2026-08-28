@@ -1526,7 +1526,22 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	recordMedia(media, category, targetDir+"/"+pathBase(newPath))
 
 	// 入库成功通知：TMDB 封面 + 重命名信息 + 详情链接（企微图文卡 / TG 图片）
-	notifyMediaStored(media, dir.Name, pathBase(newPath), category)
+	// 入库文件统计（视频+字幕+NFO/封面；垃圾文件已移冗余不计）
+	movedSet := map[string]bool{}
+	for _, f := range mediaFids {
+		movedSet[f] = true
+	}
+	for _, f := range metaFids {
+		movedSet[f] = true
+	}
+	movedCount, movedBytes := 0, int64(0)
+	for _, f := range files {
+		if movedSet[f.Fid] {
+			movedCount++
+			movedBytes += f.Size
+		}
+	}
+	notifyMediaStoredFull(media, dir.Name, pathBase(newPath), category, videoFiles, mainVideo.Name, movedCount, movedBytes)
 
 	// 生成结果
 	for _, vf := range videoFiles {
@@ -2336,9 +2351,80 @@ func tmdbImageBase() string {
 	return "https://image.tmdb.org"
 }
 
-// notifyMediaStored 入库成功富通知：TMDB 封面（企微图文卡 / TG 图片），
-// 内容带原名 → 标准名（重命名信息）与分类；AV 无 TMDB 数据走纯文本
+// notifyMediaStored 入库成功富通知（兼容旧签名）
 func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
+	notifyMediaStoredFull(media, oldName, newName, category, nil, "", 0, 0)
+}
+
+// humanSizeBytes 字节数转可读大小
+func humanSizeBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20: // MB 段
+		return fmt.Sprintf("%d MB", n/(1<<20))
+	default:
+		return fmt.Sprintf("%d KB", n/1024)
+	}
+}
+
+// episodeRangeStr 集数区间格式化：S01E01-E12 / S01E01-E03,E05,E07-E09
+func episodeRangeStr(videoFiles []remoteFile) string {
+	type epRec struct{ season, ep int }
+	var eps []epRec
+	for _, vf := range videoFiles {
+		p := parseFileName(vf.Name)
+		if p.Episode > 0 {
+			s := p.Season
+			if s == 0 {
+				s = 1
+			}
+			eps = append(eps, epRec{s, p.Episode})
+		}
+	}
+	if len(eps) == 0 {
+		return ""
+	}
+	// 按季分组
+	bySeason := map[int][]int{}
+	for _, e := range eps {
+		bySeason[e.season] = append(bySeason[e.season], e.ep)
+	}
+	parts := []string{}
+	for se := 1; se <= 99; se++ {
+		list, ok := bySeason[se]
+		if !ok {
+			continue
+		}
+		sort.Ints(list)
+		// 连续段合并
+		var segs [][2]int
+		start, prev := list[0], list[0]
+		for _, e := range list[1:] {
+			if e == prev+1 {
+				prev = e
+				continue
+			}
+			segs = append(segs, [2]int{start, prev})
+			start, prev = e, e
+		}
+		segs = append(segs, [2]int{start, prev})
+		segStrs := make([]string, 0, len(segs))
+		for _, sg := range segs {
+			if sg[0] == sg[1] {
+				segStrs = append(segStrs, fmt.Sprintf("E%02d", sg[0]))
+			} else {
+				segStrs = append(segStrs, fmt.Sprintf("E%02d-E%02d", sg[0], sg[1]))
+			}
+		}
+		parts = append(parts, fmt.Sprintf("S%02d%s", se, strings.Join(segStrs, ",")))
+	}
+	return strings.Join(parts, " ")
+}
+
+// notifyMediaStoredFull 入库成功富通知：TMDB 封面（企微图文卡 / TG 图片），
+// 内容含 类型/类别/质量/文件数与大小/集数区间/重命名信息
+func notifyMediaStoredFull(media *TmdbMedia, oldName, newName, category string, videoFiles []remoteFile, mainVideoName string, movedCount int, movedBytes int64) {
 	if media == nil {
 		return
 	}
@@ -2346,8 +2432,31 @@ func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
 	if media.MediaType == "tv" {
 		typeLabel = "剧集"
 	}
-	content := fmt.Sprintf("整理入库 · %s · %s/%s\n原名：%s\n标准名：%s",
-		typeLabel, mediaTypeCategory(media.MediaType), category, truncateStr(oldName, 60), truncateStr(newName, 80))
+	// 质量：分辨率 + 特效 + 来源（从主视频文件名解析）
+	quality := ""
+	if mainVideoName != "" {
+		ri := ParseResourceInfo(mainVideoName)
+		q := strings.ToUpper(ri.Pix)
+		if ri.Effect != "" {
+			q += " " + strings.ToUpper(ri.Effect)
+		}
+		if ri.Type != "" {
+			q += " " + strings.ToUpper(ri.Type)
+		}
+		quality = q
+	}
+	lines := []string{fmt.Sprintf("类型：%s · 类别：%s", typeLabel, category)}
+	if quality != "" {
+		lines = append(lines, "质量："+quality)
+	}
+	if movedCount > 0 {
+		lines = append(lines, fmt.Sprintf("共计：%d 个文件 · %s", movedCount, humanSizeBytes(movedBytes)))
+	}
+	if ep := episodeRangeStr(videoFiles); ep != "" {
+		lines = append(lines, "集数："+ep)
+	}
+	lines = append(lines, "重命名："+truncateStr(oldName, 40)+" → "+truncateStr(newName, 60))
+	content := strings.Join(lines, "\n")
 
 	entry := mediaNotifEntry{Title: media.Title, Year: media.Year, Line: content}
 	if media.MediaType != "av" && media.TmdbID != 0 && media.PosterPath != "" {
@@ -2360,3 +2469,4 @@ func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
 	}
 	QueueMediaNotif(entry)
 }
+
