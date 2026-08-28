@@ -626,8 +626,7 @@ function delProg(k){var p=getProg();delete p[k];try{localStorage.setItem('pprog'
 function recentProg(){return Object.values(getProg()).sort((a,b)=>b.ts-a.ts).slice(0,12)}
 
 /* ---------- 路由（hash） ---------- */
-function nav(h){if(location.hash===h)if(PDBG)dbgRender();
-route();else location.hash=h}
+function nav(h){if(location.hash===h)route();else location.hash=h}
 window.addEventListener('hashchange',route);
 async function route(){
   const h=location.hash||'#/home';
