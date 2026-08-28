@@ -477,7 +477,7 @@ var (
 	// 仅季：Season 1, 第一季
 	reSeasonOnly = regexp.MustCompile(`[Ss](\d{1,2})\b`)
 	// 年份：(2023) 或 .2023. 或空格2023空格
-	reYear = regexp.MustCompile(`[\(\.\s_](19\d{2}|20\d{2})[\)\.\s_]`)
+	reYear = regexp.MustCompile(`[\(\.\s_-](19\d{2}|20\d{2})(?:[\)\.\s_-]|$)`)
 	// 分辨率
 	reResolution = regexp.MustCompile(`(?i)(4K|2160P|1080[PI]|720P|480P)`)
 	// 发布组常见标记（用于截断标题）
