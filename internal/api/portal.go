@@ -836,10 +836,16 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     v.playbackRate=curRate;
     return
   }
-  // MKV 等浏览器放不了：Emby 引擎（视频经 Emby 转码服务器中转）
+  // MKV 等浏览器放不了：Emby 引擎（H.265 等不兼容编码由 Emby 转码）
   const okEmby=await startEmby(f,startPct);
   if(okEmby){v.playbackRate=curRate;return}
-  // Emby 不可用：门户自带 ffmpeg 转封装
+  // Emby 未命中：如果是 H.265/HEVC，ffmpeg 转封装也救不了（编码不变浏览器仍解不了）——提前告知
+  if(/265|hevc/i.test(f.name)){
+    dbgStage('不支持 H.265',0,'浏览器无法解码 HEVC，需 Emby 转码引擎（请检查 Emby 配置/媒体库扫描）');
+    $('fail').style.display='block';$('faillink').value=f.url;
+    $('pnow').textContent=f.name+'（H.265 需要 Emby 转码，当前 Emby 未命中）';
+    return
+  }
   if(window.noHls||typeof Hls==='undefined'){
     $('fail').style.display='block';$('faillink').value=f.url;
     v.src=f.url; // 兜底尝试直出
@@ -869,6 +875,7 @@ async function startEmby(f,startPct){
     dbgStage('Emby 匹配',performance.now()-t0);
     if(!d||!d.found){
       pdbg('Emby 不可用：',d&&d.reason);
+      dbgStage('Emby 未命中',performance.now()-t0,d&&d.reason?d.reason:'未知原因');
       $('pnow').textContent=f.name+(d&&d.reason?'（'+d.reason+'，走直连/转封装）':'');
       return false
     }
