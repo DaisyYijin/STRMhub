@@ -133,6 +133,9 @@ type MediaLibrary struct {
 	TargetPath    string `json:"target_path" gorm:"size:500"`
 	OrigLanguage  string `json:"original_language" gorm:"size:20"`
 	OrigCountry   string `json:"origin_country" gorm:"size:100"`
+	PosterPath    string `json:"poster_path" gorm:"size:255"` // TMDB 海报路径（观影门户）
+	VoteAverage   float64 `json:"vote_average"`
+	Overview      string `json:"overview" gorm:"type:text"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

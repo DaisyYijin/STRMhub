@@ -752,6 +752,9 @@ func recordMedia(media *TmdbMedia, category, targetPath string) {
 		existing.Category = category
 		existing.TargetPath = targetPath
 		existing.Title = media.Title
+		existing.PosterPath = media.PosterPath
+		existing.VoteAverage = media.VoteAverage
+		existing.Overview = media.Overview
 		model.DB.Save(&existing)
 		return
 	}
@@ -765,6 +768,9 @@ func recordMedia(media *TmdbMedia, category, targetPath string) {
 		TargetPath:   targetPath,
 		OrigLanguage: media.OrigLanguage,
 		OrigCountry:  strings.Join(media.OrigCountry, ","),
+		PosterPath:   media.PosterPath,
+		VoteAverage:  media.VoteAverage,
+		Overview:     media.Overview,
 	}
 	model.DB.Save(record)
 }

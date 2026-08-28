@@ -163,6 +163,9 @@ func main() {
 	// 启动302代理（独立端口）
 	go api.StartProxy(db, cfg)
 
+	// 启动观影门户（6666：海报墙 + 网页播放）
+	go api.StartPortal(cfg)
+
 	log.Printf("StrmHub 管理后台: http://localhost:%d", cfg.Port)
 	if err := r.Run(":" + cfg.PortStr()); err != nil {
 		log.Fatalf("启动失败: %v", err)
