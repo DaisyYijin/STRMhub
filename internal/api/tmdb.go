@@ -151,7 +151,6 @@ func tmdbCachePut(kind, q, year string, media *TmdbMedia, err error) {
 	tmdbSearchCache[kind+"|"+q+"|"+year] = tmdbCacheEntry{media: media, err: err, at: time.Now()}
 }
 
-// getByTmdbID 按 TMDB ID 直接查详情（跳过搜索，中文片名 100% 命中）
 func (tc *TmdbClient) getByTmdbID(id int, isTV bool) (*TmdbMedia, error) {
 	if id <= 0 {
 		return nil, nil
@@ -464,7 +463,6 @@ type ParsedName struct {
 	IsTV       bool
 	Resolution string // 1080p, 2160p 等
 	Quality    string // 完整画质串（1080p.WEB-DL.AAC2.0.H.264 等，由调用方填充）
-	TmdbID     int    // 从目录名 [tmdb=xxx] 提取的 TMDB ID（直查用）
 }
 
 var (
@@ -600,7 +598,6 @@ func parseFileName(filename string) *ParsedName {
 // recognizeFile 通过 TMDB 识别文件
 var reTmdbID = regexp.MustCompile(`\[tmdb=(\d+)\]`)
 
-// extractTmdbID 从目录名/文件名提取 [tmdb=xxx] 中的 ID
 func extractTmdbID(name string) int {
 	if m := reTmdbID.FindStringSubmatch(name); m != nil {
 		id, _ := strconv.Atoi(m[1])
@@ -612,14 +609,6 @@ func extractTmdbID(name string) int {
 func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	if parsed.Title == "" {
 		return nil, fmt.Errorf("无法从文件名提取标题")
-	}
-
-	// 优先用 [tmdb=xxx] 直接查详情：TMDB 搜索不索引中文别名（白头山→Ashfall），ID 直查 100% 命中
-	if parsed.TmdbID > 0 {
-		if m, err := tc.getByTmdbID(parsed.TmdbID, parsed.IsTV); err == nil && m != nil {
-			vlog("[整理] TMDB ID 直查命中: %d -> %s (%s)", parsed.TmdbID, m.Title, m.Year)
-			return m, nil
-		}
 	}
 
 	// movieThenTV：先电影后剧集（CMS 同款兜底顺序）
