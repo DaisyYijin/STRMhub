@@ -224,54 +224,84 @@ func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error)
 }
 
 func (tc *TmdbClient) searchMovieUncached(query string, year string) (*TmdbMedia, error) {
-	params := map[string]string{"query": query}
-	if year != "" {
-		params["year"] = year
-	}
-	body, err := tc.get("/search/movie", params)
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Results []struct {
-			ID               int     `json:"id"`
-			Title            string  `json:"title"`
-			OriginalTitle    string  `json:"original_title"`
-			ReleaseDate      string  `json:"release_date"`
-			GenreIDs         []int   `json:"genre_ids"`
-			Overview         string  `json:"overview"`
-			PosterPath       string  `json:"poster_path"`
-			BackdropPath     string  `json:"backdrop_path"`
-			OriginalLanguage string  `json:"original_language"`
-			VoteAverage      float64 `json:"vote_average"`
-		} `json:"results"`
-		TotalResults int `json:"total_results"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-	if result.TotalResults == 0 || len(result.Results) == 0 {
-		vlog("[整理] 搜索 %q（年份=%s）无结果", query, year)
-		return nil, nil
-	}
-	// 候选列表（CMS 同款：识别错片时可从候选看出原因）
-	cands := make([]string, 0, 3)
-	for _, c := range result.Results {
-		if len(cands) >= 3 {
-			break
+	// 多策略搜索：TMDB year 参数是精确匹配（时区可能差一年），改为搜索后手动过滤
+	// 策略1: query + language=zh-CN（优先搜中文标题）
+	// 策略2: query 不带 language（搜原始/英文标题）
+	for si, params := range []map[string]string{
+		{"query": query, "language": "zh-CN"},
+		{"query": query},
+	} {
+		body, err := tc.get("/search/movie", params)
+		if err != nil {
+			continue
 		}
-		cy := ""
-		if len(c.ReleaseDate) >= 4 {
-			cy = c.ReleaseDate[:4]
+		var result struct {
+			Results []struct {
+				ID               int     `json:"id"`
+				Title            string  `json:"title"`
+				OriginalTitle    string  `json:"original_title"`
+				ReleaseDate      string  `json:"release_date"`
+				GenreIDs         []int   `json:"genre_ids"`
+				Overview         string  `json:"overview"`
+				PosterPath       string  `json:"poster_path"`
+				BackdropPath     string  `json:"backdrop_path"`
+				OriginalLanguage string  `json:"original_language"`
+				VoteAverage      float64 `json:"vote_average"`
+			} `json:"results"`
+			TotalResults int `json:"total_results"`
 		}
-		cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d 评分%.1f", c.Title, cy, c.ID, c.VoteAverage))
-	}
-	vlog("[整理] 搜索 %q 候选 %d 个: %s", query, result.TotalResults, strings.Join(cands, " | "))
-	r := result.Results[0]
-	yr := ""
-	if len(r.ReleaseDate) >= 4 {
-		yr = r.ReleaseDate[:4]
-	}
+		if json.Unmarshal(body, &result) != nil || len(result.Results) == 0 {
+			vlog("[整理] 搜索策略%d %q 无结果", si+1, query)
+			continue
+		}
+		// 候选日志
+		cands := make([]string, 0, 3)
+		for _, c := range result.Results {
+			if len(cands) >= 3 {
+				break
+			}
+			cy := ""
+			if len(c.ReleaseDate) >= 4 {
+				cy = c.ReleaseDate[:4]
+			}
+			cands = append(cands, fmt.Sprintf("%s (%s) tmdb=%d", c.Title, cy, c.ID))
+		}
+		vlog("[整理] 搜索策略%d %q 候选: %s", si+1, query, strings.Join(cands, " | "))
+		// 手动按年份过滤（差1年也接受，处理时区/上映年份差异）
+		var pick = -1
+		if year != "" {
+			for i, c := range result.Results {
+				cy := ""
+				if len(c.ReleaseDate) >= 4 {
+					cy = c.ReleaseDate[:4]
+				}
+				if cy == year {
+					pick = i
+					break
+				}
+			}
+			// 精确年份没匹配到，允许差1年
+			if pick < 0 {
+				for i, c := range result.Results {
+					cy := ""
+					if len(c.ReleaseDate) >= 4 {
+						cy = c.ReleaseDate[:4]
+					}
+					if cy != "" && absYear(cy, year) == 1 {
+						pick = i
+						break
+					}
+				}
+			}
+		}
+		if pick < 0 {
+			pick = 0 // 没有年份过滤或都没匹配，取第一个
+		}
+		r := result.Results[pick]
+		yr := ""
+		if len(r.ReleaseDate) >= 4 {
+			yr = r.ReleaseDate[:4]
+		}
 	// 获取详情中的 origin_country
 	origCountry, _ := tc.getMovieDetails(r.ID)
 	return &TmdbMedia{
@@ -287,7 +317,21 @@ func (tc *TmdbClient) searchMovieUncached(query string, year string) (*TmdbMedia
 		OrigLanguage: r.OriginalLanguage,
 		OrigCountry:  origCountry,
 		VoteAverage:  r.VoteAverage,
-	}, nil
+		}, nil
+	}
+	vlog("[整理] 搜索 %q（年份=%s）所有策略均无结果", query, year)
+	return nil, nil
+}
+
+func absYear(a, b string) int {
+	ai, bi := 0, 0
+	fmt.Sscanf(a, "%d", &ai)
+	fmt.Sscanf(b, "%d", &bi)
+	d := ai - bi
+	if d < 0 {
+		d = -d
+	}
+	return d
 }
 
 // getMovieDetails 获取电影详情（origin_country）
