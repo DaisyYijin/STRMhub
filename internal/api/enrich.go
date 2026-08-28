@@ -33,9 +33,10 @@ type probeResult struct {
 
 // probeMediaInfo 用镜像内置的 ffprobe 读直链头部，解析主视频流与主音轨
 func probeMediaInfo(directURL string) (*probeResult, error) {
-	// -analyzeduration/-probesize 限制读取量：只拉头部数据，不下载全文件
+	// -user_agent：115 直链与签发 UA 绑定，ffprobe 必须用同一 UA 否则被拒（exit 1）
 	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
+		"-user_agent", ua115Unified(),
 		"-print_format", "json",
 		"-show_streams", "-show_format",
 		"-analyzeduration", "10M", "-probesize", "10M",
