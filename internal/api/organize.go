@@ -1275,10 +1275,14 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 		if hit {
 			recordSeenSha1s(videoFiles, "existing")
+			titleGuess := parseFileName(dir.Name).Title
+			if titleGuess == "" || isEpisodeOnly(titleGuess) {
+				titleGuess = parseFileName(mainVideo.Name).Title
+			}
 			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 			} else {
-				onLog(fmt.Sprintf("○ %s/ - SHA1 命中历史记录，已移到已存在目录", dir.Name))
+				onLog(fmt.Sprintf("○ 《%s》已存在（SHA1 命中历史记录），跳过整理，%d 个文件整体移到已存在目录", titleGuess, len(videoFiles)))
 			}
 			for _, vf := range videoFiles {
 				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中历史记录"})
