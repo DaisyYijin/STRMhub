@@ -1491,6 +1491,37 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
+	// 同步补全：文件名缺画质信息时立即探测（ffprobe 拉头部几 MB），
+	// 用探测结果补充画质后再重命名 → 移动 → 入库，一步到位
+	if policy := loadEnrichPolicy(); policy.Enabled {
+		for i, vf := range videoFiles {
+			if !enrichNeedsProbe(vf.Name) || vf.PickCode == "" {
+				continue
+			}
+			onLog(fmt.Sprintf("▣ 补全探测: %s（文件名缺画质信息）", vf.Name))
+			if probe := probeFileNow(vf.PickCode); probe != nil {
+				action, reason := enrichDecide(vf.Name, probe, policy)
+				if action == "rename" {
+					ext := pathExt(vf.Name)
+					base := strings.TrimSuffix(vf.Name, ext)
+					newName := buildEnrichedName(base, ext, probe)
+					if newName != vf.Name {
+						if err := ops.rename(vf.Fid, newName); err != nil {
+							onLog(fmt.Sprintf("○ 补全改名失败 %s: %v", vf.Name, err))
+						} else {
+							onLog(fmt.Sprintf("✓ 补全 %s → %s", vf.Name, newName))
+							videoFiles[i].Name = newName // 后续模板重命名基于补全后的名字
+						}
+					}
+				} else {
+					onLog(fmt.Sprintf("○ 补全跳过 %s: %s", vf.Name, reason))
+				}
+			} else {
+				onLog(fmt.Sprintf("○ 补全探测失败 %s（保留原名）", vf.Name))
+			}
+		}
+	}
+
 	// 先在源目录重命名（批量 batch_rename），再移动到目标
 	renameBeforeMove(ops, media, videoFiles, files, onLog)
 

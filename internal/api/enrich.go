@@ -32,6 +32,23 @@ type probeResult struct {
 }
 
 // probeMediaInfo 用镜像内置的 ffprobe 读直链头部，解析主视频流与主音轨
+// probeFileNow 按 pick_code 立即探测（整理内联补全用，包级函数不依赖 Handler）
+func probeFileNow(pickCode string) *probeResult {
+	var storage model.Storage
+	if err := model.DB.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
+		return nil
+	}
+	u, _, err := get115DownloadURL(pickCode, storage.Cookie, ua115Unified())
+	if err != nil || u == "" {
+		return nil
+	}
+	probe, err := probeMediaInfo(u)
+	if err != nil {
+		return nil
+	}
+	return probe
+}
+
 func probeMediaInfo(directURL string) (*probeResult, error) {
 	// -user_agent：115 直链与签发 UA 绑定，ffprobe 必须用同一 UA 否则被拒（exit 1）
 	cmd := exec.Command("ffprobe",
