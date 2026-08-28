@@ -30,9 +30,9 @@ func TestLibraryFilesOfPrefix(t *testing.T) {
 	// MediaLibrary 记录的目标路径（不带库名层）
 	targetDir := "电影/外语电影/P-测试片-2024-[tmdb=1]"
 
-	// 无前缀（旧行为）：查不到 → 洗版恒跳过（bug 复现）
-	if got := libraryFilesOf(targetDir, ""); len(got) != 0 {
-		t.Errorf("无前缀应查不到（旧记录兼容场景除外），得到 %d 条", len(got))
+	// 无前缀：第三重兜底（%/base/%）应仍能命中——OpenAPI 等拿不到库名的场景洗版不再静默跳过
+	if got := libraryFilesOf(targetDir, ""); len(got) != 2 {
+		t.Errorf("无前缀应通过兜底查到 2 条，得到 %d 条", len(got))
 	}
 	// 带库名前缀：查到该片的台账文件
 	got := libraryFilesOf(targetDir, "俱乐部")

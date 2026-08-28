@@ -197,6 +197,10 @@ func libraryFilesOf(targetDir, ledgerPrefix string) []model.SyncedFile {
 	if len(sfs) == 0 {
 		model.DB.Where("rel_path LIKE ?", base+"/%").Limit(20).Find(&sfs)
 	}
+	if len(sfs) == 0 {
+		// 第三重兜底：任意库名前缀（OpenAPI 等场景拿不到库名时仍能命中台账）
+		model.DB.Where("rel_path LIKE ?", "%/"+base+"/%").Limit(20).Find(&sfs)
+	}
 	return sfs
 }
 
