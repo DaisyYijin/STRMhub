@@ -626,7 +626,8 @@ function delProg(k){var p=getProg();delete p[k];try{localStorage.setItem('pprog'
 function recentProg(){return Object.values(getProg()).sort((a,b)=>b.ts-a.ts).slice(0,12)}
 
 /* ---------- 路由（hash） ---------- */
-function nav(h){if(location.hash===h)route();else location.hash=h}
+function nav(h){if(location.hash===h)if(PDBG)dbgRender();
+route();else location.hash=h}
 window.addEventListener('hashchange',route);
 async function route(){
   const h=location.hash||'#/home';
@@ -805,12 +806,20 @@ let embyPlay=null, embyAudio=-1, embySub=-1;
 /* ---- 播放调试（控制台输出；?debug=1 或 sessionStorage.pdbg=1 开启）---- */
 let PDBG=(()=>{try{if(new URLSearchParams(location.search).get('debug')==='1'){sessionStorage.setItem('pdbg','1');return true}return sessionStorage.getItem('pdbg')==='1'}catch(e){return false}})();
 function pdbg(...a){if(PDBG)console.log('%c[播放]','color:#7c3aed;font-weight:bold',...a)}
-window.pdbg=()=>{PDBG=true;try{sessionStorage.setItem('pdbg','1')}catch(e){};console.log('播放调试已开启（刷新保持；关闭：sessionStorage.removeItem(\'pdbg\')）')};
+let DBGSTAGES=[];
+function dbgStage(name,ms,extra){DBGSTAGES.push(name+' '+Math.round(ms)+'ms'+(extra?' - '+extra:''));dbgRender()}
+function dbgRender(){
+  let el=$('dbgbar');
+  if(!el){el=document.createElement('div');el.id='dbgbar';el.style.cssText='font-size:12px;color:var(--dim);background:var(--card);border:1px dashed var(--bd);border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.9';const pt=$('pnow');pt&&pt.parentNode&&pt.parentNode.insertBefore(el,pt.nextSibling)}
+  el.innerHTML='<b>\u23f1 播放计时'+(curEngine?'（引擎='+curEngine+'）':'')+'</b><br>'+DBGSTAGES.join('<br>');
+}
+window.pdbg=()=>{PDBG=true;try{sessionStorage.setItem('pdbg','1')}catch(e){};dbgRender();console.log('调试已开启：播放后看播放器下方计时面板')};
 async function tlog(label,fn){const t0=performance.now();pdbg(label,'…');try{const r=await fn();pdbg(label,'✓',(performance.now()-t0).toFixed(0)+'ms');return r}catch(e){pdbg(label,'✗',(performance.now()-t0).toFixed(0)+'ms',e);throw e}}
 async function startPlay(idx,startPct,forceHLS,audioRel){
   const f=curFiles[idx];curFileIdx=idx;curFileUrl=f.url;
   const v=$('video');
   const t0=performance.now();
+  DBGSTAGES=[];
   pdbg('=== 开始播放 ===',f.name,'startPct='+startPct);
   curAudioRel=audioRel||0;
   if(hls){hls.destroy();hls=null}
@@ -824,7 +833,7 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     $('pnow').textContent=f.name+'（302 直连）';
     pdbg('引擎=直连(302)，src=',f.url);
     v.src=f.url;
-    v.onloadedmetadata=()=>{pdbg('直连 loadedmetadata',(performance.now()-t0).toFixed(0)+'ms 时长='+v.duration);if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
+    v.onloadedmetadata=()=>{dbgStage('直连出画',performance.now()-t0,'时长'+Math.round(v.duration)+'s');if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     v.playbackRate=curRate;
     return
   }
@@ -840,7 +849,7 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     await startHLS(f,audioRel||0);
   }
   v.playbackRate=curRate;
-  v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];pdbg('video 错误：code='+v.error.code,E[v.error.code]||'',v.error.message||'');$('fail').style.display='block';$('faillink').value=f.url};
+  v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];dbgStage('错误',performance.now()-t0,E[v.error.code]||('code '+v.error.code));$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
   v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(()=>{});
   v.onplay=()=>{$('pp').innerHTML=SVGNS.pause};
@@ -858,6 +867,7 @@ async function startEmby(f,startPct){
   const t0=performance.now();
   try{
     const d=await tlog('Emby匹配',()=>fetch('/api/portal/embyplay?key='+encodeURIComponent(curKey)+'&f='+encodeURIComponent(f.name)).then(r=>r.json()));
+    dbgStage('Emby 匹配',performance.now()-t0);
     if(!d||!d.found){
       pdbg('Emby 不可用：',d&&d.reason);
       $('pnow').textContent=f.name+(d&&d.reason?'（'+d.reason+'，走直连/转封装）':'');
@@ -876,13 +886,13 @@ async function startEmby(f,startPct){
     hls.loadSource(u);
     hls.attachMedia(v);
     let firstFrag=false,manifestAt=0;
-    hls.on(Hls.Events.MANIFEST_PARSED,()=>{manifestAt=performance.now();pdbg('Emby 播放列表已解析',(manifestAt-t0).toFixed(0)+'ms，级数=',hls.levels.length,'时长=',hls.levels[hls.currentLevel]?Math.round(hls.levels[hls.currentLevel].details?hls.levels[hls.currentLevel].details.totalduration:0):'?')});
-    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;pdbg('首分片下载完成',(performance.now()-t0).toFixed(0)+'ms，大小=',dd.frag&&(dd.payload?dd.payload.byteLength/1024:0).toFixed(0)+'KB')}});
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>{manifestAt=performance.now();dbgStage('播放列表就绪',manifestAt-t0)});
+    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;dbgStage('首分片下载',performance.now()-t0)}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
       pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'',data.response&&('HTTP '+data.response.code));
       if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
     });
-    v.onloadedmetadata=()=>{pdbg('Emby loadedmetadata',(performance.now()-t0).toFixed(0)+'ms 时长='+v.duration);if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
+    v.onloadedmetadata=()=>{dbgStage('出画（可播）',performance.now()-t0,'时长'+Math.round(v.duration)+'s');if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     return true
   }catch(e){pdbg('Emby 异常：',e.message);return false}
 }
@@ -900,8 +910,8 @@ async function startHLS(f,audioRel){
     hls.loadSource(d.m3u8);
     hls.attachMedia(v);
     let firstFrag=false;
-    hls.on(Hls.Events.MANIFEST_PARSED,()=>pdbg('转封装播放列表就绪',(performance.now()-t0).toFixed(0)+'ms'));
-    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;pdbg('转封装首分片完成',(performance.now()-t0).toFixed(0)+'ms')}});
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>dbgStage('转封装列表就绪',performance.now()-t0));
+    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;dbgStage('转封装首分片',performance.now()-t0)}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
       pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'');
       if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
@@ -1140,6 +1150,7 @@ function copyTxt(t){if(navigator.clipboard)navigator.clipboard.writeText(t).then
 function toast2(m){const d=document.createElement('div');d.textContent=m;d.style.cssText='position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:999';document.body.appendChild(d);setTimeout(()=>d.remove(),1600)}
 
 /* ---------- 启动 ---------- */
+if(PDBG)dbgRender();
 route();
 </script>
 </body>
