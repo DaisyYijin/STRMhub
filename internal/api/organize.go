@@ -281,6 +281,14 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		}
 	}
 
+	// 补全入队在改名判断之前（文件不需要改名时同样需要探测补全）
+	if policy := loadEnrichPolicy(); policy.Enabled {
+		for _, vf := range videoFiles {
+			if n, _ := videoNewName(vf); n != "" && enrichNeedsProbe(n) {
+				enrichQueueTask(vf)
+			}
+		}
+	}
 	if len(names) == 0 {
 		return
 	}
@@ -289,15 +297,6 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		return
 	}
 	onLog(fmt.Sprintf("✓ 批量重命名 %d 个文件（例: %s）", len(names), example))
-	// 文件名仍缺分辨率/编码的视频 → 入补全队列（仅在用户开启补全功能时；
-	// ffprobe 探测后按策略规范命名）
-	if policy := loadEnrichPolicy(); policy.Enabled {
-		for _, vf := range videoFiles {
-			if n, _ := videoNewName(vf); n != "" && enrichNeedsProbe(n) {
-				enrichQueueTask(vf)
-			}
-		}
-	}
 }
 
 // moveQuietly 移动并记录失败（失败不再被吞掉）
