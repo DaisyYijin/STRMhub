@@ -333,7 +333,7 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 		better = false
 	}
 	if !better {
-		onLog(fmt.Sprintf("○ 洗版判定: %s 不优于库内版本（mode=%s），按已存在处理", truncateStr(newName, 60), mode))
+		onLog(fmt.Sprintf("○ 《%s》洗版判定：新版不优于库内版本（mode=%s），按已存在处理", media.Title, mode))
 		return washNotBetter
 	}
 	// 新版更好：旧版按配置的去向迁移（统一放「洗版-旧版本/片名」子目录便于辨认）。
