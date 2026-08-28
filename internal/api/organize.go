@@ -1499,7 +1499,12 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 				continue
 			}
 			onLog(fmt.Sprintf("▣ 补全探测: %s（文件名缺画质信息）", vf.Name))
-			if probe := probeFileNow(vf.PickCode); probe != nil {
+			probe, perr := probeFileNow(vf.PickCode)
+			if probe == nil {
+				onLog(fmt.Sprintf("○ 补全探测失败 %s（保留原名）: %s", vf.Name, perr))
+				continue
+			}
+			{
 				action, reason := enrichDecide(vf.Name, probe, policy)
 				if action == "rename" {
 					ext := pathExt(vf.Name)
@@ -1516,8 +1521,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 				} else {
 					onLog(fmt.Sprintf("○ 补全跳过 %s: %s", vf.Name, reason))
 				}
-			} else {
-				onLog(fmt.Sprintf("○ 补全探测失败 %s（保留原名）", vf.Name))
 			}
 		}
 	}

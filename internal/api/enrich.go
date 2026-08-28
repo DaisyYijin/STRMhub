@@ -9,13 +9,16 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 
+	"strmhub/internal/config"
 	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
@@ -32,36 +35,80 @@ type probeResult struct {
 }
 
 // probeMediaInfo 用镜像内置的 ffprobe 读直链头部，解析主视频流与主音轨
-// probeFileNow 按 pick_code 立即探测（整理内联补全用，包级函数不依赖 Handler）
-func probeFileNow(pickCode string) *probeResult {
-	var storage model.Storage
-	if err := model.DB.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-		return nil
+// probeFileNow 按 pick_code 立即探测（整理内联补全用，包级函数不依赖 Handler）。
+// 直链获取走双通道（OpenAPI 优先，Cookie 回退），并把签发 UA 与 CDN 要求的
+// 请求头（如 Set-Cookie 回带）原样传给 ffprobe——与门户 ffmpeg 拉流同一套路。
+func probeFileNow(pickCode string) (*probeResult, string) {
+	ua := ua115Download
+	cfg := portalCfg
+	if cfg == nil { // 门户协程尚未就绪时的兜底（自动整理可能在启动早期触发）
+		cfg = config.Load()
 	}
-	u, _, err := get115DownloadURL(pickCode, storage.Cookie, ua115Unified())
+	u, headers, err := proxyDownloadURLFull(model.DB, cfg, pickCode, ua)
 	if err != nil || u == "" {
-		return nil
+		if err == nil {
+			err = fmt.Errorf("未获取到链接")
+		}
+		return nil, "取直链失败: " + err.Error()
 	}
-	probe, err := probeMediaInfo(u)
-	if err != nil {
-		return nil
+	if headers == nil {
+		headers = map[string]string{"User-Agent": ua}
 	}
-	return probe
+	// 方案A：直连探测（带签发 UA + CDN 要求的请求头）
+	probe, perr := probeMediaInfo(u, headers)
+	if perr == nil {
+		return probe, ""
+	}
+	// 方案B：下载头部 5MB 到临时文件再探测（完全控制请求头，兼容 CDN 拒绝流式读取）
+	if probe, ferr := probeViaTempFile(u, headers); ferr == nil {
+		return probe, ""
+	} else {
+		return nil, fmt.Sprintf("直连: %v；本地: %v", perr, ferr)
+	}
 }
 
-func probeMediaInfo(directURL string) (*probeResult, error) {
-	// -user_agent：115 直链与签发 UA 绑定，ffprobe 必须用同一 UA 否则被拒（exit 1）
+// probeViaTempFile 下载直链头部若干 MB 到临时文件再本地探测
+func probeViaTempFile(u string, headers map[string]string) (*probeResult, error) {
+	tmp, err := os.CreateTemp("", "probe-*.bin")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	req, _ := http.NewRequest("GET", u, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		tmp.Close()
+		return nil, fmt.Errorf("CDN 状态 %d", resp.StatusCode)
+	}
+	io.CopyN(tmp, resp.Body, 8<<20) // 最多 8MB
+	tmp.Close()
+	return probeMediaInfoFile(tmp.Name())
+}
+
+// probeMediaInfoFile 探测本地文件（下载头部后的回退方案）
+func probeMediaInfoFile(filePath string) (*probeResult, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
-		"-user_agent", ua115Unified(),
 		"-print_format", "json",
 		"-show_streams", "-show_format",
-		"-analyzeduration", "10M", "-probesize", "10M",
-		directURL)
+		filePath)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("ffprobe 执行失败: %v", err)
+		return nil, fmt.Errorf("ffprobe 文件探测失败: %v", err)
 	}
+	return parseProbeOutput(out)
+}
+
+// parseProbeOutput 解析 ffprobe JSON 输出（主视频流 + 主音轨 + HDR/DV side_data）
+func parseProbeOutput(out []byte) (*probeResult, error) {
 	var probe struct {
 		Streams []struct {
 			CodecType    string `json:"codec_type"`
@@ -118,6 +165,24 @@ func probeMediaInfo(directURL string) (*probeResult, error) {
 		res.Duration = int(d)
 	}
 	return res, nil
+}
+
+func probeMediaInfo(directURL string, headers map[string]string) (*probeResult, error) {
+	// 直链与签发 UA 绑定且 CDN 可能要求回带 Set-Cookie；与门户 ffmpeg
+	// 拉流同一套路：-user_agent + -headers 原样携带（必须在输入 URL 之前）
+	args := append([]string{"-v", "quiet"},
+		ffmpegHeaderArgs(headers)...)
+	args = append(args,
+		"-print_format", "json",
+		"-show_streams", "-show_format",
+		"-analyzeduration", "10M", "-probesize", "10M",
+		directURL)
+	cmd := exec.Command("ffprobe", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe 执行失败: %v（输出: %.200s）", err, string(out))
+	}
+	return parseProbeOutput(out)
 }
 
 // pixFromHeight 高度 → 分辨率标签（与 CMS resource_pix 对齐）
@@ -216,23 +281,11 @@ func (h *Handler) enrichProcessOne() {
 	}
 	h.DB.Model(&task).Update("attempts", task.Attempts+1)
 
-	// 直链（Cookie 通道，按统一 UA 签发）
-	db := h.DB
-	var storage model.Storage
-	if err := db.Where("type = ?", "115").First(&storage).Error; err != nil || storage.Cookie == "" {
-		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": "115 未绑定"})
-		return
-	}
-	u, _, err := get115DownloadURL(task.PickCode, storage.Cookie, ua115Unified())
-	if err != nil || u == "" {
-		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": "取直链失败: " + err.Error()})
-		return
-	}
-
-	probe, err := probeMediaInfo(u)
-	if err != nil {
-		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": err.Error()})
-		log.Printf("[补全] ✗ 探测失败 %s: %v", task.FileName, err)
+	// 直链探测（双通道：OpenAPI 优先，Cookie 回退；带签发 UA 与 CDN 请求头）
+	probe, perr := probeFileNow(task.PickCode)
+	if probe == nil {
+		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": perr})
+		log.Printf("[补全] ✗ 探测失败 %s: %s", task.FileName, perr)
 		return
 	}
 
