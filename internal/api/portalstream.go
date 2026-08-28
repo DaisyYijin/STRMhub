@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -66,10 +67,11 @@ func hasFFmpeg() bool {
 
 // portalProbeResult ffprobe 识别结果（缓存 10 分钟）
 type portalProbeResult struct {
-	Video  []probeStream `json:"video"`
-	Audio  []probeStream `json:"audio"`
-	Subs   []probeStream `json:"subs"`
-	At     time.Time     `json:"-"`
+	Video    []probeStream `json:"video"`
+	Audio    []probeStream `json:"audio"`
+	Subs     []probeStream `json:"subs"`
+	Duration float64       `json:"duration,omitempty"` // 总时长（秒）；边转边播时先展示
+	At       time.Time     `json:"-"`
 }
 
 type probeStream struct {
@@ -108,7 +110,8 @@ func portalProbe(c *gin.Context) {
 	}
 	args := append([]string{"-hide_banner", "-loglevel", "error"},
 		append(ffmpegHeaderArgs(headers),
-			"-print_format", "json", "-show_streams", "-analyzeduration", "20M", urlStr)...)
+			"-print_format", "json", "-show_streams", "-show_format",
+			"-probesize", "5M", "-analyzeduration", "5M", urlStr)...)
 	out, err := exec.Command("ffprobe", args...).CombinedOutput()
 	if err != nil {
 		// 兼容：ffprobe 可能也在 /usr/bin
@@ -133,6 +136,13 @@ func portalProbe(c *gin.Context) {
 			} `json:"tags"`
 		} `json:"streams"`
 	}
+	var fmtWrap struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	_ = json.Unmarshal(out, &fmtWrap)
+	pr.Duration, _ = strconv.ParseFloat(fmtWrap.Format.Duration, 64)
 	if err := json.Unmarshal(out, &wrap); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "ffprobe 输出解析失败"})
 		return
@@ -246,13 +256,13 @@ func portalHLS(c *gin.Context) {
 	// ffmpeg：-c copy 无损转封装 HLS（MKV→TS）。字幕轨不进 HLS（单独提取）。
 	segArgs := append([]string{"-hide_banner", "-loglevel", "error"},
 		append(ffmpegHeaderArgs(headers),
+			"-probesize", "5M", "-analyzeduration", "5M",
 			"-i", urlStr,
 			"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioRel),
 			"-c", "copy",
 			"-f", "hls",
-			"-hls_time", "8",
+			"-hls_time", "4",
 			"-hls_list_size", "0",
-			"-hls_flags", "append_list+omit_endlist",
 			"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
 			filepath.Join(dir, "index.m3u8"))...)
 	cmd := exec.CommandContext(ctx, ffmpegBinOrPath(), segArgs...)

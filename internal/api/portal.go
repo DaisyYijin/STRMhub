@@ -1035,8 +1035,9 @@ document.addEventListener('keydown',e=>{
 });
 setInterval(()=>{
   const v=$('video');if(!v||!v.src||!v.duration)return;
-  $('seekcur').style.width=(v.currentTime/v.duration*100)+'%';
-  $('ptime').textContent=fmtT(v.currentTime)+' / '+fmtT(v.duration)
+  const tot=(curProbe&&curProbe.duration&&curProbe.duration>v.duration)?curProbe.duration:v.duration;
+  $('seekcur').style.width=(v.currentTime/tot*100)+'%';
+  $('ptime').textContent=fmtT(v.currentTime)+' / '+fmtT(tot)
 },500);
 function fmtT(s){s=Math.floor(s);const m=Math.floor(s/60),ss=s%60;const h=Math.floor(m/60);return (h?h+':':'')+String(h?m%60:m).padStart(2,'0')+':'+String(ss).padStart(2,'0')}
 function copyTxt(t){if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>{toast2('已复制')});else{const i=$('faillink');if(i){i.value=t;i.select();document.execCommand('copy')}}}
