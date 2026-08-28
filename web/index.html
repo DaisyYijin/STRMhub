@@ -130,7 +130,7 @@
           <div class="form-row"><div class="label">增量同步 Cron<i class="help-tip" tabindex="0">?<span class="tip-bubble">标准 5 字段 cron（分 时 日 月 周）。命中时执行「自动整理→增量同步」流水线；全量同步仅手动触发。</span></i></div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *" oninput="previewCron()"></div></div>
           <div class="form-row"><div class="label">最近运行<i class="help-tip" tabindex="0">?<span class="tip-bubble">最近 5 次定时任务的名称、开始时间与耗时，成功 ✓ 失败 ✗。</span></i></div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
 
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-outline" onclick="cleanupOrphanStrm()">清理孤儿</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
       </div>
@@ -1038,6 +1038,6 @@ av:
   </div>
 </div>
 
-<script src="/js/app.js?v=103"></script>
+<script src="/js/app.js?v=104"></script>
 </body>
 </html>
