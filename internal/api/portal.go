@@ -802,9 +802,16 @@ async function openDetailData(key){
 let curProbe=null,curSid='',hls=null,curAudioRel=0;
 let curEngine='direct'; // emby | ffmpeg | direct
 let embyPlay=null, embyAudio=-1, embySub=-1;
+/* ---- 播放调试（控制台输出；?debug=1 或 sessionStorage.pdbg=1 开启）---- */
+let PDBG=(()=>{try{if(new URLSearchParams(location.search).get('debug')==='1'){sessionStorage.setItem('pdbg','1');return true}return sessionStorage.getItem('pdbg')==='1'}catch(e){return false}})();
+function pdbg(...a){if(PDBG)console.log('%c[播放]','color:#7c3aed;font-weight:bold',...a)}
+window.pdbg=()=>{PDBG=true;try{sessionStorage.setItem('pdbg','1')}catch(e){};console.log('播放调试已开启（刷新保持；关闭：sessionStorage.removeItem(\'pdbg\')）')};
+async function tlog(label,fn){const t0=performance.now();pdbg(label,'…');try{const r=await fn();pdbg(label,'✓',(performance.now()-t0).toFixed(0)+'ms');return r}catch(e){pdbg(label,'✗',(performance.now()-t0).toFixed(0)+'ms',e);throw e}}
 async function startPlay(idx,startPct,forceHLS,audioRel){
   const f=curFiles[idx];curFileIdx=idx;curFileUrl=f.url;
   const v=$('video');
+  const t0=performance.now();
+  pdbg('=== 开始播放 ===',f.name,'startPct='+startPct);
   curAudioRel=audioRel||0;
   if(hls){hls.destroy();hls=null}
   curProbe=null;curSid='';embyPlay=null;embyAudio=-1;embySub=-1;
@@ -815,8 +822,9 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   if(direct){
     curEngine='direct';
     $('pnow').textContent=f.name+'（302 直连）';
+    pdbg('引擎=直连(302)，src=',f.url);
     v.src=f.url;
-    v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
+    v.onloadedmetadata=()=>{pdbg('直连 loadedmetadata',(performance.now()-t0).toFixed(0)+'ms 时长='+v.duration);if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     v.playbackRate=curRate;
     return
   }
@@ -832,7 +840,7 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     await startHLS(f,audioRel||0);
   }
   v.playbackRate=curRate;
-  v.onerror=()=>{$('fail').style.display='block';$('faillink').value=f.url};
+  v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];pdbg('video 错误：code='+v.error.code,E[v.error.code]||'',v.error.message||'');$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
   v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(()=>{});
   v.onplay=()=>{$('pp').innerHTML=SVGNS.pause};
@@ -847,48 +855,60 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
 }
 /* Emby 引擎：master.m3u8 全长播放列表（拖动秒跳），音轨/字幕服务端切换 */
 async function startEmby(f,startPct){
+  const t0=performance.now();
   try{
-    const r=await fetch('/api/portal/embyplay?key='+encodeURIComponent(curKey)+'&f='+encodeURIComponent(f.name));
-    const d=await r.json();
+    const d=await tlog('Emby匹配',()=>fetch('/api/portal/embyplay?key='+encodeURIComponent(curKey)+'&f='+encodeURIComponent(f.name)).then(r=>r.json()));
     if(!d||!d.found){
+      pdbg('Emby 不可用：',d&&d.reason);
       $('pnow').textContent=f.name+(d&&d.reason?'（'+d.reason+'，走直连/转封装）':'');
       return false
     }
     embyPlay=d;curEngine='emby';
+    pdbg('Emby 命中：item='+d.item_id,'音轨 '+d.audio.length+' 个','字幕 '+d.subs.length+' 个',(performance.now()-t0).toFixed(0)+'ms');
     $('pnow').textContent=f.name+'（Emby 引擎）';
     const v=$('video');
     let u=d.url;
     if(embyAudio>=0)u+='&AudioStreamIndex='+embyAudio;
     if(embySub>=0)u+='&SubtitleStreamIndex='+embySub;
     u+='&VideoCodec=h264,h265&AudioCodec=aac,mp3,ac3,flac&TranscodingMaxAudioChannels=2';
+    pdbg('Emby m3u8：',u);
     hls=new Hls({maxBufferLength:30,maxMaxBufferLength:60});
     hls.loadSource(u);
     hls.attachMedia(v);
+    let firstFrag=false,manifestAt=0;
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>{manifestAt=performance.now();pdbg('Emby 播放列表已解析',(manifestAt-t0).toFixed(0)+'ms，级数=',hls.levels.length,'时长=',hls.levels[hls.currentLevel]?Math.round(hls.levels[hls.currentLevel].details?hls.levels[hls.currentLevel].details.totalduration:0):'?')});
+    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;pdbg('首分片下载完成',(performance.now()-t0).toFixed(0)+'ms，大小=',dd.frag&&(dd.payload?dd.payload.byteLength/1024:0).toFixed(0)+'KB')}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
+      pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'',data.response&&('HTTP '+data.response.code));
       if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
     });
-    if(startPct>0){
-      v.onloadedmetadata=()=>{if(v.duration)v.currentTime=v.duration*startPct/100};
-    }
+    v.onloadedmetadata=()=>{pdbg('Emby loadedmetadata',(performance.now()-t0).toFixed(0)+'ms 时长='+v.duration);if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     return true
-  }catch(e){return false}
+  }catch(e){pdbg('Emby 异常：',e.message);return false}
 }
 async function startHLS(f,audioRel){
-  const v=$('video');
+  const v=$('video');const t0=performance.now();
+  curEngine='ffmpeg';
   $('pnow').textContent=f.name+'（转封装中…）';
+  pdbg('引擎=ffmpeg 转封装');
   try{
-    const r=await fetch('/api/portal/hls/start',{method:'POST',body:JSON.stringify({pick:f.pick,a:audioRel})});
-    const d=await r.json();
+    const d=await tlog('转封装会话启动',()=>fetch('/api/portal/hls/start',{method:'POST',body:JSON.stringify({pick:f.pick,a:audioRel})}).then(r=>r.json()));
     if(d.error){throw new Error(d.error)}
     curSid=d.sid;
+    pdbg('会话 sid='+d.sid,'m3u8='+d.m3u8);
     hls=new Hls({maxBufferLength:30});
     hls.loadSource(d.m3u8);
     hls.attachMedia(v);
+    let firstFrag=false;
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>pdbg('转封装播放列表就绪',(performance.now()-t0).toFixed(0)+'ms'));
+    hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;pdbg('转封装首分片完成',(performance.now()-t0).toFixed(0)+'ms')}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
+      pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'');
       if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
     });
     $('pnow').textContent=f.name;
   }catch(e){
+    pdbg('转封装失败：',e.message);
     $('fail').style.display='block';$('faillink').value=f.url;
     $('pnow').textContent=f.name+'（'+e.message+'）';
     v.src=f.url;
