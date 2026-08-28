@@ -42,6 +42,7 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/api/portal/list", portalList)
 	r.GET("/api/portal/detail", portalDetail)
 	r.GET("/poster/*path", portalPoster)
+	r.GET("/api/portal/sub", portalSub)
 
 	go portalBackfillWorker()
 	addr := ":" + fmt.Sprint(cfg.PortalPort)
@@ -262,20 +263,33 @@ func portalDetail(c *gin.Context) {
 	}
 	base302 := portal302Base(c)
 	files := []gin.H{}
+	subs := []gin.H{}
 	for _, sf := range sfs {
-		if sf.Kind != "video" || sf.PickCode == "" {
+		if sf.PickCode == "" {
 			continue
 		}
-		files = append(files, gin.H{
-			"name": filepath.Base(sf.RelPath),
-			"size": sf.Size,
-			"url":  base302 + "/d/" + sf.PickCode,
-		})
+		base := strings.ToLower(filepath.Ext(sf.RelPath))
+		if sf.Kind == "video" {
+			files = append(files, gin.H{
+				"name": filepath.Base(sf.RelPath),
+				"size": sf.Size,
+				"url":  base302 + "/d/" + sf.PickCode,
+			})
+		} else if base == ".srt" || base == ".ass" || base == ".ssa" || base == ".vtt" {
+			name := filepath.Base(sf.RelPath)
+			label := name
+			if strings.Contains(name, ".chs") || strings.Contains(name, ".zh") || strings.Contains(name, "简") || strings.Contains(name, "chs") {
+				label = "中文（" + name + "）"
+			} else if strings.Contains(name, ".eng") || strings.Contains(name, ".en") || strings.Contains(name, "英文") {
+				label = "英文（" + name + "）"
+			}
+			subs = append(subs, gin.H{"name": name, "label": label, "pick": sf.PickCode})
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"media": gin.H{"title": title, "year": year, "media_type": mediaType, "category": category,
 			"poster_path": poster, "vote_average": vote, "overview": overview},
-		"files": files,
+		"files": files, "subs": subs,
 	})
 }
 
@@ -295,9 +309,23 @@ func portalBackfillWorker() {
 	time.Sleep(10 * time.Second) // 等服务完全就绪
 	for {
 		done := 0
+		tc, tcErr := loadTmdbClient(nil)
 		for _, e := range portalScanLedger() {
 			if e.TmdbID <= 0 {
-				continue
+				// 老内容目录名没有 tmdb 标记：按标题+年份搜索一次补 ID
+				if tcErr != nil || e.Title == "" {
+					continue
+				}
+				var media *TmdbMedia
+				if e.MediaType == "tv" {
+					media, _ = tc.SearchTV(e.Title, e.Year)
+				} else {
+					media, _ = tc.SearchMovie(e.Title, e.Year)
+				}
+				if media == nil || media.TmdbID == 0 {
+					continue
+				}
+				e.TmdbID = media.TmdbID
 			}
 			var ml model.MediaLibrary
 			need := true
@@ -401,6 +429,31 @@ func portalPoster(c *gin.Context) {
 	c.Data(http.StatusOK, resp.Header.Get("Content-Type"), data)
 }
 
+// portalSub 字幕文本代理：服务端按 pick_code 取 115 直链拉字幕并加 CORS 头返回
+//（浏览器直接 fetch 302/115 会因跨域失败，必须经服务端中转）
+func portalSub(c *gin.Context) {
+	pick := c.Query("pick")
+	if pick == "" || len(pick) > 64 {
+		c.String(http.StatusBadRequest, "bad pick")
+		return
+	}
+	urlStr, err := proxyDownloadURL(model.DB, portalCfg, pick, c.Request.UserAgent())
+	if err != nil || urlStr == "" {
+		c.String(http.StatusBadGateway, "获取字幕链接失败")
+		return
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(urlStr)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		c.String(http.StatusBadGateway, "拉取字幕失败")
+		return
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", data)
+}
+
 // portalPage 门户页面（内嵌单文件，暗色影院风）
 func portalPage(c *gin.Context) {
 	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(portalHTML))
@@ -479,8 +532,19 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
 .ep:hover{background:var(--hover)}
 .ep.playing{background:rgba(37,99,235,.12)}
 .ep .p2{color:var(--dim);margin-left:auto;font-size:11px}
-#player{width:100%;background:#000;aspect-ratio:16/9;display:none}
+#player{width:100%;background:#000;aspect-ratio:16/9;display:none;position:relative}
 #player video{width:100%;height:100%}
+#pbar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:10px;padding:8px 14px;background:linear-gradient(transparent,rgba(0,0,0,.8));transition:opacity .2s}
+#pbar.hide{opacity:0;pointer-events:none}
+#pbar button{background:none;border:none;color:#fff;font-size:13px;cursor:pointer;padding:4px 6px}
+.pt{color:#fff;font-size:12px;flex:none;width:96px}
+#seek{flex:1;height:4px;background:rgba(255,255,255,.25);border-radius:2px;cursor:pointer;position:relative}
+#seekcur{position:absolute;left:0;top:0;bottom:0;background:var(--acc);border-radius:2px;width:0}
+#seekcur i{position:absolute;right:-5px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;background:var(--acc)}
+#pmenu{position:absolute;right:14px;bottom:52px;background:rgba(15,18,24,.95);border-radius:10px;padding:6px;display:none;z-index:5;max-height:220px;overflow-y:auto}
+#pmenu div{color:#cbd5e1;font-size:13px;padding:6px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}
+#pmenu div:hover{background:rgba(255,255,255,.1)}
+#pmenu div.on{color:var(--acc);font-weight:600}
 .warn{padding:10px 24px;color:#d97706;font-size:12px;display:none}
 .fail{padding:14px 24px;font-size:13px;color:var(--dim);display:none;line-height:2}
 .fail input{width:70%;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;color:var(--text);font-size:12px}
@@ -506,7 +570,19 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
 <div id="mask" onclick="if(event.target===this)closeDetail()">
   <div id="modal">
     <span class="close" onclick="closeDetail()">✕</span>
-    <div id="player"><video id="video" controls playsinline></video></div>
+    <div id="player">
+      <video id="video" playsinline></video>
+      <div id="pbar">
+        <button id="pp" onclick="pp()">▶</button>
+        <span id="ptime" class="pt">00:00 / 00:00</span>
+        <div id="seek" onclick="seekTo(event)"><div id="seekbuf"></div><div id="seekcur"><i></i></div></div>
+        <button class="pb" id="spd" onclick="spdMenu()">倍速 1x</button>
+        <button class="pb" id="sub" onclick="subMenu()" style="display:none">字幕</button>
+        <button class="pb" onclick="voltoggle()">🔊</button>
+        <button class="pb" onclick="toggleFS()">全屏</button>
+      </div>
+      <div id="pmenu"></div>
+    </div>
     <div class="warn" id="warn">⚠ 浏览器仅支持直出 MP4/WebM（H.264）；MKV/H.265 大概率无法播放，属浏览器限制。可复制直链用 PotPlayer/VLC/nPlayer 打开。</div>
     <div class="fail" id="fail">播放失败：浏览器不支持该视频格式。<br>直链：<input id="faillink" readonly><button class="ghost" onclick="copyFailLink()">复制链接</button> <span id="copyok" style="color:#16a34a"></span><br>推荐用该链接配合本地播放器（PotPlayer/VLC/nPlayer/Infuse）观看，或在 Emby 客户端播放（支持转码）。</div>
     <div class="dhead">
@@ -637,9 +713,10 @@ async function renderSearch(){
 }
 
 /* ---------- 详情与播放 ---------- */
+let curDetail=null;
 async function openDetail(key){
   const d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json();
-  curMedia=d.media;curFiles=d.files||[];curKey=key;
+  curMedia=d.media;curFiles=d.files||[];curKey=key;curDetail=d;
   $('d-poster').src=curMedia.poster_path?('/poster'+curMedia.poster_path):'';
   $('d-title').textContent=curMedia.title+(curMedia.year?'（'+curMedia.year+'）':'');
   $('d-meta').textContent=(curMedia.media_type==='tv'?'剧集':'电影')+(curMedia.category?' · '+curMedia.category:'');
@@ -657,7 +734,7 @@ async function openDetail(key){
   $('player').style.display='none';$('warn').style.display='none';$('fail').style.display='none';
   $('mask').style.display='flex'
 }
-function closeDetail(){saveProgress(true);$('mask').style.display='none';const v=$('video');v.pause();v.removeAttribute('src');v.load()}
+function closeDetail(){saveProgress(true);$('mask').style.display='none';const v=$('video');v.pause();v.removeAttribute('src');v.load();$('pp').textContent='▶'}
 function playIdx(i,resumePct){
   const f=curFiles[i];if(!f){alert('该条目暂无视频文件');return}
   saveProgress(true);
@@ -667,14 +744,118 @@ function playIdx(i,resumePct){
   v.src=f.url;curFileUrl=f.url;
   v.onerror=()=>{$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(resumePct>0&&v.duration)v.currentTime=v.duration*resumePct/100};
-  v.play().catch(()=>{});
+  v.play().then(()=>{$('pp').textContent='⏸'}).catch(()=>{});
   $('player').style.display='block';$('warn').style.display='';$('fail').style.display='none';
   $('player').scrollIntoView({behavior:'smooth'});
-  // 进度记录
+  loadSubs();
   clearInterval(progTimer);
   progTimer=setInterval(()=>saveProgress(false),5000)
 }
-let curFileIdx=0,curFileUrl='',progTimer=null;
+let curFileIdx=0,curFileUrl='',progTimer=null,curRate=1,curSubs=[],subOff=true;
+/* ---- 播放器控制 ---- */
+function pp(){const v=$('video');if(v.paused){v.play();$('pp').textContent='⏸'}else{v.pause();$('pp').textContent='▶'}}
+function seekTo(ev){const v=$('video');if(!v.duration)return;const r=$('seek').getBoundingClientRect();v.currentTime=(ev.clientX-r.left)/r.width*v.duration}
+function toggleFS(){const p=$('player');if(document.fullscreenElement)document.exitFullscreen();else p.requestFullscreen&&p.requestFullscreen()}
+function voltoggle(){const v=$('video');v.muted=!v.muted}
+/* 倍速菜单：最高 3x */
+function spdMenu(){
+  const m=$('pmenu');
+  if(m.dataset.on==='spd'){m.style.display='none';m.dataset.on='';return}
+  m.dataset.on='spd';
+  const rates=[0.5,0.75,1,1.25,1.5,2,2.5,3];
+  m.innerHTML=rates.map(r=>'<div class="'+(r===curRate?'on':'')+'" onclick="setRate('+r+')">'+r+'x'+(r===1?'（正常）':'')+'</div>').join('');
+  m.style.display='block'
+}
+function setRate(r){curRate=r;$('video').playbackRate=r;$('spd').textContent='倍速 '+r+'x';$('pmenu').style.display='none';$('pmenu').dataset.on=''}
+/* 字幕菜单：外挂字幕（srt/ass/vtt 自动转 vtt） */
+function loadSubs(){
+  subOff=true;
+  // 清旧 track
+  const v=$('video');
+  [...v.querySelectorAll('track')].forEach(t=>t.remove());
+  curSubs=(curDetail&&curDetail.subs)||[];
+  $('sub').style.display=curSubs.length?'':'none';
+}
+async function subMenu(){
+  const m=$('pmenu');
+  if(m.dataset.on==='sub'){m.style.display='none';m.dataset.on='';return}
+  m.dataset.on='sub';
+  let h='<div class="'+(subOff?'on':'')+'" onclick="setSub(-1)">关闭字幕</div>';
+  for(let i=0;i<curSubs.length;i++){
+    h+='<div class="'+(!subOff&&curSubIdx===i?'on':'')+'" onclick="setSub('+i+')">'+esc(curSubs[i].label)+'</div>'
+  }
+  if(!curSubs.length)h='<div>该视频没有外挂字幕</div>';
+  m.innerHTML=h;m.style.display='block'
+}
+let curSubIdx=-1;
+async function setSub(i){
+  const v=$('video');
+  [...v.querySelectorAll('track')].forEach(t=>t.remove());
+  if(i<0){subOff=true;curSubIdx=-1}
+  else{
+    subOff=false;curSubIdx=i;
+    try{
+      const txt=await(await fetch('/api/portal/sub?pick='+curSubs[i].pick)).text();
+      const vtt=toVTT(txt,curSubs[i].name);
+      const url=URL.createObjectURL(new Blob([vtt],{type:'text/vtt'}));
+      const t=document.createElement('track');
+      t.kind='subtitles';t.src=url;t.srclang='zh';t.default=true;
+      v.appendChild(t);
+      setTimeout(()=>{if(v.textTracks[0])v.textTracks[0].mode='showing'},50)
+    }catch(e){alert('字幕加载失败：'+e.message)}
+  }
+  $('pmenu').style.display='none';$('pmenu').dataset.on=''
+}
+/* srt/ass → vtt */
+function toVTT(txt,name){
+  if(/\.vtt$/i.test(name))return txt;
+  if(/\.ass$|\.ssa$/i.test(name)){
+    let out=['WEBVTT\n'];
+    const lines=txt.split(/\r?\n/);
+    for(const ln of lines){
+      if(ln.indexOf('Dialogue:')!==0)continue;
+      const parts=ln.substring(9).split(',');
+      if(parts.length<10)continue;
+      const t1=assT(parts[1]),t2=assT(parts[2]),text=parts.slice(9).join(',').replace(/\{[^}]*\}/g,'').replace(/\\N/g,'\\n');
+      if(text.trim())out.push(t1+' --> '+t2+'\n'+text+'\n')
+    }
+    return out.join('\n')
+  }
+  // srt
+  return 'WEBVTT\n\n'+txt.replace(/\r+/g,'').replace(/^(\d+)\n/gm,'').replace(/,/g,'.')
+}
+function assT(t){
+  // 0:00:01.50 → 00:00:01.500
+  const m=t.trim().split(':');
+  const sec=m[2].split('.');
+  return m[0].padStart(2,'0')+':'+m[1]+':'+sec[0].padStart(2,'0')+'.'+(sec[1]||'0').padEnd(3,'0')
+}
+/* 快捷键：空格播放暂停、←→ 快退快进、↑↓ 音量、+/- 倍速 */
+document.addEventListener('keydown',e=>{
+  if($('mask').style.display!=='flex')return;
+  if(e.target.tagName==='INPUT')return;
+  const v=$('video');if(!v.src)return;
+  if(e.code==='Space'){e.preventDefault();pp()}
+  else if(e.key==='ArrowLeft'){v.currentTime-=5}
+  else if(e.key==='ArrowRight'){v.currentTime+=5}
+  else if(e.key==='ArrowUp'){v.volume=Math.min(1,v.volume+.1)}
+  else if(e.key==='ArrowDown'){v.volume=Math.max(0,v.volume-.1)}
+  else if(e.key==='+'||e.key==='='){const rs=[0.5,0.75,1,1.25,1.5,2,2.5,3];const i=rs.indexOf(curRate);if(i<rs.length-1)setRate(rs[i+1])}
+  else if(e.key==='-'){const rs=[0.5,0.75,1,1.25,1.5,2,2.5,3];const i=rs.indexOf(curRate);if(i>0)setRate(rs[i-1])}
+});
+/* 进度条 & 时间刷新 */
+setInterval(()=>{
+  const v=$('video');if(!v.src||!v.duration)return;
+  const c=v.currentTime/v.duration*100;
+  $('seekcur').style.width=c+'%';
+  $('ptime').textContent=fmtT(v.currentTime)+' / '+fmtT(v.duration)
+},500);
+function fmtT(s){s=Math.floor(s);const m=Math.floor(s/60),ss=s%60;const h=Math.floor(m/60);return (h?h+':':'')+String(h?m%60:m).padStart(2,'0')+':'+String(ss).padStart(2,'0')}
+/* 控制条自动隐藏 */
+(function(){let t;const pb=$('pbar');const pl=$('player');
+ ['mousemove','touchstart'].forEach(ev=>pl.addEventListener(ev,()=>{pb.classList.remove('hide');clearTimeout(t);t=setTimeout(()=>{if(!$('video').paused)pb.classList.add('hide')},2600)}, {passive:true}));
+ pl.addEventListener('mouseleave',()=>{if(!$('video').paused)pb.classList.add('hide')});
+})();
 function saveProgress(final){
   if(!curKey||!curFileUrl)return;
   const v=$('video');if(!v.duration)return;
