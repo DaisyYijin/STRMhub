@@ -166,6 +166,9 @@ func main() {
 	// 启动观影门户（6666：海报墙 + 网页播放）
 	go api.StartPortal(cfg)
 
+	// 企微聊天底栏菜单默认自动生成（自动整理 / 增量同步）
+	go api.WecomMenuAutoEnsure()
+
 	log.Printf("StrmHub 管理后台: http://localhost:%d", cfg.Port)
 	if err := r.Run(":" + cfg.PortStr()); err != nil {
 		log.Fatalf("启动失败: %v", err)

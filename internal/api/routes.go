@@ -212,7 +212,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 消息通知
 		protected.POST("/message/test", h.TestMessage)
-		protected.POST("/message/wecom-menu", h.WecomMenuSetup)
 
 		// 归档同步
 		protected.GET("/sync/tasks", h.ListSyncTasks)
@@ -1379,7 +1378,8 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 	if req.Key == "emby" {
 		UpdateEmbyConfig(req.Value)
 	}
-	// 消息配置保存后自动生成企微聊天底栏菜单（配置齐全才尝试，失败只记日志不打断保存）
+	// 消息配置保存后重新生成企微聊天底栏菜单（启动时也会自动生成；
+	// 覆盖式创建，配置齐全才尝试，失败只记日志不打断保存）
 	if req.Key == "message" {
 		go func() {
 			cfg, err := loadMessageConfig()
@@ -1390,9 +1390,9 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 				return
 			}
 			if err := wecomMenuCreate(cfg.Wecom); err != nil {
-				log.Printf("[企微菜单] ○ 自动生成失败（可稍后在消息配置页点「生成菜单」重试）: %v", err)
+				log.Printf("[企微菜单] ○ 保存后生成失败（下次启动会自动重试）: %v", err)
 			} else {
-				log.Printf("[企微菜单] ✓ 底栏菜单已生成（状态/整理/更多）")
+				log.Printf("[企微菜单] ✓ 底栏菜单已生成（自动整理 / 增量同步）")
 			}
 		}()
 	}

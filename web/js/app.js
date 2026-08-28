@@ -1501,25 +1501,6 @@ async function testMessage(btn) {
   }
 }
 
-// 生成企业微信聊天底栏菜单（状态/整理/更多；失败常见原因：配置未保存或 Secret 错误）
-async function wecomMenuSetup(btn) {
-  const result = btn ? btn.closest('.control')?.querySelector('.test-result') : null;
-  btn.disabled = true;
-  btn.textContent = '生成中...';
-  if (result) { result.textContent = ''; result.style.color = ''; }
-  try {
-    const data = await api('/message/wecom-menu', { method: 'POST' });
-    result.textContent = '✓ ' + (data.message || '菜单已生成');
-    result.style.color = 'var(--success)';
-  } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--danger)';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '生成菜单';
-  }
-}
-
 // ==================== 整理 ====================
 async function startOrganize() {
   const btn = event?.target;
@@ -1617,7 +1598,7 @@ function collectConfig(key) {
   }
   if (key === 'message') {
     return {
-      wecom: { corp_id: val('msg-wecom-corp-id'), secret: val('msg-wecom-secret'), agent_id: val('msg-wecom-agent-id'), api_url: val('msg-wecom-api-url'), token: val('msg-wecom-token'), encoding_aes_key: val('msg-wecom-aes-key'), portal_url: val('msg-wecom-portal-url'), enabled: msgWecomEnabled },
+      wecom: { corp_id: val('msg-wecom-corp-id'), secret: val('msg-wecom-secret'), agent_id: val('msg-wecom-agent-id'), api_url: val('msg-wecom-api-url'), token: val('msg-wecom-token'), encoding_aes_key: val('msg-wecom-aes-key'), enabled: msgWecomEnabled },
       tg: { token: val('msg-tg-token'), chat_id: val('msg-tg-chat-id'), enabled: msgTgEnabled },
     };
   }
@@ -1712,7 +1693,6 @@ function applyConfig(key, v) {
       setVal('msg-wecom-api-url', v.wecom.api_url || 'https://qyapi.weixin.qq.com');
       setVal('msg-wecom-token', v.wecom.token);
       setVal('msg-wecom-aes-key', v.wecom.encoding_aes_key);
-      setVal('msg-wecom-portal-url', v.wecom.portal_url || '');
       setMsgEnabled('wecom', v.wecom.enabled === true || v.wecom.enabled === 'true');
     }
     if (v.tg) {

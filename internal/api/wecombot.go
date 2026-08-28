@@ -127,34 +127,20 @@ func (h *Handler) WecomCallback(c *gin.Context) {
 
 // wecomMenuCreate 创建应用聊天底栏菜单（企业微信自建应用的「自定义菜单」；
 // 不创建则聊天框底部只有输入框，没有任何快捷按钮）。幂等：重复调用覆盖旧菜单。
+// 菜单项：自动整理 / 增量同步 —— click 事件的 key 走既有指令路由。
 func wecomMenuCreate(cfg WecomConfig) error {
 	if !cfg.isEnabled() || cfg.CorpID == "" || cfg.Secret == "" || cfg.AgentID == "" {
 		return fmt.Errorf("企业微信配置不完整（CorpID/Secret/AgentID）")
 	}
 	type btn struct {
-		Type   string `json:"type,omitempty"`
-		Name   string `json:"name"`
-		Key    string `json:"key,omitempty"`
-		URL    string `json:"url,omitempty"`
-		SubBtn []btn  `json:"sub_button,omitempty"`
+		Type string `json:"type"`
+		Name string `json:"name"`
+		Key  string `json:"key"`
 	}
-	more := []btn{}
-	if u := strings.TrimSpace(cfg.PortalURL); u != "" {
-		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
-			u = "http://" + u
-		}
-		more = append(more, btn{Type: "view", Name: "📺 观影门户", URL: u})
-	}
-	more = append(more,
-		btn{Type: "click", Name: "⏳ 同步", Key: "同步"},
-		btn{Type: "click", Name: "🎯 补全", Key: "补全"},
-		btn{Type: "click", Name: "❓ 帮助", Key: "帮助"},
-	)
 	menu := map[string]interface{}{
 		"button": []btn{
-			{Type: "click", Name: "📊 状态", Key: "状态"},
-			{Type: "click", Name: "🔄 整理", Key: "整理"},
-			{Name: "更多", SubBtn: more},
+			{Type: "click", Name: "自动整理", Key: "整理"},
+			{Type: "click", Name: "增量同步", Key: "同步"},
 		},
 	}
 	payload, _ := json.Marshal(menu)
@@ -189,18 +175,19 @@ func wecomMenuCreate(cfg WecomConfig) error {
 	return nil
 }
 
-// WecomMenuSetup 手动（重新）生成聊天底栏菜单。POST /message/wecom-menu
-func (h *Handler) WecomMenuSetup(c *gin.Context) {
+// WecomMenuAutoEnsure 启动时自动生成聊天底栏菜单（默认就生成，无需手动操作；
+// 未启用企微或配置不全时静默跳过，稍后保存消息配置时也会重新生成）
+func WecomMenuAutoEnsure() {
+	time.Sleep(15 * time.Second) // 等网络/数据库就绪
 	cfg, err := loadMessageConfig()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err != nil || !cfg.Wecom.isEnabled() || cfg.Wecom.CorpID == "" || cfg.Wecom.AgentID == "" {
 		return
 	}
 	if err := wecomMenuCreate(cfg.Wecom); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "菜单创建失败: " + err.Error()})
-		return
+		log.Printf("[企微菜单] ○ 启动自动生成失败（保存消息配置时会重试）: %v", err)
+	} else {
+		log.Printf("[企微菜单] ✓ 底栏菜单已生成（自动整理 / 增量同步）")
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "菜单已生成，回到企业微信聊天框即可看到底部按钮（若无请退出会话重进）"})
 }
 
 // wecomHandleCommand 指令路由（异步执行，结果用应用消息推回）
