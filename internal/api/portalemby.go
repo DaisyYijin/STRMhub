@@ -100,10 +100,10 @@ func portalEmbyPlay(c *gin.Context) {
 	}
 	body, err := embyGet("/Items", map[string]string{
 		"SearchTerm": title, "IncludeItemTypes": types, "Limit": "8",
-		"Recursive": "true", "UserId": "1",
+		"Recursive": "true",
 		"Fields": "Path,ProductionYear",
 	})
-	log.Printf("[门户Emby] 搜索 %q(%s) 响应: %s", title, types, truncateStr(string(body), 200))
+	log.Printf("[门户Emby] 搜索 %q(%s) 响应: %s", title, types, truncateStr(string(body), 300))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"found": false, "reason": "Emby 搜索失败: " + err.Error()})
 		return
@@ -121,7 +121,7 @@ func portalEmbyPlay(c *gin.Context) {
 		// SearchTerm 未命中：用 NameStartsWith 再试（部分 Emby 版本对中文 SearchTerm 支持差）
 		body2, err2 := embyGet("/Items", map[string]string{
 			"NameStartsWith": title, "IncludeItemTypes": types, "Limit": "8",
-			"Recursive": "true", "UserId": "1",
+			"Recursive": "true",
 			"Fields": "Path,ProductionYear",
 		})
 		if err2 == nil {

@@ -856,7 +856,7 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   v.playbackRate=curRate;
   v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];dbgStage('错误',performance.now()-t0,E[v.error.code]||('code '+v.error.code));$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
-  v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(()=>{});
+  v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(e=>{if(e&&e.name!=='AbortError')console.warn('play:',e.name)});
   v.onplay=()=>{$('pp').innerHTML=SVGNS.pause};
   v.onpause=()=>{$('pp').innerHTML=SVGNS.play};
   subOff=true;curSubIdx=-1;
