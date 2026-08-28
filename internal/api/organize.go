@@ -282,7 +282,10 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 	}
 
 	// 补全入队在改名判断之前（文件不需要改名时同样需要探测补全）
-	if policy := loadEnrichPolicy(); policy.Enabled {
+	policy := loadEnrichPolicy()
+	log.Printf("[补全] 策略: enabled=%v mode=%s missing=%s（若 false 请到自动整理→基础配置→媒体补全开启）",
+		policy.Enabled, policy.Mode, policy.Missing)
+	if policy.Enabled {
 		for _, vf := range videoFiles {
 			if n, _ := videoNewName(vf); n != "" && enrichNeedsProbe(n) {
 				enrichQueueTask(vf)
