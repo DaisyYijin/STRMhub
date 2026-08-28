@@ -246,11 +246,13 @@ func (h *Handler) enrichProcessOne() {
 // enrichQueueTask 入队（整理识别成功但缺画质信息时调用；同文件不重复入队）
 func enrichQueueTask(f remoteFile) {
 	if model.DB == nil || f.Fid == "" || f.PickCode == "" {
+		log.Printf("[补全] ○ 跳过入队（fid=%q pick=%q 无效）", f.Fid, f.PickCode)
 		return
 	}
 	var exist model.MediaEnrich
 	if err := model.DB.Where("file_id = ? AND status IN ?", f.Fid,
 		[]string{"pending", "done"}).First(&exist).Error; err == nil {
+		log.Printf("[补全] ○ 已在队列（%s status=%s）", exist.FileName, exist.Status)
 		return // 已在队列或已完成
 	}
 	model.DB.Create(&model.MediaEnrich{
