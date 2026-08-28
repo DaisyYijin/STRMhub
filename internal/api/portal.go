@@ -765,16 +765,16 @@ async function renderPlay(key,idx,pct){
       '<video id="video" playsinline></video>'+
       '<div id="pmenu"></div>'+
       '<div id="pbar">'+
-        '<button class="ib" id="pp" onclick="pp()" title="空格">播放</button>'+
-        '<button class="ib" onclick="seekBy(-10)" title="←">快退</button>'+
-        '<button class="ib" onclick="seekBy(10)" title="→">快进</button>'+
+        '<button class="ib" id="pp" onclick="pp()" title="空格 播放/暂停">'+svgPlay()+'</button>'+
+        '<button class="ib" onclick="seekBy(-10)" title="← 快退10秒">'+svgRew()+'</button>'+
+        '<button class="ib" onclick="seekBy(10)" title="→ 快进10秒">'+svgFwd()+'</button>'+
         '<span class="pt" id="ptime">00:00 / 00:00</span>'+
         '<div id="seek" onclick="seekTo(event)"><div id="seekcur"><i></i></div></div>'+
         '<button class="ib" id="spd" onclick="spdMenu()">倍速 1x</button>'+
         '<button class="ib" id="sub" onclick="subMenu()">字幕</button>'+
         '<button class="ib" onclick="audMenu()">音轨</button>'+
-        '<button class="ib" onclick="voltoggle()" title="↑↓">音量</button>'+
-        '<button class="ib" onclick="toggleFS()">全屏</button>'+
+        '<button class="ib" onclick="voltoggle()" title="↑↓ 静音">'+svgVol()+'</button>'+
+        '<button class="ib" onclick="toggleFS()" title="全屏">'+svgFS()+'</button>'+
       '</div>'+
     '</div>'+
     '<div class="ptitle">'+esc(curMedia?curMedia.title:'')+(curMedia&&curMedia.year?'（'+curMedia.year+'）':'')+'</div>'+
@@ -822,9 +822,9 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   v.playbackRate=curRate;
   v.onerror=()=>{$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
-  v.play().then(()=>{$('pp').textContent='暂停'}).catch(()=>{});
-  v.onplay=()=>{$('pp').textContent='暂停'};
-  v.onpause=()=>{$('pp').textContent='播放'};
+  v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(()=>{});
+  v.onplay=()=>{$('pp').innerHTML=SVGNS.pause};
+  v.onpause=()=>{$('pp').innerHTML=SVGNS.play};
   subOff=true;curSubIdx=-1;
   [...v.querySelectorAll('track')].forEach(t=>t.remove());
   clearInterval(progTimer);progTimer=setInterval(()=>saveProgress(false),5000);
@@ -873,6 +873,20 @@ function saveProgress(final){
   setProg(curKey+'#'+curFileIdx,{key:curKey,fileIdx:curFileIdx,title:curMedia?curMedia.title:'',epName:(curFiles[curFileIdx]||{}).name||'',poster:curMedia?curMedia.poster_path:'',pct:pct,ts:Date.now()});
   if(final)clearInterval(progTimer)
 }
+/* 扁平线性 SVG 图标（16px，描边风格） */
+const SVGNS={
+play:'<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>',
+pause:'<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><rect x="3.5" y="2.5" width="3" height="11" rx="1"/><rect x="9.5" y="2.5" width="3" height="11" rx="1"/></svg>',
+rew:'<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8.5 3.5 4 8l4.5 4.5M13 3.5 8.5 8l4.5 4.5"/></svg>',
+fwd:'<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7.5 3.5 12 8l-4.5 4.5M3 3.5 7.5 8 3 12.5"/></svg>',
+vol:'<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 6v4h2.5L8.5 13V3L5 6z"/><path d="M10.5 5.5a3.5 3.5 0 010 5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+fs:'<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 2.5H2.5V6M10 2.5h3.5V6M6 13.5H2.5V10M10 13.5h3.5V10"/></svg>'
+};
+function svgPlay(){return $('video')&&!$('video').paused?SVGNS.pause:SVGNS.play}
+function svgRew(){return SVGNS.rew}
+function svgFwd(){return SVGNS.fwd}
+function svgVol(){return SVGNS.vol}
+function svgFS(){return SVGNS.fs}
 function pp(){const v=$('video');if(v.paused){v.play()}else{v.pause()}}
 function seekBy(d){const v=$('video');v.currentTime=Math.max(0,v.currentTime+d)}
 function seekTo(ev){const v=$('video');if(!v.duration)return;const r=$('seek').getBoundingClientRect();v.currentTime=(ev.clientX-r.left)/r.width*v.duration}

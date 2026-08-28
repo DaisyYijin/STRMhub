@@ -101,13 +101,14 @@ func portalProbe(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "服务端未安装 ffmpeg，无法识别内嵌轨道"})
 		return
 	}
-	urlStr, ua, err := portalPickURL(c, pick)
+	urlStr, headers, err := portalPickURL(c, pick)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "获取直链失败: " + err.Error()})
 		return
 	}
-	args := []string{"-hide_banner", "-loglevel", "error", "-user_agent", ua,
-		"-print_format", "json", "-show_streams", "-analyzeduration", "20M", urlStr}
+	args := append([]string{"-hide_banner", "-loglevel", "error"},
+		append(ffmpegHeaderArgs(headers),
+			"-print_format", "json", "-show_streams", "-analyzeduration", "20M", urlStr)...)
 	out, err := exec.Command("ffprobe", args...).CombinedOutput()
 	if err != nil {
 		// 兼容：ffprobe 可能也在 /usr/bin
@@ -161,11 +162,34 @@ func portalProbe(c *gin.Context) {
 	c.JSON(http.StatusOK, pr)
 }
 
-// portalPickURL pick_code → 115 直链（带签发 UA）
-func portalPickURL(c *gin.Context, pick string) (urlStr, ua string, err error) {
-	ua = c.Request.UserAgent()
-	urlStr, err = proxyDownloadURL(model.DB, portalCfg, pick, ua)
+// portalPickURL pick_code → 115 直链 + 必需请求头（直链与签发 UA 绑定，
+// ffmpeg 服务端拉流必须按签发时的 UA/Referer 请求，否则 115 拒绝 → 无声失败）
+func portalPickURL(c *gin.Context, pick string) (urlStr string, headers map[string]string, err error) {
+	ua := c.Request.UserAgent()
+	urlStr, headers, err = proxyDownloadURLFull(model.DB, portalCfg, pick, ua)
+	if headers == nil {
+		headers = map[string]string{"User-Agent": ua}
+	}
+	if _, ok := headers["User-Agent"]; !ok {
+		headers["User-Agent"] = ua
+	}
 	return
+}
+
+// ffmpegHeaderArgs 把必需头转成 ffmpeg/ffprobe 参数（-user_agent + -headers）
+func ffmpegHeaderArgs(headers map[string]string) []string {
+	args := []string{"-user_agent", headers["User-Agent"]}
+	others := []string{}
+	for k, v := range headers {
+		if k == "User-Agent" {
+			continue
+		}
+		others = append(others, k+": "+v)
+	}
+	if len(others) > 0 {
+		args = append(args, "-headers", strings.Join(others, "\r\n")+"\r\n")
+	}
+	return args
 }
 
 // portalHLS 启动/复用转封装会话；?pick=&a=<音轨序号>；返回 sid
@@ -193,7 +217,7 @@ func portalHLS(c *gin.Context) {
 		fmt.Sscanf(c.Query("a"), "%d", &audioRel)
 	}
 
-	urlStr, ua, err := portalPickURL(c, pick)
+	urlStr, headers, err := portalPickURL(c, pick)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "获取直链失败: " + err.Error()})
 		return
@@ -220,19 +244,17 @@ func portalHLS(c *gin.Context) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// ffmpeg：-c copy 无损转封装 HLS（MKV→TS）。字幕轨不进 HLS（单独提取）。
-	segArgs := []string{
-		"-hide_banner", "-loglevel", "error",
-		"-user_agent", ua,
-		"-i", urlStr,
-		"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioRel),
-		"-c", "copy",
-		"-f", "hls",
-		"-hls_time", "8",
-		"-hls_list_size", "0",
-		"-hls_flags", "append_list+omit_endlist",
-		"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
-		filepath.Join(dir, "index.m3u8"),
-	}
+	segArgs := append([]string{"-hide_banner", "-loglevel", "error"},
+		append(ffmpegHeaderArgs(headers),
+			"-i", urlStr,
+			"-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioRel),
+			"-c", "copy",
+			"-f", "hls",
+			"-hls_time", "8",
+			"-hls_list_size", "0",
+			"-hls_flags", "append_list+omit_endlist",
+			"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
+			filepath.Join(dir, "index.m3u8"))...)
 	cmd := exec.CommandContext(ctx, ffmpegBinOrPath(), segArgs...)
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -319,19 +341,17 @@ func portalExtractSub(c *gin.Context) {
 		c.String(http.StatusServiceUnavailable, "服务端未安装 ffmpeg")
 		return
 	}
-	urlStr, ua, err := portalPickURL(c, pick)
+	urlStr, headers, err := portalPickURL(c, pick)
 	if err != nil {
 		c.String(http.StatusBadGateway, "获取直链失败")
 		return
 	}
-	cmd := exec.Command(ffmpegBinOrPath(),
-		"-hide_banner", "-loglevel", "error",
-		"-user_agent", ua,
-		"-i", urlStr,
+	cmdArgs := append([]string{"-hide_banner", "-loglevel", "error"},
+		append(append(ffmpegHeaderArgs(headers), "-i", urlStr),
 		"-map", fmt.Sprintf("0:s:%d", rel),
 		"-c:s", "webvtt",
-		"-f", "webvtt", "pipe:1")
-	out, err := cmd.Output()
+		"-f", "webvtt", "pipe:1")...)
+	out, err := exec.Command(ffmpegBinOrPath(), cmdArgs...).Output()
 	if err != nil {
 		c.String(http.StatusBadGateway, "字幕提取失败（该字幕轨编码可能是图片格式 PGS/VobSub，无法转文本）")
 		return
