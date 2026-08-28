@@ -8,7 +8,7 @@ import (
 type Config struct {
 	Port       int    // 管理后台端口
 	ProxyPort  int    // 302代理端口
-	PortalPort int    // 观影门户端口（海报墙 + 网页播放）
+	PortalPort int    // 观影门户端口（6688；6665-6669 在浏览器不安全端口黑名单内不可用）
 	DataDir    string // 数据目录
 	ConfigDir  string // 配置目录
 	JWTSecret  string // JWT密钥
@@ -17,7 +17,7 @@ type Config struct {
 func Load() *Config {
 	port := getEnvInt("PORT", 6060)
 	proxyPort := getEnvInt("PROXY_PORT", 6086)
-	portalPort := getEnvInt("PORTAL_PORT", 6666)
+	portalPort := getEnvInt("PORTAL_PORT", 6688)
 	return &Config{
 		Port:       port,
 		ProxyPort:  proxyPort,
