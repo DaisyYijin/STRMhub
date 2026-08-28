@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"regexp"
 	"strings"
 	"time"
@@ -40,12 +41,12 @@ func dockerHTTPClient(timeout time.Duration) *http.Client {
 }
 
 // fetchLatestSHA 查询 GitHub main 最新提交（15 秒内去重防狂刷，force 时跳过；失败返回上次已知值）
-func fetchLatestSHA(force bool) string {
+func fetchLatestSHA(force bool) (sha, errText string) {
 	latestVersionCache.Lock()
 	cached, cacheAt := latestVersionCache.sha, latestVersionCache.at
 	latestVersionCache.Unlock()
 	if !force && cached != "" && time.Since(cacheAt) < 15*time.Second {
-		return cached
+		return cached, ""
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	if pu := getProxyURL(); pu != "" {
@@ -57,9 +58,22 @@ func fetchLatestSHA(force bool) string {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return cached
+		return cached, "GitHub 不可达: " + err.Error()
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		// 403: 未认证限额 60 次/小时（走代理还共享出口 IP），提示等待
+		if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
+			if ts, e := strconv.ParseInt(reset, 10, 64); e == nil {
+				wait := time.Until(time.Unix(ts, 0)).Truncate(time.Minute)
+				if wait < 0 {
+					wait = 0
+				}
+				return cached, fmt.Sprintf("GitHub API 限流，约 %s 后恢复（期间显示的是 %s 前的缓存结果）", wait, time.Since(cacheAt).Truncate(time.Second))
+			}
+		}
+		return cached, "GitHub API 限流（60 次/小时，走代理共享出口 IP 更易触发），期间显示缓存结果"
+	}
 	var out struct {
 		Sha string `json:"sha"`
 	}
@@ -67,17 +81,17 @@ func fetchLatestSHA(force bool) string {
 		latestVersionCache.Lock()
 		latestVersionCache.sha, latestVersionCache.at = out.Sha, time.Now()
 		latestVersionCache.Unlock()
-		return out.Sha
+		return out.Sha, ""
 	}
-	return cached
+	return cached, "GitHub 响应异常"
 }
 
 // VersionChanges GET /version/changes —— 当前版本与最新版本之间的提交列表（更新内容）
 func (h *Handler) VersionChanges(c *gin.Context) {
 	current := buildVersion
-	latest := fetchLatestSHA(true)
+	latest, ferr := fetchLatestSHA(true)
 	if current == "dev" || latest == "" || strings.HasPrefix(latest, current[:7]) {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil,
+		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": ferr,
 			"uptodate": current != "dev" && latest != "" && strings.HasPrefix(latest, current[:7])})
 		return
 	}
@@ -139,7 +153,10 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "未挂载 Docker socket，无法自更新。\n配置方法：在 docker-compose.yml 的 strmhub 服务 volumes 中加一行 /var/run/docker.sock:/var/run/docker.sock，然后 docker compose up -d 重建一次，之后即可在界面内一键更新"})
 		return
 	}
-	latest := fetchLatestSHA(true)
+	latest, ferr := fetchLatestSHA(true)
+	if ferr != "" {
+		log.Printf("[自更新] ○ 获取最新版本失败: %s", ferr)
+	}
 	if latest == "" {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "无法获取最新版本（GitHub 不可达，可在系统配置代理卡配置代理），稍后再试"})
 		return

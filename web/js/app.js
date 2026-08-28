@@ -2309,9 +2309,18 @@ async function openUpdateModal() {
   const btn = document.getElementById('update-apply-btn');
   mask.style.display = '';
   body.textContent = '获取更新内容中...';
-  btn.disabled = false; btn.textContent = '立即更新';
+  btn.disabled = false; btn.textContent = '立即更新'; btn.style.display = '';
   try {
     const d = await api('/version/changes');
+    // 已是最新：明确告知而不是"发现新版本 vX（当前 vX）"
+    if (d.uptodate) {
+      document.getElementById('update-modal-title').textContent = '已是最新版本';
+      body.innerHTML = '<p>✓ 当前 v' + String(d.current || '').slice(0, 7) + ' 已是最新。' +
+        (d.error ? '<br><span style="font-size:12px;color:var(--warning)">' + escHtml(d.error) + '</span>' : '') + '</p>';
+      document.getElementById('update-apply-btn').style.display = 'none';
+      return;
+    }
+    document.getElementById('update-apply-btn').style.display = '';
     document.getElementById('update-modal-title').textContent =
       '发现新版本 v' + String(d.latest || '').slice(0, 7) + '（当前 v' + String(d.current || '').slice(0, 7) + '）';
     if (!d.commits || !d.commits.length) {

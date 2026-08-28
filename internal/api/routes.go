@@ -46,7 +46,8 @@ var latestVersionCache struct {
 
 // LatestVersion GET /version/latest —— 查询 GitHub main 分支最新提交（前端刷新时比对是否有新版本）
 func (h *Handler) LatestVersion(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"latest": fetchLatestSHA(false)})
+	latest, _ := fetchLatestSHA(false)
+	c.JSON(http.StatusOK, gin.H{"latest": latest})
 }
 
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
