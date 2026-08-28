@@ -968,12 +968,20 @@ func collectDirFiles(ops *pan115Ops, cid, basePath string) ([]remoteFile, error)
 				if sha1 == "<nil>" {
 					sha1 = ""
 				}
+				pickCode := fmt.Sprint(d["pc"])
+				if pickCode == "<nil>" || pickCode == "" {
+					pickCode = fmt.Sprint(d["pickcode"])
+				}
+				if pickCode == "<nil>" {
+					pickCode = ""
+				}
 				files = append(files, remoteFile{
-					Fid:  fmt.Sprint(d["fid"]),
-					Name: name,
-					Path: basePath,
-					Size: size,
-					Sha1: sha1,
+					Fid:      fmt.Sprint(d["fid"]),
+					Name:     name,
+					Path:     basePath,
+					Size:     size,
+					Sha1:     sha1,
+					PickCode: pickCode,
 				})
 			}
 		}
