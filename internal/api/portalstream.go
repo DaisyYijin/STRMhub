@@ -206,7 +206,7 @@ func portalHLS(c *gin.Context) {
 			if ss.audioRel == audioRel {
 				ss.lastHit = time.Now()
 				hlsSessionsMu.Unlock()
-				c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls?sid=" + sid})
+				c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
 				return
 			}
 		}
@@ -249,7 +249,8 @@ func portalHLS(c *gin.Context) {
 		cmd.Wait()
 		close(ss.m3u8Ready)
 	}()
-	c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls?sid=" + sid})
+	// 路径式地址：m3u8 内分片是相对路径，基于此 URL 解析自然带上 sid
+	c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
 }
 
 func ffmpegBinOrPath() string {
@@ -259,9 +260,13 @@ func ffmpegBinOrPath() string {
 	return "ffmpeg"
 }
 
-// portalHLSServe 提供会话的 m3u8 与分片
+// portalHLSServe 提供会话的 m3u8 与分片：/api/portal/hls/{sid}/{file}
+// m3u8 里的分片是相对路径，基于路径式 URL 解析自动带上 sid。
 func portalHLSServe(c *gin.Context) {
-	sid := c.Query("sid")
+	sid := c.Param("sid")
+	if sid == "" {
+		sid = c.Query("sid")
+	}
 	f := strings.TrimPrefix(c.Param("file"), "/")
 	if f == "" {
 		f = "index.m3u8"
@@ -278,44 +283,26 @@ func portalHLSServe(c *gin.Context) {
 		return
 	}
 	full := filepath.Join(ss.dir, f)
-	if f == "index.m3u8" {
-		// 等 m3u8 生成（最多 20 秒）
-		select {
-		case <-ss.m3u8Ready:
-			c.String(http.StatusGone, "转封装已结束")
-			return
-		case <-time.After(20 * time.Second):
-			c.String(http.StatusGatewayTimeout, "转封装超时")
-			return
-		default:
-		}
-		for i := 0; i < 100; i++ {
-			if _, err := os.Stat(full); err == nil {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		c.Header("Cache-Control", "no-store")
-		c.File(full)
-		return
-	}
+	// 边转边播：文件未生成时等待（m3u8 最多 30s、分片最多 30s）
 	if _, err := os.Stat(full); err != nil {
-		// 分片可能还没生成：等一小会（边转边播）
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(full); err == nil {
 				break
 			}
-			select {
-			case <-ss.m3u8Ready:
-				c.String(http.StatusNotFound, "分片不存在")
-				return
-			default:
-			}
 			time.Sleep(300 * time.Millisecond)
 		}
+		if _, err := os.Stat(full); err != nil {
+			c.String(http.StatusNotFound, "分片尚未生成（转封装可能失败）")
+			return
+		}
 	}
-	c.Header("Cache-Control", "no-store")
+	if f == "index.m3u8" {
+		c.Header("Cache-Control", "no-store")
+	} else {
+		// 分片内容不变，可缓存
+		c.Header("Cache-Control", "public, max-age=3600")
+	}
 	c.File(full)
 }
 

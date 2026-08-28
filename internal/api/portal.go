@@ -44,7 +44,11 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/poster/*path", portalPoster)
 	r.GET("/api/portal/sub", portalSub)
 	r.GET("/api/portal/probe", portalProbe)
+	r.GET("/api/portal/hls/:sid/*file", portalHLSServe)
 	r.GET("/api/portal/hls", portalHLSServe)
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		c.Data(http.StatusOK, "image/svg+xml", []byte("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🎬</text></svg>"))
+	})
 	r.POST("/api/portal/hls/start", portalHLS)
 	r.GET("/api/portal/estr", portalExtractSub)
 
