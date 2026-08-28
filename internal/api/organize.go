@@ -2426,6 +2426,84 @@ func episodeRangeStr(videoFiles []remoteFile) string {
 	return strings.Join(parts, " ")
 }
 
+// episodeRangeWithMissing 集数区间 + 缺集描述。
+// 缺集 = TMDB 该季总集数范围内未入库的集；无法取到总集数时只返回区间。
+func episodeRangeWithMissing(videoFiles []remoteFile, media *TmdbMedia) (string, string) {
+	rng := episodeRangeStr(videoFiles)
+	if rng == "" || media == nil || media.MediaType != "tv" || media.TmdbID == 0 {
+		return rng, ""
+	}
+	// 解析出各集（复用分组解析）
+	type epRec struct{ season, ep int }
+	var eps []epRec
+	for _, vf := range videoFiles {
+		p := parseFileName(vf.Name)
+		if p.Episode > 0 {
+			s := p.Season
+			if s == 0 {
+				s = 1
+			}
+			if media.SeasonNum > 0 {
+				s = media.SeasonNum
+			}
+			eps = append(eps, epRec{s, p.Episode})
+		}
+	}
+	if len(eps) == 0 {
+		return rng, ""
+	}
+	season := eps[0].season
+	total := 0
+	if tc, err := loadTmdbClient(nil); err == nil {
+		total = tc.SeasonEpisodeCount(media.TmdbID, season)
+	}
+	if total <= 0 {
+		return rng, ""
+	}
+	have := map[int]bool{}
+	maxEp := 0
+	for _, e := range eps {
+		have[e.ep] = true
+		if e.ep > maxEp {
+			maxEp = e.ep
+		}
+	}
+	// 缺集 = 1..total 中没有的
+	var missing []int
+	for i := 1; i <= total; i++ {
+		if !have[i] {
+			missing = append(missing, i)
+		}
+	}
+	if len(missing) == 0 {
+		return rng, ""
+	}
+	// 缺集描述：合并连续段；段太多时只报数量
+	var segs [][2]int
+	start, prev := missing[0], missing[0]
+	for _, m := range missing[1:] {
+		if m == prev+1 {
+			prev = m
+			continue
+		}
+		segs = append(segs, [2]int{start, prev})
+		start, prev = m, m
+	}
+	segs = append(segs, [2]int{start, prev})
+	if len(segs) > 4 {
+		return rng, fmt.Sprintf("%d 集", len(missing))
+	}
+	parts := make([]string, 0, len(segs))
+	for _, sg := range segs {
+		if sg[0] == sg[1] {
+			parts = append(parts, fmt.Sprintf("E%02d", sg[0]))
+		} else {
+			parts = append(parts, fmt.Sprintf("E%02d-E%02d", sg[0], sg[1]))
+		}
+	}
+	return rng, strings.Join(parts, ",")
+}
+
 // notifyMediaStoredFull 入库成功富通知：TMDB 封面（企微图文卡 / TG 图片），
 // 内容含 类型/类别/质量/文件数与大小/集数区间/重命名信息
 func notifyMediaStoredFull(media *TmdbMedia, oldName, newName, category string, videoFiles []remoteFile, mainVideoName string, movedCount int, movedBytes int64) {
@@ -2456,8 +2534,12 @@ func notifyMediaStoredFull(media *TmdbMedia, oldName, newName, category string, 
 	if movedCount > 0 {
 		lines = append(lines, fmt.Sprintf("共计：%d 个文件 · %s", movedCount, humanSizeBytes(movedBytes)))
 	}
-	if ep := episodeRangeStr(videoFiles); ep != "" {
-		lines = append(lines, "集数："+ep)
+	if ep, miss := episodeRangeWithMissing(videoFiles, media); ep != "" {
+		if miss != "" {
+			lines = append(lines, "集数："+ep+"（缺 "+miss+"）")
+		} else {
+			lines = append(lines, "集数："+ep+"（全）")
+		}
 	}
 	content := strings.Join(lines, "\n")
 

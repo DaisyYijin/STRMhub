@@ -315,6 +315,24 @@ func (tc *TmdbClient) searchTVUncached(query string, year string) (*TmdbMedia, e
 	}, nil
 }
 
+// SeasonEpisodeCount 某季总集数（TMDB season 详情；失败返回 0 不影响主流程）
+func (tc *TmdbClient) SeasonEpisodeCount(tvID, season int) int {
+	if tvID <= 0 || season <= 0 {
+		return 0
+	}
+	body, err := tc.get(fmt.Sprintf("/tv/%d/season/%d", tvID, season), nil)
+	if err != nil {
+		return 0
+	}
+	var out struct {
+		Episodes []struct{} `json:"episodes"`
+	}
+	if json.Unmarshal(body, &out) != nil {
+		return 0
+	}
+	return len(out.Episodes)
+}
+
 // getTVDetails 获取电视剧详情（origin_country）
 func (tc *TmdbClient) getTVDetails(id int) ([]string, error) {
 	body, err := tc.get(fmt.Sprintf("/tv/%d", id), nil)
