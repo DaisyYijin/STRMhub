@@ -1294,24 +1294,8 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
-	// 网盘去重：主视频 SHA1 已在全量同步台账里（= 媒体库当前实际有这个文件）→ 已存在。
-	// 只查同步台账（反映库的真实状态，文件删除后台账同步清理），
-	// 不再用 SeenSha1 历史表（那是永久记忆，删了文件也不忘，导致无法重新入库）
-	if mainVideo.Sha1 != "" && sha1ExistsVerified(ops, mainVideo.Sha1) {
-		titleGuess := parseFileName(dir.Name).Title
-		if titleGuess == "" || isEpisodeOnly(titleGuess) {
-			titleGuess = parseFileName(mainVideo.Name).Title
-		}
-		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
-		} else {
-			onLog(fmt.Sprintf("○ 《%s》已存在（库内有同 SHA1 文件），跳过整理，%d 个文件整体移到已存在目录", titleGuess, len(videoFiles)))
-			}
-			for _, vf := range videoFiles {
-				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中历史记录"})
-			}
-			return results
-	}
+	// 去重方式：不再查本地台账，TMDB 识别后直接查网盘目标目录的 SHA1（checkByCloudSHA1）。
+	// 好处：永远准确（查的是网盘实时状态），无本地缓存过期问题。
 
 	// 应用替换规则
 	name := mainVideo.Name
