@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/gorm"
 )
@@ -996,7 +997,18 @@ func (h *Handler) SaveCategories(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	// 存储 YAML 到 ScrapeRule 表（type=category_config）
+	// 解析 YAML → CategoryRule 规则表（classifyMedia 真正读取的存储；
+	// 此前只存 YAML 文本、规则表永远是首次种子的默认值，界面编辑从未生效）
+	rows, perr := parseCategoryYAML(req.Yaml)
+	if perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "YAML 解析失败: " + perr.Error()})
+		return
+	}
+	if len(rows) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未解析到 movie/tv 分类规则"})
+		return
+	}
+	// 存储 YAML 到 ScrapeRule 表（界面回显源）
 	var rule model.ScrapeRule
 	h.DB.Where("type = ?", "category_config").First(&rule)
 	rule.Type = "category_config"
@@ -1007,7 +1019,99 @@ func (h *Handler) SaveCategories(c *gin.Context) {
 	} else {
 		h.DB.Create(&rule)
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
+	// 事务重建 movie/tv 规则
+	tx := h.DB.Begin()
+	if err := tx.Where("media_type IN ?", []string{"movie", "tv"}).Delete(&model.CategoryRule{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重建规则失败: " + err.Error()})
+		return
+	}
+	if err := tx.Create(&rows).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入规则失败: " + err.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交失败: " + err.Error()})
+		return
+	}
+	movieN, tvN := 0, 0
+	for _, r := range rows {
+		if r.MediaType == "movie" {
+			movieN++
+		} else {
+			tvN++
+		}
+	}
+	log.Printf("[配置] 二级分类已生效：%d 条规则（电影 %d / 剧集 %d）", len(rows), movieN, tvN)
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("保存成功（%d 条分类规则已生效）", len(rows))})
+}
+
+// normalizeCategoryName 去掉分类名里的媒体类型前缀（电影/电视剧/剧集），
+// 避免与 mediaTypeCategory 拼路径时出现 "剧集/电视剧/xxx" 双前缀
+func normalizeCategoryName(name string) string {
+	for _, p := range []string{"电影/", "电视剧/", "剧集/", "movie/", "tv/"} {
+		if strings.HasPrefix(name, p) {
+			return strings.TrimPrefix(name, p)
+		}
+	}
+	return name
+}
+
+// parseCategoryYAML 解析二级分类 YAML 为有序规则行（movie/tv；无条件条目作为兜底）
+func parseCategoryYAML(src string) ([]model.CategoryRule, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &root); err != nil {
+		return nil, err
+	}
+	var rows []model.CategoryRule
+	if len(root.Content) == 0 {
+		return rows, nil
+	}
+	mp := root.Content[0]
+	for i := 0; i+1 < len(mp.Content); i += 2 {
+		mediaKey := mp.Content[i].Value
+		if mediaKey != "movie" && mediaKey != "tv" {
+			continue
+		}
+		val := mp.Content[i+1]
+		if val.Kind != yaml.MappingNode {
+			continue
+		}
+		prio := 0
+		for j := 0; j+1 < len(val.Content); j += 2 {
+			name := normalizeCategoryName(val.Content[j].Value)
+			if name == "" {
+				continue
+			}
+			r := model.CategoryRule{MediaType: mediaKey, Name: name}
+			fields := val.Content[j+1]
+			if fields != nil && fields.Kind == yaml.MappingNode {
+				for k := 0; k+1 < len(fields.Content); k += 2 {
+					fk, fv := fields.Content[k].Value, fields.Content[k+1].Value
+					switch fk {
+					case "genre_ids":
+						r.GenreIds = fv
+					case "original_language":
+						r.OriginalLanguage = fv
+					case "origin_country":
+						r.OriginCountry = fv
+					case "custom_regex":
+						r.CustomRegex = fv
+					case "ext":
+						r.Ext = fv
+					}
+				}
+			}
+			prio++
+			r.Priority = prio
+			if r.GenreIds == "" && r.OriginalLanguage == "" && r.OriginCountry == "" && r.CustomRegex == "" && r.Ext == "" {
+				r.IsDefault = true
+			}
+			rows = append(rows, r)
+		}
+	}
+	return rows, nil
 }
 
 // ==================== 洗版策略 ====================

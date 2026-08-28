@@ -1,11 +1,6 @@
 package api
 
-import (
-	"fmt"
-	"testing"
-
-	"strmhub/internal/model"
-)
+import "testing"
 
 // 集数区间格式化：S01E01-E12 / 多段 / 跨季 / 空
 func TestEpisodeRangeStr(t *testing.T) {
@@ -32,5 +27,4 @@ func TestEpisodeRangeStr(t *testing.T) {
 			t.Errorf("case %d: got %q want %q", i, got, c.want)
 		}
 	}
-	fmt.Sprint(model.DB)
 }
