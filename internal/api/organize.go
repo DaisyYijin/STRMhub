@@ -224,18 +224,19 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 	mediaCopy.Title = sanitizeName(mediaCopy.Title)
 	videoNewName := func(vf remoteFile) (string, bool) {
 		p := parseFileName(vf.Name)
+		var file string
 		if mediaCopy.MediaType == "movie" {
-			// 电影：模板文件段
 			ctx := buildRenameContext(&mediaCopy, p, vf.Name)
-			file := ctx.ApplyTemplate(renameTpl.MovieFile)
-			return file, file != vf.Name
-		}
-		if p.Season > 0 && p.Episode > 0 {
+			file = ctx.ApplyTemplate(renameTpl.MovieFile)
+		} else if p.Season > 0 && p.Episode > 0 {
 			ctx := buildRenameContext(&mediaCopy, p, vf.Name)
-			file := ctx.ApplyTemplate(renameTpl.TVFile)
-			return file, file != vf.Name
+			file = ctx.ApplyTemplate(renameTpl.TVFile)
+		} else {
+			return "", false
 		}
-		return "", false
+		// 115 不允许文件名含 "\ / : * ? " < > | — 模板输出统一清洗
+		file = sanitizeName(file)
+		return file, file != vf.Name
 	}
 
 	names := map[string]string{} // fid -> 新名
