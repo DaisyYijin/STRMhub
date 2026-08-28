@@ -10,6 +10,7 @@ package api
 // 无 Emby 匹配时回退门户自带的 ffmpeg 转封装方案。
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"fmt"
@@ -34,10 +35,30 @@ func embyProxy(c *gin.Context) {
 	target, _ := url.Parse(base)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	orig := c.Request.URL.Path
-	c.Request.URL.Path = "/emby" + strings.TrimPrefix(orig, "/api/portal/emby")
+	embyPath := "/emby" + strings.TrimPrefix(orig, "/api/portal/emby")
+	c.Request.URL.Path = embyPath
 	q := c.Request.URL.Query()
 	q.Set("api_key", apiKey)
 	c.Request.URL.RawQuery = q.Encode()
+
+	// 拦截响应：Emby 报错时把详情写到 StrmHub 日志（管理后台日志页可见）
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if resp.StatusCode >= 400 {
+			// 读错误响应体（截取关键信息）
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
+			resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			log.Printf("[门户Emby] ✗ %s %s → HTTP %d：%.300s",
+				c.Request.Method, truncateStr(embyPath, 80), resp.StatusCode, string(body))
+		} else if strings.Contains(embyPath, "master.m3u8") {
+			log.Printf("[门户Emby] ✓ 播放列表 %s → HTTP %d", truncateStr(embyPath, 60), resp.StatusCode)
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("[门户Emby] ✗ 代理连接失败 %s: %v", truncateStr(embyPath, 60), err)
+		http.Error(w, "Emby 连接失败: "+err.Error(), http.StatusBadGateway)
+	}
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
@@ -139,8 +160,8 @@ func portalEmbyPlay(c *gin.Context) {
 		"Recursive": "true",
 		"Fields": "Path,ProductionYear",
 	})
-	log.Printf("[门户Emby] 搜索 %q(%s) 响应: %s", title, types, truncateStr(string(body), 300))
 	if err != nil {
+		log.Printf("[门户Emby] ✗ 搜索 %q 失败: %v", title, err)
 		c.JSON(http.StatusOK, gin.H{"found": false, "reason": "Emby 搜索失败: " + err.Error()})
 		return
 	}
@@ -153,6 +174,7 @@ func portalEmbyPlay(c *gin.Context) {
 		} `json:"Items"`
 	}
 	_ = json.Unmarshal(body, &res)
+	log.Printf("[门户Emby] ▶ 搜索 %q(%s) → %d 条", title, types, len(res.Items))
 	if len(res.Items) == 0 {
 		// SearchTerm 未命中：用 NameStartsWith 再试（部分 Emby 版本对中文 SearchTerm 支持差）
 		body2, err2 := embyGet("/Items", map[string]string{
@@ -195,6 +217,7 @@ func portalEmbyPlay(c *gin.Context) {
 			} `json:"Items"`
 		}
 		_ = json.Unmarshal(epBody, &eps)
+		log.Printf("[门户Emby] ▶ 剧集 %q → %d 集", item.Name, len(eps.Items))
 		// ledger 文件名：xxx.mkv；Emby STRM 路径以 xxx.mkv.strm 结尾（同名匹配）
 		want := strings.TrimSuffix(fname, ".strm")
 		for _, ep := range eps.Items {
@@ -206,6 +229,7 @@ func portalEmbyPlay(c *gin.Context) {
 		}
 		if itemId == item.Id && len(eps.Items) > 0 {
 			itemId = eps.Items[0].Id // 未匹配到集时退第一集
+			log.Printf("[门户Emby] ○ 未精确匹配到集，退第一集")
 		}
 	}
 
