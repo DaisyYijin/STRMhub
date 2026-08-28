@@ -746,6 +746,15 @@ func cloudPathExistsCk(cookie, absPath string) bool {
 
 // recordMedia 记录已整理的媒体到数据库
 func recordMedia(media *TmdbMedia, category, targetPath string) {
+	// 同一部影视只留一条记录（重复整理时更新而非新增）
+	var existing model.MediaLibrary
+	if model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).First(&existing).Error == nil {
+		existing.Category = category
+		existing.TargetPath = targetPath
+		existing.Title = media.Title
+		model.DB.Save(&existing)
+		return
+	}
 	record := &model.MediaLibrary{
 		TmdbID:       media.TmdbID,
 		Title:        media.Title,
