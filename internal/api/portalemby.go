@@ -18,6 +18,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -51,6 +53,40 @@ func portalEmbyInfo() (base, apiKey string, ok bool) {
 		return "", "", false
 	}
 	return strings.TrimRight(cfg.ServerURL, "/"), cfg.APIKey, cfg.APIKey != ""
+}
+
+// embyUserID 获取 Emby 管理员用户 ID（/Shows/Episodes 接口必须带 UserId）
+var (
+	embyUIDMu   sync.Mutex
+	embyUIDVal  string
+	embyUIDAt   time.Time
+)
+
+func embyUserID() string {
+	embyUIDMu.Lock()
+	if embyUIDVal != "" && time.Since(embyUIDAt) < 5*time.Minute {
+		v := embyUIDVal
+		embyUIDMu.Unlock()
+		return v
+	}
+	embyUIDMu.Unlock()
+	body, err := embyGet("/Users", nil)
+	if err != nil {
+		return "1" // 查询失败退回默认值
+	}
+	var users []struct {
+		Id   string `json:"Id"`
+		Name string `json:"Name"`
+	}
+	if json.Unmarshal(body, &users) != nil || len(users) == 0 {
+		return "1"
+	}
+	uid := users[0].Id
+	log.Printf("[门户Emby] 管理员用户: %s (%s)，共 %d 个用户", users[0].Name, uid, len(users))
+	embyUIDMu.Lock()
+	embyUIDVal, embyUIDAt = uid, time.Now()
+	embyUIDMu.Unlock()
+	return uid
 }
 
 // embyGet 代理 GET 到 Emby（服务端间调用）
@@ -145,10 +181,11 @@ func portalEmbyPlay(c *gin.Context) {
 	if isTV {
 		// 2. 剧集：定位到具体集（按文件名匹配 Path）
 		epBody, err := embyGet("/Shows/"+item.Id+"/Episodes", map[string]string{
-			"UserId": "1", "Fields": "Path",
+			"UserId": embyUserID(), "Fields": "Path",
 		})
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"found": false, "reason": "Emby 剧集查询失败"})
+			log.Printf("[门户Emby] 剧集查询失败: %v", err)
+			c.JSON(http.StatusOK, gin.H{"found": false, "reason": "Emby 剧集查询失败: " + err.Error()})
 			return
 		}
 		var eps struct {
