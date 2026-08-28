@@ -218,64 +218,52 @@ func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 // 逐个调用时每个文件过一遍 API 限流，24 集仅等待就要 70+ 秒
 func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, onLog func(string)) {
 	// 计算单个视频的新名（保持原命名规则）
+	// 统一用模板引擎计算视频新名（与 buildNewNameWithTemplate 同源；
+	// 此前硬编码 "标题 (年份) [tmdb]" 格式导致与用户配置的命名规则不一致）
+	mediaCopy := *media
+	mediaCopy.Title = sanitizeName(mediaCopy.Title)
 	videoNewName := func(vf remoteFile) (string, bool) {
-		ext := pathExt(vf.Name)
 		p := parseFileName(vf.Name)
-		ri := ParseResourceInfo(vf.Name)
-		quality := ri.QualityString()
-
-		var newName string
-		if media.MediaType == "movie" {
-			newName = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
-		} else if p.Season > 0 && p.Episode > 0 {
-			newName = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
-		} else {
-			return "", false
+		if mediaCopy.MediaType == "movie" {
+			// 电影：模板文件段
+			ctx := buildRenameContext(&mediaCopy, p, vf.Name)
+			file := ctx.ApplyTemplate(renameTpl.MovieFile)
+			return file, file != vf.Name
 		}
-		if quality != "" {
-			newName += "." + quality
+		if p.Season > 0 && p.Episode > 0 {
+			ctx := buildRenameContext(&mediaCopy, p, vf.Name)
+			file := ctx.ApplyTemplate(renameTpl.TVFile)
+			return file, file != vf.Name
 		}
-		if ri.Team != "" {
-			newName += "-" + ri.Team
-		}
-		return newName + ext, newName != vf.Name
+		return "", false
 	}
 
 	names := map[string]string{} // fid -> 新名
+	videoNewBases := map[string]string{} // 原视频基名 → 新视频基名（字幕跟随用）
 	example := ""
 	for _, vf := range videoFiles {
 		if n, changed := videoNewName(vf); changed {
 			names[vf.Fid] = n
+			videoNewBases[baseName(vf.Name)] = baseName(n)
 			if example == "" {
 				example = fmt.Sprintf("%s → %s", vf.Name, n)
 			}
 		}
 	}
 
-	// 字幕跟随视频新名（前缀匹配）
+	// 字幕/附件跟随视频新名（用视频的模板新名，不再硬编码）
 	for _, f := range files {
 		ext := strings.ToLower(pathExt(f.Name))
 		if !orgAttachmentExts[ext] {
 			continue
 		}
 		fb := baseName(f.Name)
-		for _, vf := range videoFiles {
-			vfBase := baseName(vf.Name)
-			if fb != vfBase && !strings.HasPrefix(fb, vfBase+".") {
+		for vfOldBase, vfNewBase := range videoNewBases {
+			if fb != vfOldBase && !strings.HasPrefix(fb, vfOldBase+".") {
 				continue
 			}
-			p := parseFileName(vf.Name)
-			suffix := strings.TrimPrefix(fb, vfBase)
-			var newSub string
-			if media.MediaType == "movie" {
-				newSub = fmt.Sprintf("%s (%s) [%d]", media.Title, media.Year, media.TmdbID)
-			} else {
-				newSub = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
-				if q := ParseResourceInfo(vf.Name).QualityString(); q != "" {
-					newSub += "." + q
-				}
-			}
-			newSubName := newSub + suffix + ext
+			suffix := strings.TrimPrefix(fb, vfOldBase)
+			newSubName := vfNewBase + suffix + ext
 			if newSubName != f.Name {
 				names[f.Fid] = newSubName
 			}
