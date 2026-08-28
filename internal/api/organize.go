@@ -700,6 +700,42 @@ func sha1ExistsInLibrary(sha1 string) bool {
 	return count > 0
 }
 
+// sha1ExistsVerified 台账命中后到网盘验证文件仍在库内：
+// 增量同步可能漏检删除（115 事件不保证送达），台账残留过期记录。
+// 验证失败（文件已删）时自动清除台账条目，下次不再误判"已存在"。
+func sha1ExistsVerified(ops *pan115Ops, sha1 string) bool {
+	if sha1 == "" || !sha1ExistsInLibrary(sha1) {
+		return false
+	}
+	// 取台账记录的路径，去网盘验证
+	var sfs []model.SyncedFile
+	model.DB.Where("sha1 = ? AND sha1 != ''", sha1).Limit(3).Find(&sfs)
+	if len(sfs) == 0 {
+		return false
+	}
+	if ops == nil || ops.cookie == "" {
+		return true // 无法验证时保守按存在
+	}
+	for _, sf := range sfs {
+		// 验证文件所在目录仍存在（目录删了 = 文件也删了）
+		parentDir := path.Dir(sf.RelPath)
+		if parentDir == "" || parentDir == "." {
+			continue
+		}
+		// 用 pick_code 验证：列父目录看这个文件还在不在
+		if sf.PickCode != "" {
+			if _, _, err := ops.listEntries(sf.PickCode, 0); err == nil {
+				return true // pick_code 仍有效 → 文件在
+			}
+		}
+		// pick_code 验证失败，清掉这条过期台账
+		log.Printf("[整理] ✦ 台账过期（网盘已无此文件），自动清除: %s (sha1=%s)", sf.RelPath, truncateStr(sha1, 12))
+		model.DB.Where("id = ?", sf.ID).Delete(&model.SyncedFile{})
+	}
+	// 所有记录都验证失败 → 文件确实不在库里
+	return false
+}
+
 // checkExistsVerified 去重判定：本地记录命中后到网盘验证目标路径仍存在，
 // 记录失效（库被清空/内容被移走）则自动删除记录并视为不存在——
 // 空库误判"已存在"的根治方案；网盘查询失败时保守按存在处理
@@ -1261,7 +1297,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 网盘去重：主视频 SHA1 已在全量同步台账里（= 媒体库当前实际有这个文件）→ 已存在。
 	// 只查同步台账（反映库的真实状态，文件删除后台账同步清理），
 	// 不再用 SeenSha1 历史表（那是永久记忆，删了文件也不忘，导致无法重新入库）
-	if mainVideo.Sha1 != "" && sha1ExistsInLibrary(mainVideo.Sha1) {
+	if mainVideo.Sha1 != "" && sha1ExistsVerified(ops, mainVideo.Sha1) {
 		titleGuess := parseFileName(dir.Name).Title
 		if titleGuess == "" || isEpisodeOnly(titleGuess) {
 			titleGuess = parseFileName(mainVideo.Name).Title
