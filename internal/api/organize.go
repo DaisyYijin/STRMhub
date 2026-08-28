@@ -2459,7 +2459,6 @@ func notifyMediaStoredFull(media *TmdbMedia, oldName, newName, category string, 
 	if ep := episodeRangeStr(videoFiles); ep != "" {
 		lines = append(lines, "集数："+ep)
 	}
-	lines = append(lines, "重命名："+truncateStr(oldName, 40)+" → "+truncateStr(newName, 60))
 	content := strings.Join(lines, "\n")
 
 	entry := mediaNotifEntry{Title: media.Title, Year: media.Year, Line: content}
