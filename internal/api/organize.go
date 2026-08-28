@@ -236,6 +236,15 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		}
 		// 115 不允许文件名含 "\ / : * ? " < > | — 模板输出统一清洗
 		file = sanitizeName(file)
+		// sanitizeName 把 < > 转成 ( )，可能重新引入括号 → 再清一次
+		for strings.Contains(file, "(.)") {
+			file = strings.ReplaceAll(file, "(.)", "")
+		}
+		file = parenValueRe.ReplaceAllString(file, "$1")
+		for strings.Contains(file, "..") {
+			file = strings.ReplaceAll(file, "..", ".")
+		}
+		file = strings.Trim(file, ".-")
 		return file, file != vf.Name
 	}
 
