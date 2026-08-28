@@ -1013,7 +1013,6 @@ async function testProxy() {
     else { if (el) { el.textContent = '✗ ' + (d.error || '连接失败'); el.style.color = '#e74c3c'; } }
   } catch (e) { if (el) { el.textContent = '✗ ' + e.message; el.style.color = '#e74c3c'; } }
 }
-function genDirTree() { toast('目录树生成工具开发中'); }
 
 // ==================== 115 扫码登录 ====================
 let qrcodeTimer = null;
