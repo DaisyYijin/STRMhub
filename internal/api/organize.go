@@ -1258,32 +1258,23 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
-	// 网盘去重前置（CMS 图解第一步）：主视频 SHA1 已在同步台账里
-	// （以前同步过同一文件）→ 直接进已存在，省一次 TMDB 识别；
-	// 台账未命中再查指纹历史库（广告/冗余内容的免疫记忆，重复投放零成本秒判）
-	if mainVideo.Sha1 != "" {
-		hit := sha1ExistsInLibrary(mainVideo.Sha1)
-		if !hit {
-			if _, seen := sha1SeenBefore(mainVideo.Sha1); seen {
-				hit = true
-			}
+	// 网盘去重：主视频 SHA1 已在全量同步台账里（= 媒体库当前实际有这个文件）→ 已存在。
+	// 只查同步台账（反映库的真实状态，文件删除后台账同步清理），
+	// 不再用 SeenSha1 历史表（那是永久记忆，删了文件也不忘，导致无法重新入库）
+	if mainVideo.Sha1 != "" && sha1ExistsInLibrary(mainVideo.Sha1) {
+		titleGuess := parseFileName(dir.Name).Title
+		if titleGuess == "" || isEpisodeOnly(titleGuess) {
+			titleGuess = parseFileName(mainVideo.Name).Title
 		}
-		if hit {
-			recordSeenSha1s(videoFiles, "existing")
-			titleGuess := parseFileName(dir.Name).Title
-			if titleGuess == "" || isEpisodeOnly(titleGuess) {
-				titleGuess = parseFileName(mainVideo.Name).Title
-			}
-			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
-				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
-			} else {
-				onLog(fmt.Sprintf("○ 《%s》已存在（SHA1 命中历史记录），跳过整理，%d 个文件整体移到已存在目录", titleGuess, len(videoFiles)))
+		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
+			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
+		} else {
+			onLog(fmt.Sprintf("○ 《%s》已存在（库内有同 SHA1 文件），跳过整理，%d 个文件整体移到已存在目录", titleGuess, len(videoFiles)))
 			}
 			for _, vf := range videoFiles {
 				results = append(results, OrganizeResult{FileName: vf.Name, Status: "exists", Message: "SHA1 命中历史记录"})
 			}
 			return results
-		}
 	}
 
 	// 应用替换规则
