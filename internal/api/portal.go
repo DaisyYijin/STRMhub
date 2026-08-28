@@ -43,8 +43,13 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/api/portal/detail", portalDetail)
 	r.GET("/poster/*path", portalPoster)
 	r.GET("/api/portal/sub", portalSub)
+	r.GET("/api/portal/probe", portalProbe)
+	r.GET("/api/portal/hls", portalHLSServe)
+	r.POST("/api/portal/hls/start", portalHLS)
+	r.GET("/api/portal/estr", portalExtractSub)
 
 	go portalBackfillWorker()
+	go hlsCleaner()
 	addr := ":" + fmt.Sprint(cfg.PortalPort)
 	log.Printf("观影门户启动: http://localhost:%d", cfg.PortalPort)
 	if err := r.Run(addr); err != nil {
@@ -274,6 +279,7 @@ func portalDetail(c *gin.Context) {
 				"name": filepath.Base(sf.RelPath),
 				"size": sf.Size,
 				"url":  base302 + "/d/" + sf.PickCode,
+				"pick": sf.PickCode,
 			})
 		} else if base == ".srt" || base == ".ass" || base == ".ssa" || base == ".vtt" {
 			name := filepath.Base(sf.RelPath)
@@ -465,6 +471,7 @@ const portalHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>StrmHub 影院</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js" onerror="var d=document.createElement('script');d.src='https://unpkg.com/hls.js@1/dist/hls.min.js';d.onerror=function(){window.noHls=true};document.head.appendChild(d)"></script>
 <style>
 :root[data-theme=light]{--bg:#f5f6f8;--card:#fff;--text:#1f2328;--dim:#6a737d;--acc:#2563eb;--bd:#e4e7eb;--hover:#f0f3f6;--mask:rgba(0,0,0,.55)}
 :root[data-theme=dark]{--bg:#0d1117;--card:#161b22;--text:#e6edf3;--dim:#8b949e;--acc:#4f8cff;--bd:#21262d;--hover:#1c2129;--mask:rgba(0,0,0,.75)}
@@ -786,10 +793,28 @@ async function openDetailData(key){
   const d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json();
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d
 }
-function startPlay(idx,startPct){
+let curProbe=null,curSid='',hls=null,curAudioRel=0;
+async function startPlay(idx,startPct,forceHLS,audioRel){
   const f=curFiles[idx];curFileIdx=idx;curFileUrl=f.url;
   const v=$('video');
-  v.src=f.url;
+  curAudioRel=audioRel||0;
+  if(hls){hls.destroy();hls=null}
+  curProbe=null;curSid='';
+  const ext=(f.name.split('.').pop()||'').toLowerCase();
+  const direct=['mp4','webm','m4v','mov'].includes(ext)&&!forceHLS;
+  if(direct){
+    v.src=f.url;
+    probeTracks(f); // mp4 也探测（可能有多音轨，HLS 模式才可切）
+  }else{
+    // MKV/TS 等 → 服务端转封装 HLS
+    if(window.noHls||typeof Hls==='undefined'){
+      $('fail').style.display='block';$('faillink').value=f.url;
+      v.src=f.url; // 兜底尝试直出
+      probeTracks(f);
+    }else{
+      await startHLS(f,audioRel||0);
+    }
+  }
   v.playbackRate=curRate;
   v.onerror=()=>{$('fail').style.display='block';$('faillink').value=f.url};
   v.onloadedmetadata=()=>{if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
@@ -804,7 +829,37 @@ function startPlay(idx,startPct){
   pl.onmousemove=pl.ontouchstart=()=>{pb.classList.remove('hide');clearTimeout(t);t=setTimeout(()=>{if(!$('video').paused)pb.classList.add('hide')},2600)};
   pl.onmouseleave=()=>{if(!$('video').paused)pb.classList.add('hide')}
 }
-function stopProg(){clearInterval(progTimer);saveProgress(true)}
+async function startHLS(f,audioRel){
+  const v=$('video');
+  $('pnow').textContent=f.name+'（转封装中…）';
+  try{
+    const r=await fetch('/api/portal/hls/start',{method:'POST',body:JSON.stringify({pick:f.pick,a:audioRel})});
+    const d=await r.json();
+    if(d.error){throw new Error(d.error)}
+    curSid=d.sid;
+    hls=new Hls({maxBufferLength:30});
+    hls.loadSource(d.m3u8);
+    hls.attachMedia(v);
+    hls.on(Hls.Events.ERROR,(e,data)=>{
+      if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
+    });
+    $('pnow').textContent=f.name;
+  }catch(e){
+    $('fail').style.display='block';$('faillink').value=f.url;
+    $('pnow').textContent=f.name+'（'+e.message+'）';
+    v.src=f.url;
+  }
+}
+/* 轨道探测：有 ffmpeg 时返回内嵌音轨/字幕 */
+async function probeTracks(f){
+  if(!f.pick)return;
+  try{
+    const d=await(await fetch('/api/portal/probe?pick='+f.pick)).json();
+    if(!d.error)curProbe=d;
+  }catch(e){}
+}
+function stopProg(){clearInterval(progTimer);saveProgress(true);
+  if(hls){hls.destroy();hls=null}}
 window.addEventListener('beforeunload',()=>saveProgress(true));
 function saveProgress(final){
   if(!curKey||!curFileUrl)return;
@@ -835,10 +890,34 @@ function subMenu(){
   if(m.dataset.on==='sub'){closeMenu();return}
   m.dataset.on='sub';
   let h='<div class="'+(subOff?'on':'')+'" onclick="setSub(-1)">关闭字幕</div>';
-  curSubs.forEach((x,i)=>{h+='<div class="'+(!subOff&&curSubIdx===i?'on':'')+'" onclick="setSub('+i+')">'+esc(x.label)+'</div>'});
+  // 内嵌字幕（ffmpeg 提取）
+  if(curProbe&&curProbe.subs&&curProbe.subs.length){
+    h+='<div class="tip">内嵌字幕：</div>';
+    curProbe.subs.forEach(x=>{
+      const label=(x.language||'未知')+(x.title?' · '+x.title:'');
+      h+='<div onclick="setEsub(\''+x.rel+'\',\''+escA(label)+'\')">内嵌 · '+esc(label)+'</div>'
+    })
+  }
+  // 外挂字幕
+  if(curSubs.length){
+    h+='<div class="tip">外挂字幕：</div>';
+    curSubs.forEach((x,i)=>{h+='<div class="'+(!subOff&&curSubIdx===1000+i?'on':'')+'" onclick="setSub('+i+')">'+esc(x.label)+'</div>'})
+  }
   h+='<div onclick="$(\'subfile\').click()">本地字幕文件…</div>';
-  if(!curSubs.length)h='<div class="tip">网盘目录里没有外挂字幕</div>'+h;
+  if(!curSubs.length&&!(curProbe&&curProbe.subs&&curProbe.subs.length))h+='<div class="tip">未识别到字幕</div>'+h;
   m.innerHTML=h;m.style.display='block'
+}
+async function setEsub(rel,label){
+  closeMenu();
+  const f=curFiles[curFileIdx];
+  try{
+    const r=await fetch('/api/portal/estr?pick='+f.pick+'&s='+rel);
+    if(!r.ok)throw new Error(await r.text());
+    const vtt=await r.text();
+    subOff=false;curSubIdx=rel;
+    mountVTT(vtt);
+    toast2('已挂载字幕：'+label)
+  }catch(e){alert('内嵌字幕提取失败：'+e.message)}
 }
 async function setSub(i){
   const v=$('video');
@@ -890,20 +969,39 @@ function assT(t){
   const sec=m[2].split('.');
   return m[0].padStart(2,'0')+':'+m[1]+':'+sec[0].padStart(2,'0')+'.'+(sec[1]||'0').padEnd(3,'0')
 }
-/* 音轨：浏览器无法切换内嵌音轨；提供多版本文件切换 + 说明 */
+/* 音轨：内嵌音轨切换（转封装模式重启会话）；直出模式回退提示 */
 function audMenu(){
   const m=$('pmenu');
   if(m.dataset.on==='aud'){closeMenu();return}
   m.dataset.on='aud';
-  let h='<div class="tip">浏览器直出无法切换内嵌音轨</div>';
-  if(curFiles.length>1){
-    h+='<div class="tip">可切换文件/版本：</div>';
-    curFiles.forEach((x,i)=>{h+='<div class="'+(i===curFileIdx?'on':'')+'" onclick="nav(\'#/play?key=\'+encodeURIComponent(curKey)+\'&i=\'+i+\'&p=resume\')">'+esc(x.name)+'</div>'})
+  let h='';
+  const f=curFiles[curFileIdx];
+  if(curProbe&&curProbe.audio&&curProbe.audio.length){
+    h+='<div class="tip">内嵌音轨：</div>';
+    curProbe.audio.forEach(a=>{
+      const label=(a.language||'未知')+(a.title?' · '+a.title:'')+' ('+a.codec+(a.channels?a.channels+'ch':'')+')';
+      h+='<div class="'+(a.rel===curAudioRel?'on':'')+'" onclick="switchAudio('+a.rel+')">'+esc(label)+'</div>'
+    });
+  }else if(f&&['mp4','webm','m4v','mov'].includes((f.name.split('.').pop()||'').toLowerCase())){
+    h+='<div class="tip">该文件是浏览器直出模式，切换音轨需转封装</div><div onclick="forceHLSAudio(0)">切到转封装模式</div>';
   }else{
-    h+='<div class="tip">需要切换内嵌音轨请用 PotPlayer/VLC/nPlayer 打开直链，或在 Emby 客户端播放</div>'
+    h+='<div class="tip">未识别到内嵌音轨</div>';
+  }
+  if(curFiles.length>1){
+    h+='<div class="tip">切换文件/版本：</div>';
+    curFiles.forEach((x,i)=>{h+='<div class="'+(i===curFileIdx?'on':'')+'" onclick="nav(\'#/play?key=\'+encodeURIComponent(curKey)+\'&i=\'+i+\'&p=resume\')">'+esc(x.name)+'</div>'})
   }
   m.innerHTML=h;m.style.display='block'
 }
+async function switchAudio(rel){
+  closeMenu();
+  const f=curFiles[curFileIdx];
+  const pct=$('video').duration?Math.round($('video').currentTime/$('video').duration*100):0;
+  await startHLS(f,rel);
+  curAudioRel=rel;
+  if(pct>0&&$('video').duration)$('video').currentTime=$('video').duration*pct/100
+}
+async function forceHLSAudio(rel){await switchAudio(rel)}
 /* 快捷键 */
 document.addEventListener('keydown',e=>{
   if(location.hash.indexOf('#/play')!==0)return;

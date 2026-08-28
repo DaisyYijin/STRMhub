@@ -23,6 +23,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -X main
 
 # 运行阶段：最小镜像
 FROM alpine:latest
+# ffmpeg：观影门户服务端转封装（MKV→HLS 无损直串流）与内嵌轨道识别
+RUN apk add --no-cache ffmpeg ca-certificates tzdata
 
 # 安装 ca-certificates（TLS 证书）、时区数据、ffmpeg（媒体信息探测/未来字幕抽取）
 RUN apk --no-cache add ca-certificates tzdata ffmpeg
