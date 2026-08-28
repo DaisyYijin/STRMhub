@@ -54,6 +54,7 @@ type WecomConfig struct {
 	Token          string `json:"token"`
 	EncodingAESKey string `json:"encoding_aes_key"`
 	APIURL         string `json:"api_url"`
+	PortalURL      string `json:"portal_url"` // 观影门户公网地址（聊天底栏菜单跳转用）
 	Enabled        any    `json:"enabled"`
 }
 
