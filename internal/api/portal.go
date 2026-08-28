@@ -886,7 +886,9 @@ async function startEmby(f,startPct){
     let u=d.url;
     if(embyAudio>=0)u+='&AudioStreamIndex='+embyAudio;
     if(embySub>=0)u+='&SubtitleStreamIndex='+embySub;
-    u+='&VideoCodec=h264,h265&AudioCodec=aac,mp3,ac3,flac&TranscodingMaxAudioChannels=2';
+    // PlaySessionId：Emby 转码会话标识（缺了分片请求报 400）
+    const psid='portal-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
+    u+='&PlaySessionId='+psid+'&VideoCodec=h264&AudioCodec=aac,mp3&TranscodingMaxAudioChannels=2&SegmentContainer=ts';
     pdbg('Emby m3u8：',u);
     hls=new Hls({maxBufferLength:30,maxMaxBufferLength:60});
     hls.loadSource(u);
