@@ -2221,6 +2221,9 @@ async function loadLogLevel() {
 }
 
 // 版本号（左下角 footer 显示）+ 刷新时自动检查 GitHub 是否有新版本
+// versionPollTimer 构建中的轮询定时器（构建完成后自动把灰标签换成「有新版本」）
+let versionPollTimer = null;
+
 async function loadVersion() {
   let local = '';
   try {
@@ -2240,13 +2243,30 @@ async function loadVersion() {
   try {
     const d = await api('/version/latest');
     if (d.latest && d.latest.slice(0, 7) !== local.slice(0, 7)) {
-      // 版本号右侧同行显示蓝色小按钮（flex 不换行，避免窄侧栏下被挤到下一行）
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.gap = '6px';
-      el.style.whiteSpace = 'nowrap';
-      el.innerHTML = '<span>StrmHub v' + local.slice(0, 7) + '</span>' +
-        '<button class="btn btn-sm" onclick="openUpdateModal()" style="background:var(--primary);color:#fff;border:none;flex:none;font-size:11px;height:22px;padding:0 8px;border-radius:4px;cursor:pointer">有新版本</button>';
+      // 版本号右侧同行显示小按钮（flex 不换行，避免窄侧栏下被挤到下一行）。
+      // 镜像是否可更新以 GitHub Actions 构建状态为准：构建中显示灰标签、
+      // 构建失败显示红标签，只有构建成功才出现「有新版本」按钮（点了才有用）
+      const flex = () => {
+        el.style.display = 'flex'; el.style.alignItems = 'center';
+        el.style.gap = '6px'; el.style.whiteSpace = 'nowrap';
+      };
+      if (d.build === 'building') {
+        flex();
+        el.innerHTML = '<span>StrmHub v' + local.slice(0, 7) + '</span>' +
+          '<span style="flex:none;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--border);color:var(--text-3)">镜像构建中…</span>';
+        // 构建期间每分钟自动复查，完成后自动换成可点击的「有新版本」
+        if (!versionPollTimer) {
+          versionPollTimer = setTimeout(() => { versionPollTimer = null; loadVersion(); }, 60000);
+        }
+      } else if (d.build === 'failed') {
+        flex();
+        el.innerHTML = '<span>StrmHub v' + local.slice(0, 7) + '</span>' +
+          '<span style="flex:none;font-size:11px;padding:2px 8px;border-radius:4px;background:var(--danger);color:#fff;cursor:pointer" onclick="openUpdateModal()">构建失败</span>';
+      } else {
+        flex();
+        el.innerHTML = '<span>StrmHub v' + local.slice(0, 7) + '</span>' +
+          '<button class="btn btn-sm" onclick="openUpdateModal()" style="background:var(--primary);color:#fff;border:none;flex:none;font-size:11px;height:22px;padding:0 8px;border-radius:4px;cursor:pointer">有新版本</button>';
+      }
     }
   } catch (e) {}
 }
@@ -2340,16 +2360,29 @@ async function openUpdateModal() {
       document.getElementById('update-apply-btn').style.display = 'none';
       return;
     }
-    document.getElementById('update-apply-btn').style.display = '';
-    document.getElementById('update-modal-title').textContent =
-      '发现新版本 v' + String(d.latest || '').slice(0, 7) + '（当前 v' + String(d.current || '').slice(0, 7) + '）';
+    // 镜像构建状态（GitHub Actions）：构建中/失败时不可更新——
+    // 提交已推送但镜像未发布，此时点更新只会拉到旧镜像并白重启一次
+    if (d.build === 'building' || d.build === 'failed') {
+      document.getElementById('update-modal-title').textContent =
+        d.build === 'building'
+          ? '新版本构建中 v' + String(d.latest || '').slice(0, 7)
+          : '新版本构建失败 v' + String(d.latest || '').slice(0, 7);
+      btn.disabled = true;
+      btn.textContent = d.build === 'building' ? '镜像构建中…' : '构建失败，不可更新';
+    } else {
+      document.getElementById('update-modal-title').textContent =
+        '发现新版本 v' + String(d.latest || '').slice(0, 7) + '（当前 v' + String(d.current || '').slice(0, 7) + '）';
+    }
     if (!d.commits || !d.commits.length) {
       body.innerHTML = d.error
         ? '<p>更新内容获取失败：' + escHtml(d.error) + '</p><p>可点「查看 GitHub」直接查看提交记录。</p>'
         : '<p>未获取到提交记录，可点「查看 GitHub」查看。</p>';
       return;
     }
-    body.innerHTML = '<p style="margin-bottom:6px"><b>更新内容（' + d.commits.length + ' 个提交）：</b></p>' +
+    body.innerHTML =
+      (d.build === 'building' ? '<p style="color:var(--warning)">⏳ 镜像还在 GitHub Actions 构建中（通常 3~8 分钟），完成后本按钮自动可用。</p>' : '') +
+      (d.build === 'failed' ? '<p style="color:var(--danger)">✗ 最新提交的 CI 构建失败，镜像未发布；请到 GitHub Actions 查看失败原因。</p>' : '') +
+      '<p style="margin-bottom:6px"><b>更新内容（' + d.commits.length + ' 个提交）：</b></p>' +
       d.commits.map(cm =>
         '<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:baseline">' +
         '<code style="color:var(--text-3);flex:none">' + String(cm.sha).slice(0, 7) + '</code>' +

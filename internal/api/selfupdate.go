@@ -95,6 +95,7 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 			"uptodate": current != "dev" && latest != "" && strings.HasPrefix(latest, current[:7])})
 		return
 	}
+	buildState := imageBuildState(latest)
 	client := &http.Client{Timeout: 10 * time.Second}
 	if pu := getProxyURL(); pu != "" {
 		if p, err := parseProxyURL(pu); err == nil {
@@ -106,7 +107,7 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": err.Error(), "build": buildState})
 		return
 	}
 	defer resp.Body.Close()
@@ -122,7 +123,7 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 		} `json:"commits"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&cmp) != nil {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil})
+		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "build": buildState})
 		return
 	}
 	type commitItem struct {
@@ -140,7 +141,7 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 		}
 		commits = append(commits, commitItem{Sha: cm.Sha, Message: msg, Date: cm.Commit.Author.Date})
 	}
-	c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": commits})
+	c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": commits, "build": buildState})
 }
 
 // ApplyUpdate POST /update/apply —— 拉取最新镜像并重建当前容器
@@ -163,6 +164,16 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	}
 	if strings.HasPrefix(latest, buildVersion[:7]) {
 		c.JSON(http.StatusOK, gin.H{"message": "已是最新版本", "latest": latest})
+		return
+	}
+	// 镜像就绪检查：只看提交会抢在 Actions 构建完成前更新，拉到的仍是旧镜像
+	// 并白重启一次容器；构建中/失败时直接拒绝，CI 查询失败（unknown）则放行
+	switch imageBuildState(latest) {
+	case "building":
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "新版本镜像还在 GitHub Actions 构建中（通常 3~8 分钟），构建完成后会提示更新，请稍后再试", "latest": latest, "build": "building"})
+		return
+	case "failed":
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "最新提交的 CI 构建失败，镜像未发布；请到 GitHub Actions 查看失败原因，或等修复提交后重试", "latest": latest, "build": "failed"})
 		return
 	}
 

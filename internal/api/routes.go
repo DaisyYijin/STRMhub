@@ -45,10 +45,82 @@ var latestVersionCache struct {
 	at  time.Time
 }
 
-// LatestVersion GET /version/latest —— 查询 GitHub main 分支最新提交（前端刷新时比对是否有新版本）
+// latestBuildCache main 分支最新一次 Actions 构建缓存（15 秒防狂刷）
+var latestBuildCache struct {
+	sync.Mutex
+	headSha    string
+	status     string // queued / in_progress / completed
+	conclusion string // success / failure / ...
+	at         time.Time
+}
+
+// fetchLatestBuild 查询 main 分支最新一次 CI 构建（镜像是否已发布以此为准；
+// 只看 GitHub 提交会抢在 Actions 构建完成前提示更新，点更新拉到的还是旧镜像）
+func fetchLatestBuild() (headSha, status, conclusion string) {
+	latestBuildCache.Lock()
+	cachedHead, cachedStatus, cachedConclusion, cacheAt :=
+		latestBuildCache.headSha, latestBuildCache.status, latestBuildCache.conclusion, latestBuildCache.at
+	latestBuildCache.Unlock()
+	if cachedHead != "" && time.Since(cacheAt) < 15*time.Second {
+		return cachedHead, cachedStatus, cachedConclusion
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	if pu := getProxyURL(); pu != "" {
+		if p, err := parseProxyURL(pu); err == nil {
+			client.Transport = &http.Transport{Proxy: p}
+		}
+	}
+	req, _ := http.NewRequest("GET", "https://api.github.com/repos/DaisyYijin/STRMhub/actions/runs?branch=main&per_page=1", nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return cachedHead, cachedStatus, cachedConclusion
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return cachedHead, cachedStatus, cachedConclusion
+	}
+	var out struct {
+		Runs []struct {
+			HeadSha    string `json:"head_sha"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_runs"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) == nil && len(out.Runs) > 0 {
+		latestBuildCache.Lock()
+		latestBuildCache.headSha, latestBuildCache.status, latestBuildCache.conclusion, latestBuildCache.at =
+			out.Runs[0].HeadSha, out.Runs[0].Status, out.Runs[0].Conclusion, time.Now()
+		latestBuildCache.Unlock()
+		return out.Runs[0].HeadSha, out.Runs[0].Status, out.Runs[0].Conclusion
+	}
+	return cachedHead, cachedStatus, cachedConclusion
+}
+
+// imageBuildState latest 提交对应的镜像状态：
+// ready=构建成功可更新 / building=构建中（含构建未注册）/ failed=构建失败 /
+// unknown=CI 状态查询失败（保持旧行为：允许更新，避免 API 抖动卡死更新）
+func imageBuildState(latest string) string {
+	head, status, conclusion := fetchLatestBuild()
+	if head == "" {
+		return "unknown"
+	}
+	if head != latest {
+		return "building" // 新提交的 workflow 还没注册上（推送后几秒内的窗口期）
+	}
+	if status != "completed" {
+		return "building"
+	}
+	if conclusion == "success" {
+		return "ready"
+	}
+	return "failed"
+}
+
+// LatestVersion GET /version/latest —— 查询 GitHub main 分支最新提交与镜像构建状态
 func (h *Handler) LatestVersion(c *gin.Context) {
 	latest, _ := fetchLatestSHA(false)
-	c.JSON(http.StatusOK, gin.H{"latest": latest})
+	c.JSON(http.StatusOK, gin.H{"latest": latest, "build": imageBuildState(latest)})
 }
 
 func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
