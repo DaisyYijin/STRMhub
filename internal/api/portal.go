@@ -51,6 +51,8 @@ func StartPortal(cfg *config.Config) {
 	})
 	r.POST("/api/portal/hls/start", portalHLS)
 	r.GET("/api/portal/estr", portalExtractSub)
+	r.GET("/api/portal/embyplay", portalEmbyPlay)
+	r.Any("/api/portal/emby/*path", embyProxy)
 
 	go portalBackfillWorker()
 	go hlsCleaner()
@@ -798,15 +800,22 @@ async function openDetailData(key){
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d
 }
 let curProbe=null,curSid='',hls=null,curAudioRel=0;
+let curEngine='direct'; // emby | ffmpeg | direct
+let embyPlay=null, embyAudio=-1, embySub=-1;
 async function startPlay(idx,startPct,forceHLS,audioRel){
   const f=curFiles[idx];curFileIdx=idx;curFileUrl=f.url;
   const v=$('video');
   curAudioRel=audioRel||0;
   if(hls){hls.destroy();hls=null}
-  curProbe=null;curSid='';
+  curProbe=null;curSid='';embyPlay=null;embyAudio=-1;embySub=-1;
+  // 首选引擎：Emby（秒拖/内嵌轨道切换/自动转码全由 Emby 服务端处理）
+  const okEmby=await startEmby(f,startPct);
+  if(okEmby){v.playbackRate=curRate;return}
+  // 回退：浏览器直出（mp4）或门户自带 ffmpeg 转封装
   const ext=(f.name.split('.').pop()||'').toLowerCase();
   const direct=['mp4','webm','m4v','mov'].includes(ext)&&!forceHLS;
   if(direct){
+    curEngine='direct';
     v.src=f.url;
     probeTracks(f); // mp4 也探测（可能有多音轨，HLS 模式才可切）
   }else{
@@ -832,6 +841,34 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   let t;const pb=$('pbar'),pl=$('player');
   pl.onmousemove=pl.ontouchstart=()=>{pb.classList.remove('hide');clearTimeout(t);t=setTimeout(()=>{if(!$('video').paused)pb.classList.add('hide')},2600)};
   pl.onmouseleave=()=>{if(!$('video').paused)pb.classList.add('hide')}
+}
+/* Emby 引擎：master.m3u8 全长播放列表（拖动秒跳），音轨/字幕服务端切换 */
+async function startEmby(f,startPct){
+  try{
+    const r=await fetch('/api/portal/embyplay?key='+encodeURIComponent(curKey)+'&f='+encodeURIComponent(f.name));
+    const d=await r.json();
+    if(!d||!d.found){
+      $('pnow').textContent=f.name+(d&&d.reason?'（'+d.reason+'，走直连/转封装）':'');
+      return false
+    }
+    embyPlay=d;curEngine='emby';
+    $('pnow').textContent=f.name+'（Emby 引擎）';
+    const v=$('video');
+    let u=d.url;
+    if(embyAudio>=0)u+='&AudioStreamIndex='+embyAudio;
+    if(embySub>=0)u+='&SubtitleStreamIndex='+embySub;
+    u+='&VideoCodec=h264,h265&AudioCodec=aac,mp3,ac3,flac&TranscodingMaxAudioChannels=2';
+    hls=new Hls({maxBufferLength:30,maxMaxBufferLength:60});
+    hls.loadSource(u);
+    hls.attachMedia(v);
+    hls.on(Hls.Events.ERROR,(e,data)=>{
+      if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
+    });
+    if(startPct>0){
+      v.onloadedmetadata=()=>{if(v.duration)v.currentTime=v.duration*startPct/100};
+    }
+    return true
+  }catch(e){return false}
 }
 async function startHLS(f,audioRel){
   const v=$('video');
@@ -907,6 +944,17 @@ function subMenu(){
   const m=$('pmenu');
   if(m.dataset.on==='sub'){closeMenu();return}
   m.dataset.on='sub';
+  // Emby 引擎：内嵌+外挂字幕统一由 Emby 服务端烧录/渲染
+  if(curEngine==='emby'&&embyPlay){
+    let h2='<div class="'+(embySub<0?'on':'')+'" onclick="switchEmbySub(-1)">关闭字幕</div>';
+    if(embyPlay.subs&&embyPlay.subs.length){
+      h2+='<div class="tip">字幕（Emby 服务端处理）：</div>';
+      embyPlay.subs.forEach(x=>{
+        h2+='<div class="'+(embySub===x.index?'on':'')+'" onclick="switchEmbySub('+x.index+')">'+esc((x.external?'外挂 · ':'')+' 内嵌 · '+x.label)+'</div>'
+      })
+    }else{h2+='<div class="tip">该集没有可用字幕轨</div>'}
+    m.innerHTML=h2;m.style.display='block';return
+  }
   let h='<div class="'+(subOff?'on':'')+'" onclick="setSub(-1)">关闭字幕</div>';
   // 内嵌字幕（ffmpeg 提取）
   if(curProbe&&curProbe.subs&&curProbe.subs.length){
@@ -992,6 +1040,14 @@ function audMenu(){
   const m=$('pmenu');
   if(m.dataset.on==='aud'){closeMenu();return}
   m.dataset.on='aud';
+  // Emby 引擎：内嵌音轨服务端切换
+  if(curEngine==='emby'&&embyPlay&&embyPlay.audio&&embyPlay.audio.length){
+    let h2='<div class="tip">内嵌音轨：</div>';
+    embyPlay.audio.forEach(a=>{
+      h2+='<div class="'+(embyAudio===a.index?'on':'')+'" onclick="switchEmbyAudio('+a.index+')">'+esc(a.label)+'</div>'
+    });
+    m.innerHTML=h2;m.style.display='block';return
+  }
   let h='';
   const f=curFiles[curFileIdx];
   if(curProbe&&curProbe.audio&&curProbe.audio.length){
@@ -1020,6 +1076,23 @@ async function switchAudio(rel){
   if(pct>0&&$('video').duration)$('video').currentTime=$('video').duration*pct/100
 }
 async function forceHLSAudio(rel){await switchAudio(rel)}
+async function switchEmbyAudio(idx){
+  closeMenu();
+  const v=$('video');
+  const pct=v.duration?Math.round(v.currentTime/v.duration*100):0;
+  if(hls){hls.destroy();hls=null}
+  embyAudio=idx;
+  await startEmby(curFiles[curFileIdx],pct)
+}
+async function switchEmbySub(idx){ // idx=-1 关闭
+  closeMenu();
+  const v=$('video');
+  const pct=v.duration?Math.round(v.currentTime/v.duration*100):0;
+  if(hls){hls.destroy();hls=null}
+  embySub=idx;
+  subOff=idx<0;
+  await startEmby(curFiles[curFileIdx],pct)
+}
 /* 快捷键 */
 document.addEventListener('keydown',e=>{
   if(location.hash.indexOf('#/play')!==0)return;
