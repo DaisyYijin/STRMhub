@@ -78,12 +78,18 @@ func (ctx *RenameContext) ApplyTemplate(template string) string {
 	}
 
 	// 清理连续分隔符（变量为空时可能留下）
+	// (.)：模板里 (.{xxx}) 的变量为空时只留括号和点 → 整个清掉
+	for strings.Contains(result, "(.)") {
+		result = strings.ReplaceAll(result, "(.)", "")
+	}
 	for strings.Contains(result, "..") {
 		result = strings.ReplaceAll(result, "..", ".")
 	}
 	for strings.Contains(result, "--") {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
+	// 清理头尾多余的点
+	result = strings.Trim(result, ".-")
 	result = strings.TrimSpace(result)
 
 	return result
