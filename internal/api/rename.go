@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"regexp"
 )
 
 // RenameContext 重命名上下文（包含模板引擎需要的全部数据）
@@ -77,23 +78,29 @@ func (ctx *RenameContext) ApplyTemplate(template string) string {
 		result = strings.ReplaceAll(result, k, v)
 	}
 
-	// 清理连续分隔符（变量为空时可能留下）
-	// (.)：模板里 (.{xxx}) 的变量为空时只留括号和点 → 整个清掉
+	// 输出统一清理：
+	// 1. (.) 空括号 → 删掉（变量为空时残留）
+	// 2. (.xxx) 有值括号 → 改为 .xxx（统一点分隔，不管模板用的什么括号语法）
+	// 3. 连续点/横线 → 压缩为单个
+	// 4. 首尾多余分隔符 → 去掉
 	for strings.Contains(result, "(.)") {
 		result = strings.ReplaceAll(result, "(.)", "")
 	}
+	result = parenValueRe.ReplaceAllString(result, "$1")
 	for strings.Contains(result, "..") {
 		result = strings.ReplaceAll(result, "..", ".")
 	}
 	for strings.Contains(result, "--") {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
-	// 清理头尾多余的点
 	result = strings.Trim(result, ".-")
 	result = strings.TrimSpace(result)
 
 	return result
 }
+
+// parenValueRe 匹配 (.xxx) 形式（括号内有点+值）→ 提取 .xxx（去掉括号）
+var parenValueRe = regexp.MustCompile(`\((\.[\w.-]+)\)`)
 
 // processBlocks 处理 <> 块语法
 // 语法：<任意文字{variable}任意文字> — 块内所有 {variable} 非空时输出整块，有空变量时丢弃整块
