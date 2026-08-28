@@ -216,7 +216,7 @@ func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 // renameBeforeMove 在源目录中先重命名文件（带画质信息），再移动到目标。
 // 全目录的重命名（视频+字幕）合并为一次 batch_rename 调用：
 // 逐个调用时每个文件过一遍 API 限流，24 集仅等待就要 70+ 秒
-func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, onLog func(string)) {
+func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, enrichRenames map[string]string, onLog func(string)) {
 	// 计算单个视频的新名（保持原命名规则）
 	// 统一用模板引擎计算视频新名（与 buildNewNameWithTemplate 同源；
 	// 此前硬编码 "标题 (年份) [tmdb]" 格式导致与用户配置的命名规则不一致）
@@ -268,6 +268,14 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 			continue
 		}
 		fb := baseName(f.Name)
+		// 视频先被补全改名过：字幕基名映射到补全后的基名再匹配，
+		// 否则前缀失配、字幕掉队（视频带画质新名而字幕留旧名）
+		for oldB, newB := range enrichRenames {
+			if fb == oldB || strings.HasPrefix(fb, oldB+".") {
+				fb = newB + strings.TrimPrefix(fb, oldB)
+				break
+			}
+		}
 		for vfOldBase, vfNewBase := range videoNewBases {
 			if fb != vfOldBase && !strings.HasPrefix(fb, vfOldBase+".") {
 				continue
@@ -1493,6 +1501,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 
 	// 同步补全：文件名缺画质信息时立即探测（ffprobe 拉头部几 MB），
 	// 用探测结果补充画质后再重命名 → 移动 → 入库，一步到位
+	enrichRenames := map[string]string{} // 补全前视频基名 → 补全后基名（字幕跟随用）
 	if policy := loadEnrichPolicy(); policy.Enabled {
 		for i, vf := range videoFiles {
 			if !enrichNeedsProbe(vf.Name) || vf.PickCode == "" {
@@ -1515,6 +1524,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 							onLog(fmt.Sprintf("○ 补全改名失败 %s: %v", vf.Name, err))
 						} else {
 							onLog(fmt.Sprintf("✓ 补全 %s → %s", vf.Name, newName))
+							enrichRenames[baseName(vf.Name)] = baseName(newName)
 							videoFiles[i].Name = newName // 后续模板重命名基于补全后的名字
 						}
 					}
@@ -1526,7 +1536,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	// 先在源目录重命名（批量 batch_rename），再移动到目标
-	renameBeforeMove(ops, media, videoFiles, files, onLog)
+	renameBeforeMove(ops, media, videoFiles, files, enrichRenames, onLog)
 
 	// 视频/字幕 → 季目录（电影为根目录）
 	if len(mediaFids) > 0 {
