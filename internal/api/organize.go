@@ -1325,6 +1325,13 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	parsed := parseFileName(name)
+	// 目录名含 [tmdb=xxx] 时提取 ID（TMDB 搜索不索引中文别名，ID 直查 100% 命中）
+	if parsed.TmdbID == 0 {
+		parsed.TmdbID = extractTmdbID(dir.Name)
+	}
+	if parsed.TmdbID == 0 {
+		parsed.TmdbID = extractTmdbID(name)
+	}
 
 	// 文件名无法提取标题 → 用目录名识别（目录名通常比文件名规范）
 	// 场景：/西游记.1987/ep01.mkv — 文件名只有集数，目录名有标题和年份

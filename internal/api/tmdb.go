@@ -151,6 +151,69 @@ func tmdbCachePut(kind, q, year string, media *TmdbMedia, err error) {
 	tmdbSearchCache[kind+"|"+q+"|"+year] = tmdbCacheEntry{media: media, err: err, at: time.Now()}
 }
 
+// getByTmdbID 按 TMDB ID 直接查详情（跳过搜索，中文片名 100% 命中）
+func (tc *TmdbClient) getByTmdbID(id int, isTV bool) (*TmdbMedia, error) {
+	if id <= 0 {
+		return nil, nil
+	}
+	kind := "movie"
+	if isTV {
+		kind = "tv"
+	}
+	body, err := tc.get(fmt.Sprintf("/%s/%d", kind, id), nil)
+	if err != nil {
+		return nil, err
+	}
+	var d struct {
+		ID            int      `json:"id"`
+		Title         string   `json:"title"`
+		Name          string   `json:"name"`
+		OriginalTitle string   `json:"original_title"`
+		ReleaseDate   string   `json:"release_date"`
+		FirstAirDate  string   `json:"first_air_date"`
+		Genres        []struct{ ID int `json:"id"` } `json:"genres"`
+		Overview      string   `json:"overview"`
+		PosterPath    string   `json:"poster_path"`
+		BackdropPath  string   `json:"backdrop_path"`
+		OriginalLanguage string `json:"original_language"`
+		OriginCountry []string `json:"origin_country"`
+		VoteAverage   float64  `json:"vote_average"`
+	}
+	if err := json.Unmarshal(body, &d); err != nil {
+		return nil, err
+	}
+	if d.ID == 0 {
+		return nil, nil
+	}
+	title := d.Title
+	if title == "" {
+		title = d.Name
+	}
+	year := ""
+	date := d.ReleaseDate
+	if date == "" {
+		date = d.FirstAirDate
+	}
+	if len(date) >= 4 {
+		year = date[:4]
+	}
+	mediaType := "movie"
+	if isTV {
+		mediaType = "tv"
+	}
+	genreIDs := make([]int, 0, len(d.Genres))
+	for _, g := range d.Genres {
+		genreIDs = append(genreIDs, g.ID)
+	}
+	return &TmdbMedia{
+		TmdbID: d.ID, Title: title, OriginalTitle: d.OriginalTitle,
+		Year: year, MediaType: mediaType, GenreIDs: genreIDs,
+		Overview: d.Overview, PosterPath: d.PosterPath, BackdropPath: d.BackdropPath,
+		OrigLanguage: d.OriginalLanguage, OrigCountry: d.OriginCountry,
+		VoteAverage: d.VoteAverage,
+	}, nil
+}
+
 func (tc *TmdbClient) SearchMovie(query string, year string) (*TmdbMedia, error) {
 	if m, e, ok := tmdbCacheGet("movie", query, year); ok {
 		return m, e
@@ -357,6 +420,7 @@ type ParsedName struct {
 	IsTV       bool
 	Resolution string // 1080p, 2160p 等
 	Quality    string // 完整画质串（1080p.WEB-DL.AAC2.0.H.264 等，由调用方填充）
+	TmdbID     int    // 从目录名 [tmdb=xxx] 提取的 TMDB ID（直查用）
 }
 
 var (
@@ -490,9 +554,28 @@ func parseFileName(filename string) *ParsedName {
 }
 
 // recognizeFile 通过 TMDB 识别文件
+var reTmdbID = regexp.MustCompile(`\[tmdb=(\d+)\]`)
+
+// extractTmdbID 从目录名/文件名提取 [tmdb=xxx] 中的 ID
+func extractTmdbID(name string) int {
+	if m := reTmdbID.FindStringSubmatch(name); m != nil {
+		id, _ := strconv.Atoi(m[1])
+		return id
+	}
+	return 0
+}
+
 func (tc *TmdbClient) recognize(parsed *ParsedName) (*TmdbMedia, error) {
 	if parsed.Title == "" {
 		return nil, fmt.Errorf("无法从文件名提取标题")
+	}
+
+	// 优先用 [tmdb=xxx] 直接查详情：TMDB 搜索不索引中文别名（白头山→Ashfall），ID 直查 100% 命中
+	if parsed.TmdbID > 0 {
+		if m, err := tc.getByTmdbID(parsed.TmdbID, parsed.IsTV); err == nil && m != nil {
+			vlog("[整理] TMDB ID 直查命中: %d -> %s (%s)", parsed.TmdbID, m.Title, m.Year)
+			return m, nil
+		}
 	}
 
 	// movieThenTV：先电影后剧集（CMS 同款兜底顺序）
