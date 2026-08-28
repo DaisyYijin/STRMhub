@@ -33,13 +33,16 @@ import (
 // hlsSession 一个转封装会话（一次播放一个）
 type hlsSession struct {
 	dir       string
+	pick      string // 精确记录（会话复用按它比对； Contains(dir,pick) 前缀误配的修复）
+	vc        string // copy / transcode（复用时必须一致，否则分片编码不对）
 	cmd       *exec.Cmd
 	cancel    context.CancelFunc
-	mu        sync.Mutex
-	m3u8Ready chan struct{}
 	lastHit   time.Time
 	audioRel  int
 }
+
+// portalHLSMaxSessions 并发转封装/转码会话上限（公开端点的 CPU/磁盘保护）
+const portalHLSMaxSessions = 4
 
 var (
 	hlsSessions   = map[string]*hlsSession{}
@@ -227,6 +230,14 @@ func portalHLS(c *gin.Context) {
 	if audioRel == 0 {
 		fmt.Sscanf(c.Query("a"), "%d", &audioRel)
 	}
+	// 转码模式（会话复用须比对；默认 copy 无损转封装）
+	vc := body.VC
+	if vc == "" {
+		vc = c.Query("vc")
+	}
+	if vc == "" {
+		vc = "copy"
+	}
 
 	urlStr, headers, err := portalPickURL(c, pick)
 	if err != nil {
@@ -235,16 +246,24 @@ func portalHLS(c *gin.Context) {
 	}
 
 	hlsSessionsMu.Lock()
-	// 复用：同 pick + 同音轨且活跃
+	// 复用：同 pick + 同音轨 + 同转码模式且活跃。
+	// 修复点：① 原用 strings.Contains(ss.dir, pick) 匹配——pick 是另一个
+	// pick 的前缀时会错拿他人会话，改为精确记录 pick；② 不比对 vc 时
+	// transcode 请求会复用 copy 会话拿到 H.265 分片（播放失败）
 	for sid, ss := range hlsSessions {
-		if ss.dir != "" && strings.Contains(ss.dir, pick) && time.Since(ss.lastHit) < 2*time.Minute {
-			if ss.audioRel == audioRel {
-				ss.lastHit = time.Now()
-				hlsSessionsMu.Unlock()
-				c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
-				return
-			}
+		if ss.pick == pick && time.Since(ss.lastHit) < 2*time.Minute &&
+			ss.audioRel == audioRel && ss.vc == vc {
+			ss.lastHit = time.Now()
+			hlsSessionsMu.Unlock()
+			c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
+			return
 		}
+	}
+	// 并发上限：门户端口公开可达，无上限时可被无限并发 ffmpeg 打满 CPU/磁盘
+	if live := len(hlsSessions); live >= portalHLSMaxSessions {
+		hlsSessionsMu.Unlock()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("并发播放会话已满（%d），请稍后再试或关闭其他播放页", live)})
+		return
 	}
 	hlsSessionsMu.Unlock()
 
@@ -256,13 +275,6 @@ func portalHLS(c *gin.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// ffmpeg：-c copy 无损转封装 HLS（MKV→TS）。字幕轨不进 HLS（单独提取）。
 	// vc=copy：无损转封装（H.264 源）；vc=transcode：H.265→H.264 转码（浏览器能播）
-	vc := body.VC
-	if vc == "" {
-		vc = c.Query("vc")
-	}
-	if vc == "" {
-		vc = "copy"
-	}
 	codecArgs := []string{"-c", "copy"}
 	if vc == "transcode" {
 		codecArgs = []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
@@ -288,14 +300,11 @@ func portalHLS(c *gin.Context) {
 		return
 	}
 	sid := fmt.Sprintf("%d", time.Now().UnixNano())
-	ss := &hlsSession{dir: dir, cmd: cmd, cancel: cancel, m3u8Ready: make(chan struct{}), lastHit: time.Now(), audioRel: audioRel}
+	ss := &hlsSession{dir: dir, pick: pick, vc: vc, cmd: cmd, cancel: cancel, lastHit: time.Now(), audioRel: audioRel}
 	hlsSessionsMu.Lock()
 	hlsSessions[sid] = ss
 	hlsSessionsMu.Unlock()
-	go func() {
-		cmd.Wait()
-		close(ss.m3u8Ready)
-	}()
+	go cmd.Wait()
 	// 路径式地址：m3u8 内分片是相对路径，基于此 URL 解析自然带上 sid
 	c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
 }

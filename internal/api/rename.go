@@ -107,13 +107,12 @@ var parenValueRe = regexp.MustCompile(`\((\.[\w.-]+)\)`)
 // 多变量块：<.{a}{b}> — a 和 b 都非空才输出
 // 可嵌套变量：<({resource_effect}).{video_encode}> — effect 和 encode 都非空才输出
 func processBlocks(template string, replacements map[string]string) string {
-	// 从最内层开始匹配 <>
 	for {
 		// 找最深层的 <...> 块（不包含其他 <）
 		start := -1
+		replaced := false
 		for i := 0; i < len(template); i++ {
 			if template[i] == '<' && (i+1 >= len(template) || template[i+1] != '<') {
-				// 检查是否是 HTML 标签（不太可能，但防御一下）
 				start = i
 			}
 			if template[i] == '>' && start >= 0 {
@@ -145,13 +144,21 @@ func processBlocks(template string, replacements map[string]string) string {
 				} else {
 					template = template[:start] + template[i+1:]
 				}
-				start = -1
-				continue // 重新扫描
+				// 模板长度已变，当前索引失效——必须从头重扫（原实现 continue
+				// 带旧索引继续，插入内容更长时会错配）
+				replaced = true
+				break
 			}
 		}
-		if start == -1 {
-			break // 没有更多块了
+		if replaced {
+			continue // 重新从头扫描
 		}
+		if start >= 0 {
+			// 残留未闭合的 '<'（用户模板少写了 '>'）：按字面量剔除并结束。
+			// 原实现此处不改 template，外层 for 原样重扫 → 100% CPU 死循环
+			template = strings.ReplaceAll(template, "<", "")
+		}
+		break
 	}
 	return template
 }

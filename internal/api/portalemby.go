@@ -25,14 +25,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// embyProxy 反向代理到 EMBY管理 配置的服务器（自动附 api_key）
+// embyProxy 反向代理到 EMBY管理 配置的服务器（自动附 api_key）。
+// 安全收口：门户端口公开可达，此处只放行播放所需的视频流路径（GET
+// /emby/videos/**，即 master.m3u8 与分片）——此前任意路径任意方法都注入
+// 管理员 api_key 转发，公网访客可借此以管理员身份调用 Emby 全部 API
 func embyProxy(c *gin.Context) {
 	base, apiKey, ok := portalEmbyInfo()
 	if !ok {
 		c.String(http.StatusServiceUnavailable, "未配置 Emby（系统配置 → EMBY管理）")
 		return
 	}
-	target, _ := url.Parse(base)
+	target, perr := url.Parse(base)
+	if perr != nil || target.Host == "" {
+		c.String(http.StatusBadGateway, "Emby 地址无效: %s", base)
+		return
+	}
+	if c.Request.Method != http.MethodGet ||
+		!strings.HasPrefix(c.Request.URL.Path, "/api/portal/emby/videos/") {
+		log.Printf("[门户Emby] ✗ 拒绝非播放路径: %s %s", c.Request.Method, c.Request.URL.Path)
+		c.String(http.StatusForbidden, "forbidden")
+		return
+	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	orig := c.Request.URL.Path
 	embyPath := "/emby" + strings.TrimPrefix(orig, "/api/portal/emby")
@@ -64,8 +77,6 @@ func embyProxy(c *gin.Context) {
 
 // portalEmbyInfo 从设置读 Emby 连接
 func portalEmbyInfo() (base, apiKey string, ok bool) {
-	var h struct{ DB interface{ Model(interface{}) interface{} } }
-	_ = h
 	var cfg struct {
 		ServerURL string `json:"server_url"`
 		APIKey    string `json:"api_key"`

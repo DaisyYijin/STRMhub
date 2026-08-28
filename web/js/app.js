@@ -1082,7 +1082,7 @@ function startQrCodePolling(uid, time, sign) {
         // 更新账号信息显示
         const box = document.getElementById('acc-status-box');
         box.style.display = 'block';
-        document.getElementById('acc-username').textContent = data.username || '-';
+        document.getElementById('acc-menu-username').textContent = data.username || '-';
         document.getElementById('acc-capacity').textContent = '已绑定';
         setTimeout(() => { closeQrCode(); toast('115 账号绑定成功'); checkCookie(); }, 1200);
       } else if (status === 'expired' || status === 'cancelled') {
@@ -1151,7 +1151,7 @@ function updateAccCard(data) {
   if (data.avatar) {
     avatar.src = data.avatar; avatar.style.display = ''; ph.style.display = 'none';
   } else { avatar.style.display = 'none'; ph.style.display = 'flex'; }
-  document.getElementById('acc-username').textContent = data.username || '-';
+  document.getElementById('acc-menu-username').textContent = data.username || '-';
   document.getElementById('acc-channel').textContent = '通道：' + (data.channel || '-');
   document.getElementById('acc-uid').textContent = data.user_id || '-';
   // 会员：0=非会员；forever=终身；expire=到期时间戳（秒）
@@ -2278,7 +2278,7 @@ function openAccountModal() {
 }
 function closeAccountModal() { document.getElementById('account-modal').style.display = 'none'; }
 
-async function saveAccount(btn) {
+async function saveAccountModal(btn) {
   const newUsername = document.getElementById('acc-username').value.trim();
   const oldPwd = document.getElementById('acc-old-pwd').value;
   const newPwd = document.getElementById('acc-new-pwd').value;

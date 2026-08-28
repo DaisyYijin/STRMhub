@@ -46,8 +46,29 @@ type OrgConfig struct {
 	ShareCid    string `json:"-"` // 转存目录 cid（loadOrgConfig 注入；同为工作区根，绝不被当条目处理）
 }
 
-// renameTpl 全局重命名模板（runOrganizeEngine 初始化时从配置加载）
+// renameTpl 全局重命名模板（ensureRenameTpl 加载，两条整理引擎入口都会调用）
 var renameTpl *RenameConfig
+
+// ensureRenameTpl 加载重命名模板：用户配置（org-rename）优先，缺失或解析失败
+// 回退默认模板。此前只在 runOrganizeEngine 里初始化，转存触发的
+// runOrganizeEngineWithConfig 不经过它 → renameBeforeMove 解引用 nil panic
+func ensureRenameTpl() {
+	if v := modelSettingValue("org-rename"); v != "" {
+		var saved RenameConfig
+		if json.Unmarshal([]byte(v), &saved) == nil {
+			renameTpl = &saved
+			return
+		}
+	}
+	renameTpl = &RenameConfig{
+		MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+		MovieFile: "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		TVFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+		TVFile: "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		AVFolder: "{first_letter}-{title}",
+		AVFile: "{title}<.{resource_pix}><.{resource_type}>{ext}",
+	}
+}
 
 // RenameConfig 重命名配置
 type RenameConfig struct {
@@ -1089,21 +1110,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	replaceRules := loadReplaceRules()
 
 	// 加载重命名模板配置
-	if v := modelSettingValue("org-rename"); v != "" {
-		var saved RenameConfig
-		if json.Unmarshal([]byte(v), &saved) == nil {
-			renameTpl = &saved
-		}
-	} else {
-		renameTpl = &RenameConfig{
-			MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-			MovieFile: "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
-			TVFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-			TVFile: "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
-			AVFolder: "{first_letter}-{title}",
-			AVFile: "{title}<.{resource_pix}><.{resource_type}>{ext}",
-		}
-	}
+	ensureRenameTpl()
 
 	// 库根绝对路径（去重记录的网盘验证用；OpenAPI 通道取不到则跳过验证）
 	libAbs := ""
@@ -1991,6 +1998,9 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	}
 
 	replaceRules := loadReplaceRules()
+
+	// 重命名模板必须先就绪（转存触发路径此前漏了这一步 → renameBeforeMove nil panic）
+	ensureRenameTpl()
 
 	// 计算库根绝对路径（去重记录网盘验证用，不能传空否则验证被跳过）
 	libAbs := ""
