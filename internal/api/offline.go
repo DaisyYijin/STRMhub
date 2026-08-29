@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -470,6 +471,7 @@ type offlineTaskInfo struct {
 	key    string // info_hash 优先，空则 name
 	name   string
 	status int
+	delTime int64 // 完成时间戳（秒；115 任务列表会长期保留历史任务，用它区分新旧）
 }
 
 // fetchOfflineTaskList 拉取离线任务列表（web lixian 加密接口，防御式解析）
@@ -502,7 +504,14 @@ func fetchOfflineTaskList(cookie string) ([]offlineTaskInfo, error) {
 		if key == "" {
 			key = name
 		}
-		tasks = append(tasks, offlineTaskInfo{key: key, name: name, status: status})
+		delTime := int64(0)
+		switch v := m["del_time"].(type) {
+		case float64:
+			delTime = int64(v)
+		case string:
+			delTime, _ = strconv.ParseInt(v, 10, 64)
+		}
+		tasks = append(tasks, offlineTaskInfo{key: key, name: name, status: status, delTime: delTime})
 	}
 	return tasks, nil
 }
