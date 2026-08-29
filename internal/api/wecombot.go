@@ -301,17 +301,35 @@ func (h *Handler) wecomHandleCommand(text string) {
 		reply("已开始扫描媒体库，缺画质信息的文件将入队探测。")
 
 	case lower == "整理":
+		reply("已开始整理，完成后通知。")
 		go func() {
+			// 必须取任务互斥锁：此前直接调执行函数，可与全量同步/定时任务
+			// 并发搬动同一棵 115 目录树
+			if !fullSyncMu.TryLock() {
+				NotifyMessage("🤖 StrmHub", "○ 整理未开始：已有任务运行中")
+				return
+			}
+			defer fullSyncMu.Unlock()
+			beginTask("企微指令-整理")
+			defer endTask()
 			if _, _, err := h.executeOrganize(false); err != nil {
 				NotifyMessage("🤖 StrmHub", "✗ 整理失败: "+err.Error())
 			} else {
 				NotifyMessage("🤖 StrmHub", "✓ 整理完成（详见日志）")
 			}
 		}()
-		reply("已开始整理，完成后通知。")
 
 	case lower == "同步":
+		reply("已开始增量同步，完成后通知。")
 		go func() {
+			// 同上：增量同步与全量共用事件流与本地树，必须互斥
+			if !fullSyncMu.TryLock() {
+				NotifyMessage("🤖 StrmHub", "○ 增量同步未开始：已有任务运行中")
+				return
+			}
+			defer fullSyncMu.Unlock()
+			beginTask("企微指令-增量同步")
+			defer endTask()
 			p := h.incrParamsFromConfig()
 			if _, err := h.executeIncrementalSync(p); err != nil {
 				NotifyMessage("🤖 StrmHub", "✗ 增量同步失败: "+err.Error())
@@ -319,7 +337,6 @@ func (h *Handler) wecomHandleCommand(text string) {
 				NotifyMessage("🤖 StrmHub", "✓ 增量同步完成（详见日志）")
 			}
 		}()
-		reply("已开始增量同步，完成后通知。")
 
 	default:
 		reply("未识别的指令。发送「帮助」查看可用指令。")

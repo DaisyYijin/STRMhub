@@ -5,8 +5,12 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
+	"time"
+
 	"strmhub/internal/api"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
@@ -168,6 +172,20 @@ func main() {
 
 	// 企微聊天底栏菜单默认自动生成（自动整理 / 增量同步）
 	go api.WecomMenuAutoEnsure()
+
+	// 优雅退出：docker stop / 自更新收尾发 SIGTERM——直接杀进程会把
+	// 「115 已搬移、台账未写」的中间态留在云端（下次去重/洗版判定失据），
+	// 防抖队列里的入库通知也全部丢失。停 worker → 冲刷通知 → 留收尾窗口
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		log.Printf("收到信号 %v，优雅退出中（停止后台任务、冲刷待发通知）…", sig)
+		api.ShutdownWorkers()
+		time.Sleep(3 * time.Second) // 在途 115 请求收尾窗口（compose stop_grace_period 应≥此值）
+		log.Printf("✓ 退出完成")
+		os.Exit(0)
+	}()
 
 	log.Printf("StrmHub 管理后台: http://localhost:%d", cfg.Port)
 	if err := r.Run(":" + cfg.PortStr()); err != nil {

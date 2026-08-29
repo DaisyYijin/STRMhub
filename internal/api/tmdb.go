@@ -68,7 +68,21 @@ func loadTmdbClient() (*TmdbClient, error) {
 	if cfg.EnableProxy && cfg.ProxyUrl != "" {
 		tc.ProxyURL = cfg.ProxyUrl
 	}
+	if tc.ProxyURL == "" {
+		// 回退全局代理（系统配置 → 代理）：TMDB 配置卡没有独立的代理输入项，
+		// 此前只有 TG 通知/GitHub 检查/海报抓取走全局代理、识别链不走——
+		// 无直连环境下识别静默失败（USAGE 文档声称代理覆盖 TMDB 与实际不符）
+		tc.ProxyURL = getProxyURL()
+	}
 	tc.httpClient = &http.Client{Timeout: 15 * time.Second}
+	// 接线到 Transport——ProxyURL 字段此前只赋值从未使用，代理配置从未生效
+	if tc.ProxyURL != "" {
+		if pu, perr := parseProxyURL(tc.ProxyURL); perr == nil {
+			tc.httpClient.Transport = &http.Transport{Proxy: pu}
+		} else {
+			log.Printf("[TMDB] ○ 代理地址无效（忽略，走直连）: %s: %v", tc.ProxyURL, perr)
+		}
+	}
 	return tc, nil
 }
 

@@ -81,16 +81,24 @@ func fetch115Dirs(cookie, ua, cid string) ([]gin.H, int, string, error) {
 		return nil, 0, "", fmt.Errorf("Cookie 为空，请先扫码登录")
 	}
 
-	entries, count, origin, err := fetch115FilesPage(cookie, ua, cid, 0)
-	if err != nil {
-		return nil, 0, "", err
-	}
-
-	// 只返回文件夹
-	dirs := make([]gin.H, 0, len(entries))
-	for _, d := range entries {
-		if fmt.Sprint(d["f"]) == "0" {
-			dirs = append(dirs, gin.H{"cid": fmt.Sprint(d["cid"]), "name": fmt.Sprint(d["n"])})
+	// 翻页取全：目录选择器此前只取第一页（1150 条），大目录后面的文件夹看不到
+	dirs := make([]gin.H, 0, 64)
+	count, origin := 0, ""
+	offset := 0
+	for {
+		entries, c, o, err := fetch115FilesPage(cookie, ua, cid, offset)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		count, origin = c, o
+		for _, d := range entries {
+			if fmt.Sprint(d["f"]) == "0" {
+				dirs = append(dirs, gin.H{"cid": fmt.Sprint(d["cid"]), "name": fmt.Sprint(d["n"])})
+			}
+		}
+		offset += len(entries)
+		if len(entries) == 0 || offset >= count {
+			break
 		}
 	}
 	return dirs, count, origin, nil

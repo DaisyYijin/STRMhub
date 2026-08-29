@@ -315,6 +315,13 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		libName = info.n
 	}
 	libAbs := absPathOf(cookie, p.Cid, memo)
+	if libAbs == "" {
+		// 媒体库 cid 无效/未配置（如全量同步配置缺 cid 时默认 "0"）：
+		// 所有事件都会被判为 other 静默吞掉并标已消费 → STRM 永久缺失。
+		// 熔断本轮，事件原样留待配置修正
+		log.Printf("[同步] ⚠⚠ 媒体库 cid=%s 解析不出绝对路径（未配置或已失效），增量同步中止（事件未消费）。请到「全量同步」确认媒体库目录配置", p.Cid)
+		return sum, fmt.Errorf("媒体库 cid 无效（%s），增量同步中止（事件未消费，修正配置后重试即可补上）", p.Cid)
+	}
 	var excludedAbs []string
 	var orgCfgRaw struct {
 		Pending   string `json:"pending"`
@@ -407,10 +414,17 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		}
 	}
 
-	// 事件按时间正序应用（接口返回最新在前）
-	for i, j := 0, len(pending)-1; i < j; i, j = i+1, j-1 {
-		pending[i], pending[j] = pending[j], pending[i]
+	// 恢复上轮中断遗留的 pending 事件：此前只处理"本轮新插入"的行，
+	// 拉取中途失败/进程重启后已落库的事件永久滞留 pending，无人再消费
+	var stale []model.SyncEvent
+	h.DB.Where("status = ?", "pending").Order("event_time").Find(&stale)
+	if len(stale) > 0 {
+		log.Printf("[同步] ▶ 恢复上轮遗留未消费事件 %d 条", len(stale))
+		pending = append(stale, pending...)
 	}
+
+	// 事件按时间正序应用（接口返回最新在前）
+	sort.SliceStable(pending, func(i, j int) bool { return pending[i].EventTime < pending[j].EventTime })
 
 	// ---- 阶段二：应用事件 ----
 	filter := &syncFilter{
@@ -664,7 +678,14 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		log.Printf("[同步] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
 	}
 
-	// 标记事件已应用 + 更新水位
+	// 标记事件已应用 + 更新水位。
+	// 有目录遍历重试后仍失败（DirsSkipped>0）时绝不标记：被标记的事件永久
+	// 不再处理，对应 STRM 就永久缺失了。整轮不消费（下轮全量重做——
+	// STRM 写入是 upsert、删除幂等，重复处理无副作用，正确性优先）
+	if sum.DirsSkipped > 0 {
+		log.Printf("[同步] ⚠ 本轮有 %d 个目录处理失败，事件不标记已消费（下轮增量将重试），水位不推进", sum.DirsSkipped)
+		return sum, nil
+	}
 	now := time.Now()
 	ids := make([]string, 0, len(pending))
 	for _, ev := range pending {

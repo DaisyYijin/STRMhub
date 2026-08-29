@@ -124,55 +124,69 @@ func StartIncrScheduler(h *Handler) {
 			if !CronMatch(cron, time.Now()) {
 				continue
 			}
-			if !fullSyncMu.TryLock() {
-				log.Printf("[定时] ○ 已有任务运行中，本轮跳过")
-				continue
-			}
-			log.Printf("[定时] ▶ 定时任务开始（cron: %s）", cron)
-			beginTask("定时整理+增量")
-			start := time.Now()
-			// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
-			orgSteps, _, orgErr := h.executeOrganize(false)
-			if orgErr != nil {
-				log.Printf("[定时] ○ 整理跳过: %v", orgErr)
-			} else {
-				for _, st := range orgSteps {
-					if st["status"] == "失败" {
-						msg, _ := st["message"].(string)
-						log.Printf("[定时] ✗ 整理失败: %v", msg)
-					}
-				}
-			}
-			// 2) 增量同步（整理产生的 move 事件会被精确应用）
-			p := h.incrParamsFromConfig()
-			sum, err := h.executeIncrementalSync(p)
-			if err != nil {
-				log.Printf("[定时] 增量同步失败: %v", err)
-			}
-			// 空转判定：无整理产出且增量无新事件 → 整轮只留一行（此前每轮 ~10 行噪音）
-			idle := orgErr == nil
-			for _, st := range orgSteps {
-				if st["status"] == "失败" {
-					idle = false
-				}
-			}
-			if sum != nil && sum.EventsFresh > 0 {
-				idle = false
-			}
-			if idle {
-				log.Printf("[定时] ○ 空转（无待整理内容，无新事件）")
-			} else {
-				if sum != nil {
-					log.Printf("[定时] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",
-						sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
-				}
-				log.Printf("[定时] ✅ 定时任务完成，耗时 %.2f 秒", time.Since(start).Seconds())
-			}
-			endTask()
-			fullSyncMu.Unlock()
+			h.runScheduledTick(cron)
 		}
 	}()
 	log.Println("[调度] 调度器已启动（cron 触发 自动整理+增量同步；全量同步仅手动）")
+}
+
+// runScheduledTick 单轮定时任务（独立函数保证 defer 在本轮结束即执行——
+// defer 写在 for-select 循环体会累积到 goroutine 退出，锁被永久持有）。
+// defer 解锁 + recover：中途 panic（解析外部数据的路径是高发区）也不会
+// 永久抱死互斥锁——此前非 defer 的 Unlock 在 panic 时被跳过，之后所有
+// 同步入口都报"任务正在进行中"直到重启
+func (h *Handler) runScheduledTick(cron string) {
+	if !fullSyncMu.TryLock() {
+		log.Printf("[定时] ○ 已有任务运行中，本轮跳过")
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[定时] ✗ 任务 panic 已恢复: %v", r)
+		}
+		endTask()
+		fullSyncMu.Unlock()
+	}()
+	log.Printf("[定时] ▶ 定时任务开始（cron: %s）", cron)
+	beginTask("定时整理+增量")
+	start := time.Now()
+	// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
+	orgSteps, _, orgErr := h.executeOrganize(false)
+	if orgErr != nil {
+		log.Printf("[定时] ○ 整理跳过: %v", orgErr)
+	} else {
+		for _, st := range orgSteps {
+			if st["status"] == "失败" {
+				msg, _ := st["message"].(string)
+				log.Printf("[定时] ✗ 整理失败: %v", msg)
+			}
+		}
+	}
+	// 2) 增量同步（整理产生的 move 事件会被精确应用）
+	p := h.incrParamsFromConfig()
+	sum, err := h.executeIncrementalSync(p)
+	if err != nil {
+		log.Printf("[定时] 增量同步失败: %v", err)
+	}
+	// 空转判定：无整理产出且增量无新事件 → 整轮只留一行（此前每轮 ~10 行噪音）
+	idle := orgErr == nil
+	for _, st := range orgSteps {
+		if st["status"] == "失败" {
+			idle = false
+		}
+	}
+	if sum != nil && sum.EventsFresh > 0 {
+		idle = false
+	}
+	if idle {
+		log.Printf("[定时] ○ 空转（无待整理内容，无新事件）")
+	} else {
+		if sum != nil {
+			log.Printf("[定时] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",
+				sum.EventsFresh, sum.Deleted, sum.Moved, sum.StrmCreated, sum.AssetsDownloaded)
+		}
+		log.Printf("[定时] ✅ 定时任务完成，耗时 %.2f 秒", time.Since(start).Seconds())
+	}
 }
 
 // pruneSyncEvents 清理 30 天前已应用的生活事件（每日一次）。

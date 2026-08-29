@@ -65,8 +65,21 @@ func GetRecentRuns() []runRecord {
 	return out
 }
 
-// stopCh 进程退出信号（关闭后所有后台协程停止）
+// stopCh 进程退出信号（关闭后所有后台协程停止）。
+// ShutdownWorkers 优雅退出时调用：停后台轮询 + 立即冲刷防抖队列里的
+// 入库通知（15~120 秒防抖窗口内的通知在直接杀进程时全部丢失）
 var stopCh = make(chan struct{})
+
+// ShutdownWorkers 停止全部后台 worker 并冲刷待发通知（main 收到 SIGTERM 时调用）
+func ShutdownWorkers() {
+	select {
+	case <-stopCh:
+		// 已关闭（幂等）
+	default:
+		close(stopCh)
+	}
+	FlushMediaNotif()
+}
 
 // defaultLocalPath 本地媒体库默认根目录
 const defaultLocalPath = "/media"

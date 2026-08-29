@@ -302,9 +302,10 @@ func StartTransferWatcher(h *Handler) {
 			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
 			log.Printf("[守望] ⚑ 转存目录有 %d 个条目，触发自动整理+增量", len(entries))
 			ran := h.triggerOrganizeAndSync()
-			// 成功清空后冷却只要 60 秒（连续多个下载先后完成时快速接续）；
-			// 失败仍 5 分钟（在下方复查处设置）
-			lastTrigger = time.Now().Add(4 * time.Minute)
+			// 成功清空后冷却只要 60 秒（连续多个下载先后完成时快速接续）：
+			// 闸门是 since(lastTrigger)≥5min，把锚点拨回 4 分钟前即再等 60 秒
+			//（此前写成 +4min，实际冷却 9 分钟，快速接续从未生效）
+			lastTrigger = time.Now().Add(-4 * time.Minute)
 			if !ran {
 				lastTrigger = time.Now()
 				continue // 其他任务占用，本轮不计成败
@@ -312,9 +313,14 @@ func StartTransferWatcher(h *Handler) {
 			// 整理后复查：目录清空 = 成功；仍有条目 = 一轮失败。
 			// 连续 3 次失败（如整理反复报错/内容无法处理）后暂停 30 分钟，
 			// 避免每 5 分钟无限重试刷日志
-			if remaining, _, rerr := ops.listEntries(cid, 0); rerr == nil && len(remaining) == 0 {
+			remaining, _, rerr := ops.listEntries(cid, 0)
+			switch {
+			case rerr != nil:
+				// 查询失败≠未清空：不计失败次数（此前三次瞬时抖动就误触 30 分钟熔断）
+				log.Printf("[守望] ○ 复查转存目录失败（不计失败次数）: %v", rerr)
+			case len(remaining) == 0:
 				failCount = 0
-			} else {
+			default:
 				lastTrigger = time.Now() // 失败：恢复 5 分钟冷却
 				failCount++
 				log.Printf("[守望] ○ 整理后转存目录仍有内容（第 %d 次未清空）", failCount)
@@ -355,9 +361,11 @@ func StartOfflineTaskMonitor(h *Handler) {
 				key := t.key
 				prev, seen := lastStatus[key]
 				lastStatus[key] = t.status
-				if !seen || prev == t.status || notified[key] {
+				if notified[key] || (seen && prev == t.status) {
 					continue
 				}
+				// !seen 且已终态：进程重启/停机期间完成的任务，同样要处理
+				//（此前首轮必须先"见到非终态"才会触发，秒传任务永远漏掉）
 				switch t.status {
 				case 2: // 完成
 					log.Printf("[离线] ✓ 下载完成: %s（触发整理）", truncateStr(t.name, 60))

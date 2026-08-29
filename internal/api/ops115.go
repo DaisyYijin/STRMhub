@@ -108,19 +108,26 @@ func mkdir115(cookie, parentCid, folderName string) (string, error) {
 	return "", fmt.Errorf("目录已创建但未获取到 cid（data=%s）", truncateStr(string(result.Data), 100))
 }
 
-// findSubDir115 在指定目录下查找名为 name 的子目录，返回 cid（不存在返回空）
+// findSubDir115 在指定目录下查找名为 name 的子目录，返回 cid（不存在返回空）。
+// 翻页查找：单层条目超一页（1150）时只查第一页会漏掉目标目录，
+// ensurePath 随之误走 mkdir（重名被 115 拒绝则整理失败）
 func findSubDir115(cookie, parentCid, name string) (string, error) {
-	entries, count, err := list115Entries(cookie, parentCid, 0)
-	if err != nil {
-		return "", err
-	}
-	for _, d := range entries {
-		if fmt.Sprint(d["f"]) == "0" && fmt.Sprint(d["n"]) == name {
-			return fmt.Sprint(d["cid"]), nil
+	offset := 0
+	for {
+		entries, count, err := list115Entries(cookie, parentCid, offset)
+		if err != nil {
+			return "", err
+		}
+		for _, d := range entries {
+			if fmt.Sprint(d["f"]) == "0" && fmt.Sprint(d["n"]) == name {
+				return fmt.Sprint(d["cid"]), nil
+			}
+		}
+		offset += len(entries)
+		if len(entries) == 0 || offset >= count {
+			return "", nil
 		}
 	}
-	_ = count
-	return "", nil
 }
 
 // ensurePathCache parent+路径→最终 cid 缓存：整理每部影视都要 ensure

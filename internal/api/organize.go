@@ -1386,12 +1386,15 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			}
 		}
 		if err != nil || media == nil {
-			msg := "TMDB 未找到匹配"
 			if err != nil {
-				msg = "TMDB 识别失败: " + err.Error()
+				// 瞬时错误（网络抖动/限流）≠ 找不到：绝不移冗余——
+				// 好内容被误分流后只能靠人工捞回。留在待整理目录，下轮重试
+				results = append(results, OrganizeResult{FileName: dir.Name + "/", Status: "failed", Message: "TMDB 暂时不可达: " + err.Error()})
+				onLog(fmt.Sprintf("○ %s/ - TMDB 暂时不可达（%v），留在待整理目录下轮重试", dir.Name, err))
+				return results
 			}
 			moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
-			onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
+			onLog(fmt.Sprintf("○ %s/ - TMDB 未找到匹配，已移到冗余", dir.Name))
 			return results
 		}
 	}
@@ -1826,12 +1829,19 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 
 	// TMDB 识别
 	media, err := tc.recognize(parsed)
-	if err != nil || media == nil {
+	if err != nil {
+		// 瞬时错误（网络/限流）：留在待整理目录，下轮重试（移冗余会误分流好内容）
+		result.Status = "failed"
+		result.Message = "TMDB 暂时不可达，留在待整理: " + err.Error()
+		onLog(fmt.Sprintf("○ %s - TMDB 暂时不可达（%v），留在待整理目录下轮重试", f.Name, err))
+		return result
+	}
+	if media == nil {
 		moveQuietly(ops, cfg.Redundant, []string{f.Fid}, f.Name, onLog)
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Redundant, false, onLog)
 		result.Status = "failed"
-		result.Message = "TMDB 识别失败，已移到冗余"
-		onLog(fmt.Sprintf("✗ %s - TMDB 识别失败，已移到冗余", f.Name))
+		result.Message = "TMDB 未找到匹配，已移到冗余"
+		onLog(fmt.Sprintf("✗ %s - TMDB 未找到匹配，已移到冗余", f.Name))
 		return result
 	}
 

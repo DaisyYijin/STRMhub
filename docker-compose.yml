@@ -3,6 +3,7 @@ services:
     image: ghcr.io/daisyyijin/strmhub:latest
     container_name: strmhub
     restart: unless-stopped
+    stop_grace_period: 20s   # 优雅退出窗口：SIGTERM 后程序需要 ~3 秒收尾（停 worker、冲刷通知）
     ports:
       - "6060:6060"   # 管理后台
       - "6086:6086"   # 302 直链代理
