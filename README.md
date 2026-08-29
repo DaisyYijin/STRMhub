@@ -52,7 +52,7 @@ flowchart LR
 ### 安全与稳定
 - 115 API 全局限流（读 1s / 写 3s 分级，防风控），UI 可调
 - 日志轮转（10MB × 3 份），实时日志页按任务过滤
-- JWT 登录 + 登录防爆破（同 IP 连续 5 次失败锁定 10 分钟）
+- JWT 登录 + 登录防爆破（同 IP 连续 5 次失败锁定 10 分钟）；管理员账号由环境变量 `AUTH_USER` / `AUTH_PASSWORD` 提供
 - 115 OpenAPI（PKCE OAuth 授权 + Token 自动刷新）与 Cookie 双通道互备
 
 ## 快速部署
@@ -80,6 +80,8 @@ services:
       - ./logs:/logs
     environment:
       - TZ=Asia/Shanghai
+      - AUTH_USER=admin          # 管理后台账号（环境变量管理，无网页注册）
+      - AUTH_PASSWORD=change-me  # ★ 改成强密码；修改后 docker compose up -d 生效
 ```
 
 多架构镜像（amd64 / arm64）由 GitHub Actions 自动构建，每次推送 main 分支自动更新 `latest`。
@@ -103,16 +105,20 @@ services:
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
+| `AUTH_USER` | — | **管理员用户名**（推荐在 compose 中显式配置） |
+| `AUTH_PASSWORD` | — | **管理员密码**；修改后 `docker compose up -d` 重启生效 |
 | `PORT` | 6060 | 管理后台端口 |
 | `PROXY_PORT` | 6086 | 302 代理端口 |
 | `DATA_DIR` | /data | 数据目录 |
 | `CONFIG_DIR` | /config | 配置目录 |
-| `JWT_SECRET` | （内置值） | **公网部署务必修改** |
+| `JWT_SECRET` | 自动生成 | 登录令牌密钥；未设置时首启自动生成随机密钥存于 `/config/jwt.key`，重启不失效 |
 | `STRMHUB_115_INTERVAL` | 1000 | 115 读接口最小间隔（毫秒），数据库设置优先 |
+
+> **管理员账号说明**：网页注册已移除。账号以环境变量 `AUTH_USER` / `AUTH_PASSWORD` 为准，每次启动自动同步；两者都未配置且无历史账号时，首次启动会自动生成随机密码并打印在容器日志（`docker logs strmhub`）。改环境变量即改密码，重启生效。
 
 ## 基本使用流程
 
-1. 浏览器打开 `http://IP:6060`，首次访问注册管理员
+1. 浏览器打开 `http://IP:6060`，用 compose 里配置的 `AUTH_USER` / `AUTH_PASSWORD` 登录
 2. **账号管理**：扫码或 OpenAPI 授权登录 115
 3. **账号同步**：配置网盘根目录与本地 `/media`，执行全量同步
 4. Emby 添加媒体库指向 `/media`（可用插件中心「一键创建 Emby 媒体库」），播放确认 DirectPlay
@@ -135,5 +141,5 @@ services:
 ## 注意事项
 
 - 115 对高频请求有风控，**不要把 API 间隔调低于默认值**；写入类操作保持 ≥3s
-- 公网部署请修改 `JWT_SECRET` 并使用 HTTPS 反代
+- 公网部署请配置强 `AUTH_PASSWORD` 并使用 HTTPS 反代；`JWT_SECRET` 不设置会自动生成并持久化，无需手工管理
 - STRM 目录（`/media`）需要 Emby 同时挂载，路径不一致时在 EMBY 配置里设置路径映射（`本地路径#Emby路径`）

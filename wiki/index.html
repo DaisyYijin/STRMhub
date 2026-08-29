@@ -1076,7 +1076,9 @@ tv:
   <details><summary>机器人菜单没出现？</summary><p>保存消息配置会自动生成；企微客户端有缓存，退出该会话重进一次。</p></details>
   <details><summary>识别失败的文件去哪了？</summary><p>「冗余」目录。人工把文件/目录改成更规范的名字（带片名+年份）再丢回待整理即可重试；网络原因失败的会留在待整理自动重试。</p></details>
   <details><summary>支持别的网盘吗？</summary><p>当前 115 专属；界面上「规划中」的卡片即未来方向（123/夸克/阿里/OpenList）。</p></details>
-  <details><summary>如何完全重置？</summary><p>停容器删掉 <code>config/</code> 与 <code>data/</code> 再启动＝全新安装；<code>media/</code> 建议一并清空重同步。只重置管理员密码：<code>docker exec strmhub ./strmhub --reset-admin</code>。</p></details>
+  <details><summary>忘记管理员密码 / 想改密码？</summary>
+    <p>账号由环境变量 <code>AUTH_USER/AUTH_PASSWORD</code> 管理：修改 compose 里的值后 <code>docker compose up -d</code> 重启即生效。或执行 <code>docker exec strmhub ./strmhub --reset-admin</code> 删除凭据文件，重启后按环境变量重建（未配置环境变量则生成随机密码，见启动日志）。</p></details>
+  <details><summary>如何完全重置？</summary><p>停容器删掉 <code>config/</code> 与 <code>data/</code> 再启动＝全新安装；<code>media/</code> 建议一并清空重同步。只重置管理员：改 <code>AUTH_USER/AUTH_PASSWORD</code> 重启，或 <code>docker exec strmhub ./strmhub --reset-admin</code> 后重启重建。</p></details>
   <details><summary>多个人能用吗？</summary><p>管理后台单管理员（个人工具定位）；观影门户全家共用（建议设 PIN）；Emby 侧多用户由 Emby 自己管理。</p></details>
 </section>
 
