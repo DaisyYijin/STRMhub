@@ -158,7 +158,16 @@ func main() {
 	apiGroup := r.Group("/api")
 	api.SetupRoutes(apiGroup, db, cfg)
 
-	// 静态文件（前端）
+	// 静态文件（前端）：no-cache = 协商缓存（ETag 校验，未变返回 304 不重下）。
+	// 之前靠 index.html 里手写的 ?v=N 版本号失效缓存——更新后浏览器仍可能
+	// 用旧 JS 调新接口/碰已删除的元素（本次登录页报错即此因），改为服务端
+	// 强制校验，一劳永逸
+	noCacheStatic := func(c *gin.Context, path string) {
+		c.Header("Cache-Control", "no-cache")
+		c.File(path)
+	}
+	r.GET("/css/style.css", func(c *gin.Context) { noCacheStatic(c, "./web/css/style.css") })
+	r.GET("/js/app.js", func(c *gin.Context) { noCacheStatic(c, "./web/js/app.js") })
 	r.Static("/css", "./web/css")
 	r.Static("/js", "./web/js")
 	r.StaticFile("/cms-115.png", "./web/cms-115.png")
