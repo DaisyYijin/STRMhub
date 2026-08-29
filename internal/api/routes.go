@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"strmhub/internal/config"
@@ -274,12 +276,15 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 任务状态（前端轮询：任务进行中禁用同步/整理按钮）+ 最近运行记录
 		protected.GET("/sync/status", func(c *gin.Context) {
-			running, name, start := TaskStatus()
+			running, name, start, progress := TaskStatus()
 			g := gin.H{"running": running}
 			if running {
 				g["task"] = name
 				g["since"] = start.Format("15:04:05")
 				g["elapsed"] = time.Since(start).Truncate(time.Second).String()
+				if progress != "" {
+					g["progress"] = progress
+				}
 			}
 			g["recent"] = GetRecentRuns()
 			c.JSON(http.StatusOK, g)
@@ -292,6 +297,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		protected.GET("/strm", h.ListStrmFiles)
 		protected.DELETE("/strm/:id", h.DeleteStrmFile)
+		protected.POST("/strm/cleanup", h.OrphanCleanup)
 						
 		// 刮削整理
 		protected.GET("/scrape/rules", h.ListScrapeRules)
@@ -357,6 +363,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 系统设置
 		protected.GET("/system/logs", h.GetSystemLogs)
+		protected.GET("/system/backup", h.SystemBackup)
+		protected.GET("/system/guide", h.SystemGuide)
 		protected.GET("/storage/115/diagnose", h.Diagnose115)
 	}
 }
@@ -947,6 +955,22 @@ func (h *Handler) GetSyncLogs(c *gin.Context) {
 
 // ListStrmFiles 同步记录：查 SyncedFile 台账（此前查 StrmFile 表，
 // 无任何代码写入该表——页面永远"暂无同步记录"，现已改台账真实数据）
+// strmLocalRoot STRM 管理用的本地库根（全量同步配置的 local_path）
+func (h *Handler) strmLocalRoot() string {
+	var full struct {
+		LocalPath string `json:"local_path"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("full")), &full)
+	if full.LocalPath == "" {
+		return defaultLocalPath
+	}
+	return full.LocalPath
+}
+
+// ListStrmFiles 同步台账列表（STRM 管理页数据源）。
+// q=模糊搜索 rel_path；missing=1 只看本地文件缺失的失效条目；
+// 每行附 valid=本地文件是否存在（strm 与附属实体两种形态）
+// GET /strm?page=&page_size=&q=&missing=
 func (h *Handler) ListStrmFiles(c *gin.Context) {
 	page, pageSize := 1, 30
 	if v := c.Query("page"); v != "" {
@@ -958,19 +982,237 @@ func (h *Handler) ListStrmFiles(c *gin.Context) {
 	if pageSize < 1 || pageSize > 200 {
 		pageSize = 30
 	}
-	var total int64
-	h.DB.Model(&model.SyncedFile{}).Count(&total)
-	var files []model.SyncedFile
-	h.DB.Order("updated_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&files)
-	c.JSON(http.StatusOK, gin.H{"data": files, "total": total})
+	if page < 1 {
+		page = 1
+	}
+	root := h.strmLocalRoot()
+	q := strings.TrimSpace(c.Query("q"))
+	onlyMissing := c.Query("missing") == "1"
+
+	// missing 过滤在内存做（SQL 表达不了"本地文件不存在"）
+	type row struct {
+		model.SyncedFile
+		Valid bool `json:"valid"`
+	}
+	var all []model.SyncedFile
+	tx := h.DB.Order("updated_at DESC").Limit(2000)
+	if q != "" {
+		tx = tx.Where("rel_path LIKE ?", "%"+q+"%")
+	}
+	tx.Find(&all)
+	var rows []row
+	missingTotal := 0
+	for _, sf := range all {
+		local := filepath.Join(root, filepath.FromSlash(sf.RelPath))
+		valid := false
+		if _, err := os.Stat(local); err == nil {
+			valid = true
+		} else if sf.Kind == "video" {
+			if _, err := os.Stat(strings.TrimSuffix(local, ".strm")); err == nil {
+				valid = true // keep_ext=false 时实体视频也视为有效
+			}
+		}
+		if !valid {
+			missingTotal++
+		}
+		if onlyMissing && valid {
+			continue
+		}
+		rows = append(rows, row{SyncedFile: sf, Valid: valid})
+	}
+	total := len(rows)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows[start:end], "total": total, "missing_total": missingTotal, "scanned": len(all)})
 }
 
+// DeleteStrmFile 删除单条：本地 strm/实体 + 台账行（此前删的是从未写入的
+// StrmFile 表——永远返回成功但毫无效果）
+// DELETE /strm/:id
 func (h *Handler) DeleteStrmFile(c *gin.Context) {
 	id := c.Param("id")
-	h.DB.Delete(&model.StrmFile{}, id)
-	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+	var sf model.SyncedFile
+	if err := h.DB.First(&sf, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "记录不存在"})
+		return
+	}
+	root := h.strmLocalRoot()
+	local := filepath.Join(root, filepath.FromSlash(sf.RelPath))
+	removed := ""
+	for _, cand := range []string{local, strings.TrimSuffix(local, ".strm")} {
+		if cand == "" {
+			continue
+		}
+		if _, err := os.Stat(cand); err == nil {
+			if err := os.Remove(cand); err == nil {
+				removed = cand
+			}
+			break
+		}
+	}
+	h.DB.Delete(&sf)
+	log.Printf("[STRM管理] 删除记录 #%s：%s（本地文件：%s）", id, sf.RelPath, removedOr(removed))
+	c.JSON(http.StatusOK, gin.H{"message": "已删除" + removedOr(removed)})
 }
 
+func removedOr(removed string) string {
+	if removed == "" {
+		return "无本地文件"
+	}
+	return "已删本地文件"
+}
+
+// OrphanCleanup 清理孤儿 STRM：本地存在但台账没有的 .strm 文件
+//（网盘已删但事件丢失/长期停跑增量时产生）。只删可再生的 .strm，
+// 附属实体（图片/nfo）只统计不动——误删代价不对等
+// POST /strm/cleanup  ?dry=1 只统计不删
+func (h *Handler) OrphanCleanup(c *gin.Context) {
+	root := h.strmLocalRoot()
+	dry := c.Query("dry") == "1"
+	var orphans []string
+	ledger := map[string]bool{}
+	var sfs []model.SyncedFile
+	h.DB.Find(&sfs)
+	for _, sf := range sfs {
+		ledger[sf.RelPath] = true
+	}
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.HasSuffix(rel, ".strm") && !ledger[rel] {
+			orphans = append(orphans, rel)
+		}
+		return nil
+	})
+	if dry || len(orphans) == 0 {
+		c.JSON(http.StatusOK, gin.H{"count": len(orphans), "dry": true, "sample": firstN(orphans, 20)})
+		return
+	}
+	deleted := 0
+	for _, rel := range orphans {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err == nil {
+			deleted++
+		}
+	}
+	log.Printf("[STRM管理] ✅ 孤儿清理：删除 %d 个无主 .strm（扫描根=%s）", deleted, root)
+	c.JSON(http.StatusOK, gin.H{"count": deleted, "dry": false})
+}
+
+func firstN(list []string, n int) []string {
+	if len(list) <= n {
+		return list
+	}
+	return list[:n]
+}
+
+
+// SystemBackup 导出配置+数据库备份（zip 下载）。
+// 内容：setting.yaml（全部配置）、strmhub.db（VACUUM INTO 一致性快照）、
+// auth.yaml（管理员账号，含密码哈希）。换机迁移 = 下载后放到新机器对应目录
+// GET /system/backup
+func (h *Handler) SystemBackup(c *gin.Context) {
+	tmp, err := os.CreateTemp("", "strmhub-backup-*.zip")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时文件失败"})
+		return
+	}
+	defer os.Remove(tmp.Name())
+	defer tmp.Close()
+	zw := zip.NewWriter(tmp)
+
+	addFile := func(src, name string) {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return // 不存在的文件跳过（如尚未注册过账号）
+		}
+		w, err := zw.Create(name)
+		if err != nil {
+			return
+		}
+		_, _ = w.Write(data)
+	}
+	addFile(filepath.Join(h.Config.ConfigDir, "setting.yaml"), "config/setting.yaml")
+	addFile(filepath.Join(h.Config.ConfigDir, "auth.yaml"), "config/auth.yaml")
+	addFile(filepath.Join(h.Config.ConfigDir, "jwt.key"), "config/jwt.key")
+	addFile(filepath.Join(h.Config.ConfigDir, "115-cookie.txt"), "config/115-cookie.txt")
+
+	// sqlite 一致性快照（VACUUM INTO 不锁库）
+	dbSnap := filepath.Join(os.TempDir(), fmt.Sprintf("strmhub-db-%d.db", time.Now().UnixNano()))
+	defer os.Remove(dbSnap)
+	if err := h.DB.Exec("VACUUM INTO ?", dbSnap).Error; err == nil {
+		addFile(dbSnap, "data/strmhub.db")
+	} else {
+		log.Printf("[备份] ○ 数据库快照失败（只导出配置）: %v", err)
+	}
+	_ = zw.Close()
+
+	info, _ := tmp.Stat()
+	c.Header("Content-Disposition", "attachment; filename=strmhub-backup-"+time.Now().Format("20060102-150405")+".zip")
+	c.Header("Content-Type", "application/zip")
+	c.Data(http.StatusOK, "application/zip", func() []byte {
+		data, _ := os.ReadFile(tmp.Name())
+		return data
+	}())
+	_ = info
+}
+
+// SystemGuide 首启引导检查：逐项返回配置完成度（前端渲染"下一步"清单）
+// GET /system/guide
+func (h *Handler) SystemGuide(c *gin.Context) {
+	guide := gin.H{}
+	// 1. 115 账号
+	var storage model.Storage
+	guide["pan115"] = h.DB.Where("type = ?", "115").First(&storage).Error == nil && (storage.Cookie != "" || storage.AppID != "")
+	// 2. TMDB
+	var tmdbCfg model.TmdbConfig
+	guide["tmdb"] = h.DB.First(&tmdbCfg).Error == nil && tmdbCfg.ApiKey != ""
+	// 3. 整理目录
+	type orgBasic struct {
+		Pending string `json:"pending"`
+	}
+	var ob orgBasic
+	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &ob)
+	guide["orgDirs"] = ob.Pending != ""
+	// 4. 首次同步
+	var synced int64
+	h.DB.Model(&model.SyncedFile{}).Count(&synced)
+	guide["synced"] = synced > 0
+	// 5. Emby
+	type embyCfg struct {
+		ServerURL string `json:"server_url"`
+	}
+	var ec embyCfg
+	_ = json.Unmarshal([]byte(settingValueCompat("emby")), &ec)
+	guide["emby"] = ec.ServerURL != ""
+	// 6. 通知
+	guide["notify"] = false
+	if raw := settingValueCompat("message"); raw != "" {
+		var mc MessageConfig
+		if json.Unmarshal([]byte(raw), &mc) == nil {
+			guide["notify"] = mc.Wecom.isEnabled() || mc.TG.isEnabled()
+		}
+	}
+	done := 0
+	for _, k := range []string{"pan115", "tmdb", "orgDirs", "synced"} {
+		if v, _ := guide[k].(bool); v {
+			done++
+		}
+	}
+	guide["coreDone"] = done == 4 // 核心四步完成即隐藏引导卡
+	c.JSON(http.StatusOK, guide)
+}
 
 // ==================== 刮削整理（占位） ====================
 

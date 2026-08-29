@@ -57,6 +57,7 @@ function toast(msg) {
 // ==================== 页面标题映射 ====================
 const PAGE_TITLES = {
   'sync': ['115 账号同步', '全量 / 增量 / 分享同步'],
+  'strm': ['STRM 管理', '同步台账 · 失效清理 · 孤儿扫描'],
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
@@ -74,6 +75,7 @@ const PAGE_TITLES = {
 const PAGE_PATHS = {
   'dashboard': '/',
   'sync': '/sync',
+  'strm': '/strm',
   'organize': '/organize',
   'upload-download': '/upload-download',
   'config-accounts': '/accounts',
@@ -134,9 +136,12 @@ function showPage(id) {
     loadWash();
   }
   if (id === 'sync') { loadConfigs(); previewCron(); }
+  if (id === 'strm') loadStrmList(1);
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'config-message') loadConfigs();
+  if (id === 'config-system') loadPortalPin();
+  if (id === 'dashboard') loadGuide();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
@@ -576,10 +581,20 @@ async function pollTaskStatus() {
     const st = await api('/sync/status');
     if (st.running) {
       bar.style.display = 'block';
-      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '，开始于 ' + esc(st.since || '-') + '），其他同步/整理操作已暂不可用';
+      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '，开始于 ' + esc(st.since || '-') + '）'
+        + (st.progress ? '<br><span style="color:var(--text-2)">▸ ' + esc(st.progress) + '</span>' : '')
+        + '<br><span style="font-size:12px;color:var(--text-3)">其他同步/整理操作已暂不可用</span>';
       btns.forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
     } else {
-      bar.style.display = 'none';
+      // 空闲时展示最近任务（简易任务中心：成败/耗时/开始时间）
+      const runs = st.recent || [];
+      if (runs.length) {
+        bar.style.display = 'block';
+        bar.innerHTML = '<span style="font-size:12px;color:var(--text-3)">最近任务：</span>' + runs.slice(0, 3).map(r =>
+          '<span style="font-size:12px;margin-right:14px">' + (r.ok ? '✓' : '✗') + ' ' + esc(r.name) + '（' + esc(r.elapsed) + '，' + esc(r.start) + '）</span>').join('');
+      } else {
+        bar.style.display = 'none';
+      }
       btns.forEach(b => { b.disabled = false; b.style.opacity = ''; });
     }
   } catch (e) { /* 静默 */ }
@@ -591,6 +606,110 @@ function startTaskPoll() {
 }
 function stopTaskPoll() {
   if (taskPollTimer) { clearInterval(taskPollTimer); taskPollTimer = null; }
+}
+
+// ==================== 密钥输入遮罩 ====================
+// 所有 type=password 的输入框支持双击切换明文（title 提示）
+document.addEventListener('dblclick', e => {
+  const el = e.target;
+  if (el && el.tagName === 'INPUT' && el.type === 'password') {
+    el.type = 'text';
+    el.dataset.masked = '1';
+    el.title = '双击恢复遮罩';
+  } else if (el && el.tagName === 'INPUT' && el.type === 'text' && el.dataset.masked === '1') {
+    el.type = 'password';
+    el.title = '双击显示明文';
+  }
+});
+
+// ==================== STRM 管理页 ====================
+let strmFilter = 'all', strmPage = 1, strmPageSize = 30;
+function setStrmFilter(v) {
+  strmFilter = v;
+  document.querySelectorAll('#strm-missing-switch .seg-item').forEach(el => el.classList.toggle('active', el.dataset.value === v));
+  loadStrmList(1);
+}
+async function loadStrmList(page) {
+  strmPage = page || strmPage;
+  const q = document.getElementById('strm-search') ? document.getElementById('strm-search').value.trim() : '';
+  const tb = document.getElementById('strm-tbody');
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="5" style="color:var(--text-3)">加载中…</td></tr>';
+  try {
+    const d = await api('/strm?page=' + strmPage + '&page_size=' + strmPageSize + '&q=' + encodeURIComponent(q) + (strmFilter === 'missing' ? '&missing=1' : ''));
+    const stat = document.getElementById('strm-stat');
+    if (stat) stat.textContent = '共 ' + d.total + ' 条（扫描 ' + d.scanned + '，失效 ' + d.missing_total + '）';
+    if (!d.data || !d.data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:var(--text-3)">无记录</td></tr>'; }
+    else tb.innerHTML = d.data.map(r =>
+      '<tr><td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.rel_path) + '">' + esc(r.rel_path) + '</td>'
+      + '<td>' + (r.kind === 'video' ? '视频' : '附属') + '</td>'
+      + '<td>' + (r.size > 0 ? (r.size / 1073741824).toFixed(1) + 'G' : '') + '</td>'
+      + '<td>' + (r.valid ? '<span style="color:#27ae60">有效</span>' : '<span style="color:#e74c3c">失效</span>') + '</td>'
+      + '<td><button class="btn btn-outline" style="padding:2px 10px;font-size:12px" onclick="delStrm(' + r.id + ',encodeURIComponent(this.closest(\'tr\').title))">删除</button></td></tr>').join('');
+    const totalPages = Math.max(1, Math.ceil(d.total / strmPageSize));
+    const info = document.getElementById('strm-page-info');
+    if (info) info.textContent = strmPage + ' / ' + totalPages;
+    const prev = document.getElementById('strm-prev'), next = document.getElementById('strm-next');
+    if (prev) prev.disabled = strmPage <= 1;
+    if (next) next.disabled = strmPage >= totalPages;
+  } catch (e) { tb.innerHTML = '<tr><td colspan="5" style="color:var(--danger)">' + esc(e.message) + '</td></tr>'; }
+}
+function strmPageNav(delta) { loadStrmList(strmPage + delta); }
+async function delStrm(id, encPath) {
+  const path = decodeURIComponent(encPath || '');
+  if (!confirm('删除记录：' + path + '\n（同时删除本地 strm 文件）')) return;
+  try { await api('/strm/' + id, { method: 'DELETE' }); toast('已删除'); loadStrmList(); } catch (e) { toast(e.message); }
+}
+async function cleanupOrphanStrm2(btn) {
+  if (!confirm('清理孤儿 STRM：删除本地存在但网盘已不存在的 .strm 文件（可随时全量同步重建）。\n先统计确认？')) return;
+  btn.disabled = true; btn.textContent = '扫描中...';
+  try {
+    const dry = await api('/strm/cleanup?dry=1', { method: 'POST' });
+    if (!dry.count) { toast('无孤儿 STRM'); return; }
+    if (!confirm('发现 ' + dry.count + ' 个孤儿 .strm（示例：' + (dry.sample ? dry.sample.slice(0, 3).join('、') : '') + '…）\n确认删除？')) return;
+    const r = await api('/strm/cleanup', { method: 'POST' });
+    toast('已清理 ' + r.count + ' 个孤儿 STRM');
+    loadStrmList(1);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = '清理孤儿 STRM'; }
+}
+
+// ==================== 首启引导 ====================
+async function loadGuide() {
+  const card = document.getElementById('guide-card');
+  if (!card) return;
+  try {
+    const g = await api('/system/guide');
+    if (g.coreDone) { card.style.display = 'none'; return; }
+    const steps = [
+      [g.pan115, '绑定 115 账号（账号管理 → 扫码登录）', 'config-accounts'],
+      [g.tmdb, '填写 TMDB API Key（系统配置 → TMDB 配置）', 'config-system'],
+      [g.orgDirs, '选择待整理目录（自动整理 → 基础配置）', 'organize'],
+      [g.synced, '执行首次全量同步（账号同步 → 开始全量同步）', 'sync'],
+      [g.emby, '对接 Emby（可选，系统配置 → EMBY 管理）', 'config-system'],
+      [g.notify, '配置通知（可选，消息配置）', 'config-message'],
+    ];
+    document.getElementById('guide-steps').innerHTML = steps.map(([ok, text, page]) =>
+      '<div>' + (ok ? '✅' : '⬜') + ' <span style="' + (ok ? 'text-decoration:line-through;color:var(--text-3)' : '') + '">' + text + '</span>'
+      + (ok ? '' : ' <a href="javascript:void(0)" onclick="showPage(\'' + page + '\')" style="color:var(--primary)">去设置 →</a>') + '</div>').join('');
+    card.style.display = '';
+  } catch (e) { /* 引导失败静默 */ }
+}
+
+// ==================== 门户 PIN ====================
+async function savePortalPin(btn) {
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    const pin = document.getElementById('portal-pin').value.trim();
+    await api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'portal', value: JSON.stringify({ pin }) }) });
+    toast(pin ? '✓ 门户 PIN 已启用' : '✓ 门户 PIN 已关闭');
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = '保存 PIN'; }
+}
+async function loadPortalPin() {
+  try {
+    const d = await api('/config/setting?key=portal');
+    const el = document.getElementById('portal-pin');
+    if (el && d.value) { try { el.value = JSON.parse(d.value).pin || ''; } catch (e) {} }
+  } catch (e) {}
 }
 
 // ==================== 目录选择器 ====================
@@ -1810,12 +1929,17 @@ async function saveConfig(key) {
   }
   const value = collectConfig(key);
   if (value === null) { toast('该配置暂未支持保存'); return; }
+  // 防重复点击：请求期间禁用事件源按钮
+  const btn = (typeof event !== 'undefined' && event && event.target && event.target.closest) ? event.target.closest('button') : null;
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
   try {
     await api('/config/setting', { method: 'POST', body: JSON.stringify({ key, value: JSON.stringify(value) }) });
     toast('保存成功');
     if (key === 'share') warnShareDirOverlap();
     if (key === 'org-basic') warnPendingDirOverlap();
   } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = origText; } }
 }
 
 // 重置配置（带气泡确认）

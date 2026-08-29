@@ -9,6 +9,7 @@ package api
 
 import (
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,11 +32,13 @@ import (
 
 var portalCfg *config.Config
 
-// StartPortal 启动观影门户（独立端口，公开访问）
+// StartPortal 启动观影门户（独立端口，公开访问）。
+// 可选 PIN 码（系统配置 → 门户访问）：设置后所有路由须携带有效会话 cookie，
+// 未通过者拿到 PIN 输入页——公网部署下门户默认全裸（直链/海报/播放全开放）
 func StartPortal(cfg *config.Config) {
 	portalCfg = cfg
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.Recovery(), portalPinGuard)
 
 	r.GET("/", portalPage)
 	r.GET("/api/portal/nav", portalNav)
@@ -53,6 +56,8 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/api/portal/estr", portalExtractSub)
 	r.GET("/api/portal/embyplay", portalEmbyPlay)
 	r.Any("/api/portal/emby/*path", embyProxy)
+	// PIN 会话（guard 下方注册：通过 guard 后才会到达）
+	r.POST("/api/portal/auth", portalPinAuth)
 
 	go portalBackfillWorker()
 	go hlsCleaner()
@@ -62,6 +67,88 @@ func StartPortal(cfg *config.Config) {
 		log.Printf("门户启动失败（端口 %d 被占用？）: %v", cfg.PortalPort, err)
 	}
 }
+
+// portalPinOf 门户 PIN 配置（空 = 不启用）
+func portalPinOf() string {
+	var cfg struct {
+		PIN string `json:"pin"`
+	}
+	_ = json.Unmarshal([]byte(settingValueCompat("portal")), &cfg)
+	return strings.TrimSpace(cfg.PIN)
+}
+
+// portalPinToken 会话 cookie 值 = sha256(PIN + 固定盐)：无状态，改 PIN 即全员失效
+func portalPinToken(pin string) string {
+	sum := sha256.Sum256([]byte("strmhub-portal:" + pin))
+	return hex.EncodeToString(sum[:])
+}
+
+// portalPinGuard PIN 门卫：配置了 PIN 且会话 cookie 不匹配时，
+// 页面请求回 PIN 输入页、API 请求回 401（前端跳 PIN 页）
+func portalPinGuard(c *gin.Context) {
+	pin := portalPinOf()
+	if pin == "" {
+		c.Next()
+		return
+	}
+	if cookie, err := c.Cookie("portal_pin"); err == nil && cookie == portalPinToken(pin) {
+		c.Next()
+		return
+	}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/portal/auth") {
+		c.Next() // 认证端点本身放行（guard 只拦未授权访问）
+		return
+	}
+	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "pin_required"})
+		c.Abort()
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(portalPinHTML))
+	c.Abort()
+}
+
+// PortalPinAuth POST /api/portal/auth body {"pin":"..."} → 校验并下发会话 cookie
+func portalPinAuth(c *gin.Context) {
+	var req struct {
+		PIN string `json:"pin"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	want := portalPinOf()
+	if want == "" || strings.TrimSpace(req.PIN) != want {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "PIN 不正确"})
+		return
+	}
+	c.SetCookie("portal_pin", portalPinToken(want), 30*24*3600, "/", "", false, true)
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+// portalPinHTML PIN 输入页（暗色，与门户风格一致）
+const portalPinHTML = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>StrmHub · 访问验证</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1115;color:#e5eaf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+.card{background:#1a1e27;border:1px solid #2a3040;border-radius:14px;padding:36px 30px;width:min(92vw,360px);text-align:center}
+h1{font-size:18px;margin:0 0 6px}p{color:#8b93a7;font-size:13px;margin:0 0 22px}
+input{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:8px;border:1px solid #2a3040;background:#12151d;color:#e5eaf3;font-size:16px;text-align:center;letter-spacing:2px;outline:none}
+input:focus{border-color:#7c3aed}
+button{width:100%;margin-top:14px;padding:12px;border:none;border-radius:8px;background:#7c3aed;color:#fff;font-size:15px;cursor:pointer}
+button:hover{background:#8b5cf6}
+.err{color:#ef4444;font-size:13px;min-height:18px;margin-top:10px}
+</style></head><body>
+<div class="card"><h1>🎬 观影门户</h1><p>该门户已启用访问验证</p>
+<input id="pin" type="password" placeholder="输入访问 PIN" autofocus>
+<button onclick="go()">进入</button><div class="err" id="err"></div></div>
+<script>
+async function go(){
+  const pin=document.getElementById('pin').value.trim();
+  const r=await fetch('/api/portal/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+  if(r.ok){location.reload()}else{document.getElementById('err').textContent='PIN 不正确'}
+}
+document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+</script></body></html>`
 
 // portalTitleEntry 从台账聚合出的一个标题条目
 type portalTitleEntry struct {
@@ -561,6 +648,17 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
 .fail{margin-top:10px;font-size:13px;color:var(--dim);display:none;line-height:2;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px 16px}
 .fail input{width:60%;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;color:var(--text);font-size:12px}
 .pright{width:300px;flex:none;background:var(--card);border:1px solid var(--bd);border-radius:10px;max-height:calc(75vh + 60px);overflow-y:auto;padding:12px}
+/* 移动端控制条：换行收纳次要控件、加大触摸目标、进度条加高可拖动 */
+@media (max-width:768px){
+  #pbar{flex-wrap:wrap;padding:6px 8px 10px;gap:2px 4px}
+  #pbar .ib{padding:8px 10px;font-size:14px}
+  #seek{order:-1;flex-basis:100%;height:22px;display:flex;align-items:center;margin-bottom:2px}
+  #seek::before{content:'';display:block;width:100%;height:5px;background:rgba(255,255,255,.22);border-radius:3px}
+  #seekcur{height:5px;top:50%;transform:translateY(-50%)}
+  #seekcur i{width:16px;height:16px;right:-8px}
+  .pt{width:auto;font-size:11px;padding:0 4px}
+  #pbar .ib.hide-m{display:none}
+}
 .pright h3{font-size:14px;margin-bottom:8px;color:var(--dim)}
 .epi{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:13px}
 .epi:hover{background:var(--hover)}
@@ -678,7 +776,9 @@ function goType(t){curType=t;view='list';curCat='';curSort='recent';curPage=1;re
 function goCat(t,c){curType=t;view='list';curCat=c;curSort='recent';curPage=1;renderTabs(t);nav('#/list');renderList()}
 function renderTabs(on){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.t===on))}
 let kwTimer;
-$('kw').oninput=()=>{clearTimeout(kwTimer);kwTimer=setTimeout(()=>{if(!$('kw').value.trim())return;view='search';nav('#/search');renderSearch()},350)};
+$('kw').oninput=()=>{clearTimeout(kwTimer);kwTimer=setTimeout(()=>{
+  if(!$('kw').value.trim()){if(view==='search')nav('#/');return} // 清空关键词回首页（此前只能点 logo）
+  view='search';nav('#/search');renderSearch()},350)};
 
 async function renderHome(){
   const c=$('content');c.innerHTML='<div class="empt">加载中…</div>';renderTabs('');
@@ -745,9 +845,13 @@ async function renderSearch(){
 
 /* ---------- 详情 ---------- */
 async function openDetail(key){
+  // 立即弹骨架态（加载反馈），数据到达后填充——慢网时不再毫无反应
+  try{$('d-title').textContent='加载中…';$('d-meta').textContent='';$('d-ov').textContent='';
+    $('d-eps').innerHTML='';$('d-badges').innerHTML='';$('d-poster').removeAttribute('src');
+    $('mask').style.display='flex'}catch(e){}
   let d=null;
   try{d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json()}catch(e){}
-  if(!d||!d.media){alert('条目已失效或加载失败，请返回列表刷新');return}
+  if(!d||!d.media){$('mask').style.display='none';toast2('条目已失效或加载失败，请返回列表刷新');return}
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d;
   $('d-poster').src=curMedia.poster_path?('/poster'+curMedia.poster_path):'';
   $('d-title').textContent=curMedia.title+(curMedia.year?'（'+curMedia.year+'）':'');
@@ -783,14 +887,14 @@ async function renderPlay(key,idx,pct){
       '<div id="pmenu"></div>'+
       '<div id="pbar">'+
         '<button class="ib" id="pp" onclick="pp()" title="空格 播放/暂停">'+svgPlay()+'</button>'+
-        '<button class="ib" onclick="seekBy(-10)" title="← 快退10秒">'+svgRew()+'</button>'+
-        '<button class="ib" onclick="seekBy(10)" title="→ 快进10秒">'+svgFwd()+'</button>'+
+        '<button class="ib hide-m" onclick="seekBy(-10)" title="← 快退10秒">'+svgRew()+'</button>'+
+        '<button class="ib hide-m" onclick="seekBy(10)" title="→ 快进10秒">'+svgFwd()+'</button>'+
         '<span class="pt" id="ptime">00:00 / 00:00</span>'+
         '<div id="seek" onclick="seekTo(event)"><div id="seekcur"><i></i></div></div>'+
         '<button class="ib" id="spd" onclick="spdMenu()">倍速 '+curRate+'x</button>'+
         '<button class="ib" id="sub" onclick="subMenu()">字幕</button>'+
         '<button class="ib" onclick="audMenu()">音轨</button>'+
-        '<button class="ib" onclick="voltoggle()" title="↑↓ 静音">'+svgVol()+'</button>'+
+        '<button class="ib hide-m" onclick="voltoggle()" title="↑↓ 静音">'+svgVol()+'</button>'+
         '<button class="ib" onclick="toggleFS()" title="全屏">'+svgFS()+'</button>'+
       '</div>'+
     '</div>'+
@@ -992,7 +1096,23 @@ function svgFS(){return SVGNS.fs}
 function pp(){const v=$('video');if(v.paused){v.play()}else{v.pause()}}
 function seekBy(d){const v=$('video');v.currentTime=Math.max(0,v.currentTime+d)}
 function seekTo(ev){const v=$('video');if(!v.duration)return;const r=$('seek').getBoundingClientRect();v.currentTime=(ev.clientX-r.left)/r.width*v.duration}
-function toggleFS(){const p=$('player');if(document.fullscreenElement)document.exitFullscreen();else p.requestFullscreen&&p.requestFullscreen()}
+/* 进度条拖动（Pointer Events：按下即预览时间、拖动实时 seek、抬起结束） */
+let seekDrag=false;
+(function(){const el=$('seek');if(!el)return;
+  const pct=ev=>{const r=el.getBoundingClientRect();return Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width))};
+  el.addEventListener('pointerdown',ev=>{seekDrag=true;el.setPointerCapture(ev.pointerId);const v=$('video');if(v.duration)v.currentTime=pct(ev)*v.duration});
+  el.addEventListener('pointermove',ev=>{if(!seekDrag)return;const v=$('video');if(v.duration)v.currentTime=pct(ev)*v.duration});
+  el.addEventListener('pointerup',()=>{seekDrag=false});
+  el.addEventListener('pointercancel',()=>{seekDrag=false});
+})();
+function toggleFS(){
+  const p=$('player'),v=$('video');
+  if(document.fullscreenElement){document.exitFullscreen();return}
+  if(p.requestFullscreen){p.requestFullscreen();return}
+  // iOS Safari 不支持元素全屏：回退到视频原生全屏（此前点了没反应）
+  if(v&&v.webkitEnterFullscreen){v.webkitEnterFullscreen();return}
+  if(v&&v.webkitSupportsFullscreen){v.webkitEnterFullscreen()}
+}
 function voltoggle(){const v=$('video');v.muted=!v.muted}
 function closeMenu(){$('pmenu').style.display='none';$('pmenu').dataset.on=''}
 function spdMenu(){

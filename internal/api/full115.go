@@ -91,15 +91,23 @@ var fullSyncMu sync.Mutex
 
 // taskState 当前任务状态（供前端展示与按钮禁用，含 cron 触发的任务）
 var (
-	taskStateMu sync.Mutex
-	taskRunning bool
-	taskName    string
-	taskStart   time.Time
+	taskStateMu   sync.Mutex
+	taskRunning   bool
+	taskName      string
+	taskStart     time.Time
+	taskProgress  string // 当前阶段/进度描述（如 "整理 3/12：xxx"），前端轮询展示
 )
+
+// SetTaskProgress 更新任务进度描述（任务进行中由各执行器调用）
+func SetTaskProgress(text string) {
+	taskStateMu.Lock()
+	taskProgress = text
+	taskStateMu.Unlock()
+}
 
 func beginTask(name string) {
 	taskStateMu.Lock()
-	taskRunning, taskName, taskStart = true, name, time.Now()
+	taskRunning, taskName, taskStart, taskProgress = true, name, time.Now(), ""
 	taskStateMu.Unlock()
 }
 
@@ -107,17 +115,17 @@ func endTask() {
 	taskStateMu.Lock()
 	name := taskName
 	start := taskStart
-	taskRunning = false
+	taskRunning, taskProgress = false, ""
 	taskStateMu.Unlock()
 	// 自动记录到运行历史
 	RecordRun(name, start, true)
 }
 
-// TaskStatus 当前任务状态快照
-func TaskStatus() (bool, string, time.Time) {
+// TaskStatus 当前任务状态快照（含进度描述）
+func TaskStatus() (bool, string, time.Time, string) {
 	taskStateMu.Lock()
 	defer taskStateMu.Unlock()
-	return taskRunning, taskName, taskStart
+	return taskRunning, taskName, taskStart, taskProgress
 }
 
 // RunFullSync 执行全量同步：递归遍历 cid 目录，视频生成 .strm，附属文件实体落盘
@@ -181,12 +189,14 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 	vlog("[同步] ○ 整理工作区排除: %s（✗ 的槽位对应目录会被当成媒体同步，请到对应配置卡重新选择目录）", strings.Join(slots, " "))
 
 	// 递归遍历，basePath 加上库名使 STRM 路径包含该层
+	SetTaskProgress("正在遍历 115 媒体库（已发现视频可在日志查看）…")
 	var videos, assets []remoteFile
 	if err := walk115Dir(ops, req.Cid, libName, &videos, &assets, filter, skipCids); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "遍历 115 目录失败: " + err.Error()})
 		return
 	}
 
+	SetTaskProgress(fmt.Sprintf("落盘：视频 %d + 附属 %d", len(videos), len(assets)))
 	strmCreated, downloaded, skipped, failed := applySyncResults(h.DB, ops, videos, assets, req.LocalPath, domain, format, keepExt, skipExist, "")
 
 	totalNew := strmCreated + downloaded
@@ -202,6 +212,7 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 			log.Printf("[同步] 生活事件窗口已标记为已覆盖: %d 条（增量同步只处理此后新事件）", n)
 		}
 	}
+	SetTaskProgress("")
 	log.Printf("[同步] ✅ 全量同步完成（耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
 		time.Since(fullStart).Truncate(time.Second), len(videos), strmCreated, len(assets), downloaded, skipped, failed)
 

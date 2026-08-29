@@ -1138,10 +1138,12 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 		onLog("⚠ 扫描根覆盖到媒体库/已存在/冗余目录，这些子树内的条目将被跳过（防误整理库内容）")
 	}
 
-	for _, entry := range topEntries {
+	for i, entry := range topEntries {
+		SetTaskProgress(fmt.Sprintf("整理 %d/%d：%s", i+1, len(topEntries), truncateStr(entry.Name, 40)))
 		results = append(results, processEntry(ops, cfg, tc, replaceRules, guards, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
+	SetTaskProgress("")
 
 	return results, successCount
 }
@@ -2029,10 +2031,12 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	}
 
 	onLog(fmt.Sprintf("▶ 转存目录发现 %d 个条目，开始整理...", len(topEntries)))
-	for _, entry := range topEntries {
+	for i, entry := range topEntries {
+		SetTaskProgress(fmt.Sprintf("整理 %d/%d：%s", i+1, len(topEntries), truncateStr(entry.Name, 40)))
 		results = append(results, processEntry(ops, cfg, tc, replaceRules, guards, entry, libAbs, onLog, 0, &successCount)...)
 		time.Sleep(300 * time.Millisecond)
 	}
+	SetTaskProgress("")
 	return results, successCount
 }
 

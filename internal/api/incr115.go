@@ -295,6 +295,7 @@ func normalizeIncrParams(cid, localPath string, videoExt, imageExt, dataExt []st
 // 阶段二：按时间正序应用事件——新增类定向重遍历受影响目录；
 //         move/rename/delete 基于本地文件台账（SyncedFile）精确执行
 func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
+	defer SetTaskProgress("") // 结束清进度（含错误路径）
 	sum := &incrSummary{}
 	cookie, err := h.get115Cookie()
 	if err != nil {
@@ -353,6 +354,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	}
 
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
+	SetTaskProgress("拉取 115 生活事件…")
 	log.Printf("[同步] ▶ 增量同步开始（媒体库 cid=%s），沉淀等待 3 秒后拉取生活事件...", p.Cid)
 	time.Sleep(3 * time.Second)
 
@@ -426,6 +428,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	// 事件按时间正序应用（接口返回最新在前）
 	sort.SliceStable(pending, func(i, j int) bool { return pending[i].EventTime < pending[j].EventTime })
 
+	SetTaskProgress(fmt.Sprintf("应用事件：%d 条", len(pending)))
 	// ---- 阶段二：应用事件 ----
 	filter := &syncFilter{
 		videoExts: buildExtSet(p.VideoExt),
@@ -678,6 +681,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		log.Printf("[同步] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
 	}
 
+	SetTaskProgress(fmt.Sprintf("收尾：目录 %d，STRM %d", sum.Dirs, sum.StrmCreated))
 	// 标记事件已应用 + 更新水位。
 	// 有目录遍历重试后仍失败（DirsSkipped>0）时绝不标记：被标记的事件永久
 	// 不再处理，对应 STRM 就永久缺失了。整轮不消费（下轮全量重做——

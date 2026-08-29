@@ -225,10 +225,13 @@ func (h *Handler) wecomHandleCommand(text string) {
 		h.wecomHandleLink(link, reply)
 
 	case lower == "状态" || lower == "status":
-		running, name, since := TaskStatus()
+		running, name, since, progress := TaskStatus()
 		lines := []string{}
 		if running {
 			lines = append(lines, fmt.Sprintf("▶ 任务运行中：%s（已 %s）", name, time.Since(since).Truncate(time.Second)))
+			if progress != "" {
+				lines = append(lines, "  进度："+progress)
+			}
 		} else {
 			lines = append(lines, "○ 当前无任务运行")
 		}

@@ -730,19 +730,25 @@ func (o *open115Client) listEntries(cid string, offset int) ([]map[string]interf
 	return out, page.Count, nil
 }
 
-// listDirs 目录浏览（只返回文件夹）
+// listDirs 目录浏览（只返回文件夹；翻页取全，大目录不再截断在第一页）
 func (o *open115Client) listDirs(cid string) ([]gin.H, error) {
-	entries, _, err := o.listEntries(cid, 0)
-	if err != nil {
-		return nil, err
-	}
-	dirs := make([]gin.H, 0, len(entries))
-	for _, e := range entries {
-		if fmt.Sprint(e["f"]) == "0" {
-			dirs = append(dirs, gin.H{"cid": fmt.Sprint(e["cid"]), "name": fmt.Sprint(e["n"])})
+	dirs := make([]gin.H, 0, 64)
+	offset := 0
+	for {
+		entries, count, err := o.listEntries(cid, offset)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if fmt.Sprint(e["f"]) == "0" {
+				dirs = append(dirs, gin.H{"cid": fmt.Sprint(e["cid"]), "name": fmt.Sprint(e["n"])})
+			}
+		}
+		offset += len(entries)
+		if len(entries) == 0 || offset >= count {
+			return dirs, nil
 		}
 	}
-	return dirs, nil
 }
 
 // ping 验证 token 有效（列 1 条）
@@ -908,14 +914,22 @@ func (o *pan115Ops) openEnsurePath(parent, dirPath string) (string, error) {
 		if part == "" {
 			continue
 		}
+		// 翻页查找同名子目录（只查第一页时大目录会漏 → 误走 mkdir 重名失败）
 		existing := ""
-		entries, _, err := o.open.listEntries(current, 0)
-		if err != nil {
-			return "", err
-		}
-		for _, e := range entries {
-			if fmt.Sprint(e["f"]) == "0" && fmt.Sprint(e["n"]) == part {
-				existing = fmt.Sprint(e["cid"])
+		offset := 0
+		for existing == "" {
+			entries, count, err := o.open.listEntries(current, offset)
+			if err != nil {
+				return "", err
+			}
+			for _, e := range entries {
+				if fmt.Sprint(e["f"]) == "0" && fmt.Sprint(e["n"]) == part {
+					existing = fmt.Sprint(e["cid"])
+					break
+				}
+			}
+			offset += len(entries)
+			if len(entries) == 0 || offset >= count {
 				break
 			}
 		}

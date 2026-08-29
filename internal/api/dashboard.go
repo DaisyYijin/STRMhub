@@ -106,7 +106,7 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 		"recent_media": recent,
 		"pending_events": pendingEvents,
 		"pan115":        h.pan115CapacityCached(),
-		"task_running":  func() bool { r, _, _ := TaskStatus(); return r }(),
+		"task_running":  func() bool { r, _, _, _ := TaskStatus(); return r }(),
 	})
 }
 

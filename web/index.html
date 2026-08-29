@@ -46,6 +46,7 @@
       <div class="menu-item active" data-page="dashboard"><span class="icon">▦</span><span>仪表盘</span></div>
       <div class="menu-item" data-page="config-accounts"><span class="icon">◈</span><span>账号管理</span></div>
       <div class="menu-item" data-page="sync"><span class="icon">⇄</span><span>账号同步</span></div>
+      <div class="menu-item" data-page="strm"><span class="icon">▤</span><span>STRM 管理</span></div>
       <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
       <div class="menu-item" data-page="upload-download"><span class="icon">⇅</span><span>上传下载</span></div>
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
@@ -66,7 +67,31 @@
       </div>
     </div>
 
-    <!-- 数据同步 -->
+    <!-- 数据同步 -->    <div class="page" id="page-strm">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <div style="font-weight:600">STRM 管理</div>
+          <span style="font-size:12px;color:var(--text-3)" id="strm-stat">-</span>
+          <div style="flex:1"></div>
+          <input type="text" id="strm-search" placeholder="搜索路径…" style="width:200px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text-1)">
+          <div class="segmented-control" id="strm-missing-switch"><div class="seg-item active" data-value="all" onclick="setStrmFilter('all')">全部</div><div class="seg-item" data-value="missing" onclick="setStrmFilter('missing')">仅看失效</div></div>
+          <button class="btn btn-outline" onclick="loadStrmList(1)">搜索</button>
+          <button class="btn btn-danger" onclick="cleanupOrphanStrm2(this)" style="position:relative">清理孤儿 STRM</button>
+        </div>
+        <div style="overflow-x:auto">
+        <table class="table" style="width:100%;font-size:13px">
+          <thead><tr><th>路径</th><th>类型</th><th>大小</th><th>状态</th><th style="width:70px">操作</th></tr></thead>
+          <tbody id="strm-tbody"><tr><td colspan="5" style="color:var(--text-3)">加载中…</td></tr></tbody>
+        </table>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px;color:var(--text-3)">
+          <button class="btn btn-outline" id="strm-prev" onclick="strmPageNav(-1)">上一页</button>
+          <span id="strm-page-info">-</span>
+          <button class="btn btn-outline" id="strm-next" onclick="strmPageNav(1)">下一页</button>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-sync">
       <div class="tabs">
         <div class="tab active" data-tab="acc115-sync">115 账号同步</div>
@@ -122,7 +147,7 @@
               <input type="text" class="tag-add" placeholder="输入后缀回车添加" data-tags="data-ext" onkeydown="addTag(event)">
             </div>
           </div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-danger" id="btn-fullsync" onclick="confirmFullSync(this)" style="position:relative">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('full')">保存配置</button> <button class="btn btn-primary" id="btn-fullsync" onclick="confirmFullSync(this)" style="position:relative">开始全量同步</button> <button class="btn btn-warning" onclick="resetConfig('full', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
         <div class="card">
@@ -130,7 +155,7 @@
           <div class="form-row"><div class="label">增量同步 Cron<i class="help-tip" tabindex="0">?<span class="tip-bubble">标准 5 字段 cron（分 时 日 月 周）。命中时执行「自动整理→增量同步」流水线；全量同步仅手动触发。</span></i></div><div class="control"><input type="text" id="incr-cron" value="*/10 8-23 * * *" oninput="previewCron()"></div></div>
           <div class="form-row"><div class="label">最近运行<i class="help-tip" tabindex="0">?<span class="tip-bubble">最近 5 次定时任务的名称、开始时间与耗时，成功 ✓ 失败 ✗。</span></i></div><div class="control"><div id="incr-cron-preview" style="font-size:13px;color:var(--text-2);line-height:1.9">修改表达式后显示接下来 5 次运行时间</div></div></div>
 
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-danger" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('incr')">保存配置</button> <button class="btn btn-primary" id="btn-incrsync" onclick="confirmIncrementalSync(this)" style="position:relative">开始增量同步</button> <button class="btn btn-warning" onclick="resetConfig('incr', this)" style="position:relative">重置配置</button></div></div>
         </div>
 
       </div>
@@ -254,7 +279,7 @@
       <div class="alert alert-info">GPT 识别：当 TMDB 无法识别媒体信息时，调用大模型辅助识别。API 地址需支持 OpenAI 协议标准。</div>
       <div class="card">
         <div class="form-row"><div class="label">API 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">支持 OpenAI 协议标准的模型接口地址，当 TMDB 无法识别时调用大模型辅助识别。</span></i></div><div class="control"><input type="text" id="org-gpt-url" placeholder="如 https://api.siliconflow.cn/v1"></div></div>
-        <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">大模型 API 密钥，推荐使用硅基流动等国内平台。</span></i></div><div class="control"><input type="text" id="org-gpt-key" placeholder="sk-xxx"></div></div>
+        <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">大模型 API 密钥，推荐使用硅基流动等国内平台。</span></i></div><div class="control"><input type="password" id="org-gpt-key" autocomplete="off" title="双击显示/隐藏明文" placeholder="sk-xxx"></div></div>
         <div class="form-row"><div class="label">模型名称<i class="help-tip" tabindex="0">?<span class="tip-bubble">用于识别的模型名称，如 Qwen2.5-7B、gpt-4o-mini 等。</span></i></div><div class="control"><input type="text" id="org-gpt-model" placeholder="如 Qwen2.5-7B"></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('org-gpt')">保存配置</button><button class="btn btn-outline" id="gpt-test-btn" onclick="testGPT()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('org-gpt', this)" style="position:relative">重置配置</button></div><span id="gpt-test-result" class="test-result"></span></div></div>
       </div>
@@ -711,6 +736,10 @@ av:
     <!-- 核心配置-115账号 -->
         <!-- 仪表盘 -->
     <div class="page active" id="page-dashboard">
+      <div class="card" id="guide-card" style="display:none;margin-bottom:16px;border-left:3px solid var(--primary)">
+        <div style="font-weight:600;margin-bottom:8px">🚀 配置引导</div>
+        <div id="guide-steps" style="font-size:13px;line-height:2.2;color:var(--text-2)"></div>
+      </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">
         <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">115 网盘容量</div><div style="font-size:22px;font-weight:700;margin:6px 0" id="dash-capacity">-</div><div class="acc-bar-wrap"><div class="acc-bar" id="dash-cap-bar" style="width:0%"></div></div><div style="font-size:12px;color:var(--text-3);margin-top:4px" id="dash-cap-text">-</div></div>
         <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">STRM 文件</div><div style="font-size:22px;font-weight:700;margin:6px 0" id="dash-strm-count">-</div><div style="font-size:13px;color:var(--text-2)">有效 <span id="dash-strm-active">-</span> · 失效 <span id="dash-strm-invalid" style="color:#e74c3c">-</span></div></div>
@@ -799,7 +828,14 @@ av:
 
     <!-- 系统配置（Tab 栏） -->
     <div class="page" id="page-config-system">
-      <div class="tabs">
+      
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:12px">门户访问保护</div>
+        <div class="form-row"><div class="label">门户 PIN 码<i class="help-tip" tabindex="0">?<span class="tip-bubble">设置后访问观影门户（6688）需先输入 PIN。留空 = 不启用。修改 PIN 后所有已登录设备需重新验证。手机扫码看片时家人共用一个 PIN 即可。</span></i></div><div class="control"><input type="text" id="portal-pin" placeholder="留空不启用访问验证"></div></div>
+        <div class="alert alert-info">公网部署建议设置：门户端口公开可达，未设 PIN 时任何人都能浏览海报墙并播放你的媒体。保存后立即生效。</div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="savePortalPin(this)">保存 PIN</button> <button class="btn btn-outline" onclick="location.href='/api/system/backup'">⬇ 下载备份（配置+数据库）</button></div></div>
+      </div>
+<div class="tabs">
         <div class="tab active" data-tab="strm">STRM配置</div>
         <div class="tab" data-tab="tmdb">TMDB配置</div>
         <div class="tab" data-tab="proxy">代理配置</div>
@@ -823,7 +859,7 @@ av:
         <div class="card">
           <div class="form-row"><div class="label">API 域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API 地址，国内网络可换反代加速。</span></i></div><div class="control"><input type="text" id="tmdb-api-url" value="https://api.themoviedb.org"></div></div>
           <div class="form-row"><div class="label">图片域名<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB 海报图片域名，可换反代加速。</span></i></div><div class="control"><input type="text" id="tmdb-image-url" value="https://image.tmdb.org"></div></div>
-          <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API Key（themoviedb.org 注册获取），识别与搜片必填。</span></i></div><div class="control"><input type="text" id="tmdb-api-key" placeholder="TMDB API Key"></div></div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">TMDB API Key（themoviedb.org 注册获取），识别与搜片必填。</span></i></div><div class="control"><input type="password" id="tmdb-api-key" autocomplete="off" title="双击显示/隐藏明文" placeholder="TMDB API Key"></div></div>
           <div class="form-row"><div class="label">语言<i class="help-tip" tabindex="0">?<span class="tip-bubble">中文优先返回中文片名与简介；英文返回原名。</span></i></div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button><button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div><span id="tmdb-test-result" class="test-result"></span></div></div>
         </div>
@@ -841,7 +877,7 @@ av:
       <div class="tab-panel" data-panel="emby-manage">
         <div class="card">
           <div class="form-row"><div class="label"><span class="required-mark">*</span> Emby 服务器地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 访问地址（StrmHub 容器内可达，如 http://172.17.0.1:8096）。6086 反代与此处配置联动。</span></i></div><div class="control"><input type="text" id="emby-server-url" placeholder="如 http://192.168.1.100:8096"></div></div>
-          <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 后台「设置 → API 密钥」生成，用于按库刷新与连接测试。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-api-key" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" class="test-result"></span></div></div>
+          <div class="form-row"><div class="label">API 密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">Emby 后台「设置 → API 密钥」生成，用于按库刷新与连接测试。</span></i></div><div class="control"><div class="form-inline-group"><input type="password" id="emby-api-key" autocomplete="off" title="双击显示/隐藏明文" placeholder="Emby 设置 → API 密钥 中生成" class="inline-input"><button class="btn btn-outline" onclick="testEmbyConnection()">测试连接</button></div><span id="emby-test-result" class="test-result"></span></div></div>
           <div class="form-row"><div class="label">本地路径映射<i class="help-tip" tabindex="0">?<span class="tip-bubble">StrmHub 本地路径#Emby 路径（# 分隔）。入库刷新与建库插件共用此规则，把本地路径转换为 Emby 路径。</span></i></div><div class="control"><input type="text" id="emby-path-mapping" placeholder="/media#/media（本地路径#Emby路径，#分隔）" oninput="testEmbyPath()"></div></div>
           <div class="form-row"><div class="label">路径风格<i class="help-tip" tabindex="0">?<span class="tip-bubble">通知 Emby 的路径分隔符：Unix（/）或 Windows（\），与 Emby 挂载方式一致。</span></i></div><div class="control"><div class="segmented-control" id="emby-refresh-style-switch"><div class="seg-item active" data-value="unix" onclick="setEmbyStyle('unix')">Unix 风格</div><div class="seg-item" data-value="windows" onclick="setEmbyStyle('windows')">Windows 风格</div></div></div></div>
           <div class="form-row"><div class="label">路径转换测试<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入一个本地路径，下方显示转换后的 Emby 路径，一致则说明映射正确。</span></i></div><div class="control"><input type="text" id="emby-path-test-input" placeholder="如 /media/电影/钢铁侠.mkv" oninput="testEmbyPath()"><code id="emby-path-test-output" style="display:block;font-size:13px;color:var(--success);margin-top:6px;word-break:break-all"></code></div></div>
@@ -869,7 +905,7 @@ av:
       <div class="tab-panel active" data-panel="msg-wecom">
         <div class="card">
           <div class="form-row"><div class="label">企业 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">企业微信「我的企业」页的 CorpID（ww 开头）。</span></i></div><div class="control"><input type="text" id="msg-wecom-corp-id" placeholder="corpid"></div></div>
-          <div class="form-row"><div class="label">应用 Secret<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的凭证，泄露后请在企微后台重置。</span></i></div><div class="control"><input type="text" id="msg-wecom-secret" placeholder="secret"></div></div>
+          <div class="form-row"><div class="label">应用 Secret<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的凭证，泄露后请在企微后台重置。</span></i></div><div class="control"><input type="password" id="msg-wecom-secret" autocomplete="off" title="双击显示/隐藏明文" placeholder="secret"></div></div>
           <div class="form-row"><div class="label">Agent ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">自建应用的数字 ID。</span></i></div><div class="control"><input type="text" id="msg-wecom-agent-id" placeholder="agentid"></div></div>
           <div class="form-row"><div class="label">API 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">企业微信 API 地址，默认官方 https://qyapi.weixin.qq.com；海外部署访问官方 API 慢或不通时，可改为自己搭的反代地址。一般保持默认即可。</span></i></div><div class="control"><input type="text" id="msg-wecom-api-url" value="https://qyapi.weixin.qq.com"></div></div>
           <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">企微「接收消息服务器配置」的 Token——机器人互动必填，仅发通知可不填。</span></i></div><div class="control"><input type="text" id="msg-wecom-token" placeholder="接收消息服务器配置的 Token（机器人互动用）"></div></div>
@@ -881,7 +917,7 @@ av:
       </div>
       <div class="tab-panel" data-panel="msg-tg">
         <div class="card">
-          <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="text" id="msg-tg-token" placeholder="123456:ABC..."></div></div>
+          <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="password" id="msg-tg-token" autocomplete="off" title="双击显示/隐藏明文" placeholder="123456:ABC..."></div></div>
           <div class="form-row"><div class="label">Chat ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram 目标会话 ID，向 @userinfobot 发消息可查到。</span></i></div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
           <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送 Telegram 通知。</span></i></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
