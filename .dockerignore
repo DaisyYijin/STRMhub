@@ -5,3 +5,6 @@ data/
 *.db
 *.log
 .git/
+emby-pulse-main/
+.tmp-*.py
+reference-projects/

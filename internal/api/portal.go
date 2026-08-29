@@ -330,7 +330,7 @@ func portalBackfillWorker() {
 	time.Sleep(10 * time.Second) // 等服务完全就绪
 	for {
 		done := 0
-		tc, tcErr := loadTmdbClient(nil)
+		tc, tcErr := loadTmdbClient()
 		for _, e := range portalScanLedger() {
 			if e.TmdbID <= 0 {
 				// 老内容目录名没有 tmdb 标记：按标题+年份搜索一次补 ID
@@ -380,7 +380,7 @@ func portalBackfillWorker() {
 
 // portalBackfillTMDB 从 TMDB 补海报/评分/简介（回填失败静默）
 func portalBackfillTMDB(m *model.MediaLibrary) {
-	tc, err := loadTmdbClient(nil)
+	tc, err := loadTmdbClient()
 	if err != nil {
 		return
 	}

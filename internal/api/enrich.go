@@ -59,7 +59,7 @@ func probeFileNow(pickCode string) (*probeResult, string) {
 	if perr == nil {
 		return probe, ""
 	}
-	// 方案B：下载头部 5MB 到临时文件再探测（完全控制请求头，兼容 CDN 拒绝流式读取）
+	// 方案B：下载头部 8MB 到临时文件再探测（完全控制请求头，兼容 CDN 拒绝流式读取）
 	if probe, ferr := probeViaTempFile(u, headers); ferr == nil {
 		return probe, ""
 	} else {

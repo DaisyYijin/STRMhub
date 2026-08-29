@@ -191,14 +191,6 @@ type MediaEnrich struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// SeenSha1 整理过程中见过的文件指纹（含广告/冗余/已存在去向）——
-// 发布站的广告包内容固定、反复投放，指纹进库后重复广告零成本秒判
-type SeenSha1 struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Sha1      string    `json:"sha1" gorm:"uniqueIndex;size:40;not null"`
-	Dest      string    `json:"dest" gorm:"size:20"` // redundant / existing
-	CreatedAt time.Time `json:"created_at"`
-}
 
 var DB *gorm.DB
 
@@ -221,7 +213,6 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&ScrapeRule{},
 		&CategoryRule{},
 		&WashRule{},
-		&SeenSha1{},
 		&MediaEnrich{},
 		&MediaLibrary{},
 		&SyncEvent{},

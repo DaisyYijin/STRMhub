@@ -298,7 +298,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/scrape/rules", h.SaveScrapeRules)
 		protected.GET("/scrape/categories", h.ListCategories)
 		protected.POST("/scrape/categories", h.SaveCategories)
-		protected.POST("/strm/cleanup", h.OrphanCleanup)
 
 		// 媒体信息补全（探测队列）
 		protected.GET("/enrich/list", h.EnrichList)

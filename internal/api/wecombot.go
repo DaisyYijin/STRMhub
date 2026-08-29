@@ -112,7 +112,6 @@ func (h *Handler) WecomCallback(c *gin.Context) {
 		c.String(http.StatusOK, "success")
 		return
 	}
-	wecomCorpIDCache = msg.ToUserName
 
 	// 5 秒内必须应答：指令异步执行 + 异步回复
 	switch {
@@ -397,7 +396,7 @@ func isShareCode(s string) bool {
 
 // wecomSearchTMDB 搜片（独立轻实现：不加载完整整理客户端）
 func (h *Handler) wecomSearchTMDB(q string) []string {
-	tc, err := loadTmdbClient(nil)
+	tc, err := loadTmdbClient()
 	if err != nil {
 		return []string{"TMDB 未配置: " + err.Error()}
 	}

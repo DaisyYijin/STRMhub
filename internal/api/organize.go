@@ -13,7 +13,6 @@ import (
 
 	"strmhub/internal/model"
 
-	"gorm.io/gorm/clause"
 
 	"github.com/gin-gonic/gin"
 
@@ -185,66 +184,6 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 	}
 	if moved > 0 {
 		time.Sleep(300 * time.Millisecond)
-	}
-}
-
-// renameToStandard 视频按标准名重命名（入库后调用，按 fid 重命名）：
-//   电影单文件 → 标题 (年份) [tmdb id].ext
-//   剧集（可解析出 S/E）→ 标题 - S01E02.ext
-//   无法解析集号的保留原名；同目录字幕的基名跟随所属视频新名
-func renameToStandard(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remoteFile, newPath string, onLog func(string)) {
-	type vRen struct{ fid, oldBase, newBase, ext string }
-	var renames []vRen
-	stdBase := ""
-	if media.MediaType == "movie" {
-		// buildNewName 的文件段即标准名（去掉扩展名）
-		stdBase = baseName(pathBase(newPath))
-	}
-	for _, vf := range videoFiles {
-		ext := pathExt(vf.Name)
-		oldBase := baseName(vf.Name)
-		nb := ""
-		if media.MediaType == "movie" && stdBase != "" && len(videoFiles) == 1 {
-			nb = stdBase
-		} else if media.MediaType == "tv" {
-			if p := parseFileName(vf.Name); p.Season > 0 && p.Episode > 0 {
-				nb = fmt.Sprintf("%s - S%02dE%02d", media.Title, p.Season, p.Episode)
-			}
-		}
-		if nb == "" || nb == oldBase {
-			continue
-		}
-		renames = append(renames, vRen{fid: vf.Fid, oldBase: oldBase, newBase: nb, ext: ext})
-	}
-	if len(renames) == 0 {
-		return
-	}
-	// 视频重命名
-	for _, r := range renames {
-		if err := ops.rename(r.fid, r.newBase+r.ext); err != nil {
-			onLog(fmt.Sprintf("○ 重命名失败保持原名 %s: %v", r.oldBase+r.ext, err))
-		} else {
-			onLog(fmt.Sprintf("✓ 重命名 %s → %s%s", r.oldBase, r.newBase, r.ext))
-		}
-	}
-	// 字幕基名跟随所属视频（前缀匹配视频旧基名）
-	for _, f := range files {
-		ext := strings.ToLower(pathExt(f.Name))
-		if !orgAttachmentExts[ext] {
-			continue
-		}
-		fb := baseName(f.Name)
-		for _, r := range renames {
-			if fb == r.oldBase || strings.HasPrefix(fb, r.oldBase+".") {
-				suffix := strings.TrimPrefix(fb, r.oldBase)
-				if err := ops.rename(f.Fid, r.newBase+suffix+ext); err != nil {
-					onLog(fmt.Sprintf("○ 字幕重命名失败保持原名 %s: %v", f.Name, err))
-				} else {
-					onLog(fmt.Sprintf("✓ 字幕重命名 %s → %s%s", f.Name, r.newBase, suffix+ext))
-				}
-				break
-			}
-		}
 	}
 }
 
@@ -575,9 +514,7 @@ func buildNewName(media *TmdbMedia, parsed *ParsedName, ext string) string {
 		subFolder := fmt.Sprintf("Season %02d", parsed.Season)
 		if parsed.Episode > 0 {
 			file := fmt.Sprintf("%s - S%02dE%02d", media.Title, parsed.Season, parsed.Episode)
-			if parsed.Quality != "" {
-				file += "." + parsed.Quality
-			}
+
 			file += ext
 			return folder + "/" + subFolder + "/" + file
 		}
@@ -762,42 +699,6 @@ func sha1ExistsInLibrary(sha1 string) bool {
 	var count int64
 	model.DB.Model(&model.SyncedFile{}).Where("sha1 = ? AND sha1 != ''", sha1).Count(&count)
 	return count > 0
-}
-
-// sha1ExistsVerified 台账命中后到网盘验证文件仍在库内：
-// 增量同步可能漏检删除（115 事件不保证送达），台账残留过期记录。
-// 验证失败（文件已删）时自动清除台账条目，下次不再误判"已存在"。
-func sha1ExistsVerified(ops *pan115Ops, sha1 string) bool {
-	if sha1 == "" || !sha1ExistsInLibrary(sha1) {
-		return false
-	}
-	// 取台账记录的路径，去网盘验证
-	var sfs []model.SyncedFile
-	model.DB.Where("sha1 = ? AND sha1 != ''", sha1).Limit(3).Find(&sfs)
-	if len(sfs) == 0 {
-		return false
-	}
-	if ops == nil || ops.cookie == "" {
-		return true // 无法验证时保守按存在
-	}
-	for _, sf := range sfs {
-		// 验证文件所在目录仍存在（目录删了 = 文件也删了）
-		parentDir := path.Dir(sf.RelPath)
-		if parentDir == "" || parentDir == "." {
-			continue
-		}
-		// 用 pick_code 验证：列父目录看这个文件还在不在
-		if sf.PickCode != "" {
-			if _, _, err := ops.listEntries(sf.PickCode, 0); err == nil {
-				return true // pick_code 仍有效 → 文件在
-			}
-		}
-		// pick_code 验证失败，清掉这条过期台账
-		log.Printf("[整理] ✦ 台账过期（网盘已无此文件），自动清除: %s (sha1=%s)", sf.RelPath, truncateStr(sha1, 12))
-		model.DB.Where("id = ?", sf.ID).Delete(&model.SyncedFile{})
-	}
-	// 所有记录都验证失败 → 文件确实不在库里
-	return false
 }
 
 // checkExistsVerified 去重判定：本地记录命中后到网盘验证目标路径仍存在，
@@ -1124,7 +1025,7 @@ func runOrganizeEngine(ops *pan115Ops, cfg *OrgConfig, onLog func(string)) ([]Or
 	successCount := 0
 
 	// 加载 TMDB 客户端
-	tc, err := loadTmdbClient(nil)
+	tc, err := loadTmdbClient()
 	if err != nil {
 		onLog("✗ TMDB 配置错误: " + err.Error())
 		return results, 0
@@ -1324,7 +1225,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	if len(adFids) > 0 {
-		recordSeenSha1s(adFiles, "redundant")
 		if junkCid, err := ops.ensurePath(cfg.Redundant, dir.Name); err == nil {
 			ops.moveFiles(junkCid, adFids)
 		}
@@ -1434,7 +1334,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			if err != nil {
 				msg = "TMDB 识别失败: " + err.Error()
 			}
-			recordSeenSha1s(videoFiles, "redundant")
 			moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
 			onLog(fmt.Sprintf("○ %s/ - %s，已移到冗余", dir.Name, msg))
 			return results
@@ -1446,7 +1345,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 直接查网盘去重（不依赖本地缓存表，不会过期）
 	// 检查网盘目标目录里是否有相同 SHA1 的文件
 	if checkByCloudSHA1(ops, media, cfg, libAbs, mainVideo.Sha1) {
-		recordSeenSha1s(videoFiles, "existing")
 		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 		} else {
@@ -1466,7 +1364,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			// 旧版已让位，落入下方正常入库
 		case washNotBetter:
 			// 库内版本更优：新文件按「已存在」处理，不再重复入库
-			recordSeenSha1s(videoFiles, "existing")
 			if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 				onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 			} else {
@@ -2019,7 +1916,7 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	results := []OrganizeResult{}
 	successCount := 0
 
-	tc, err := loadTmdbClient(nil)
+	tc, err := loadTmdbClient()
 	if err != nil {
 		onLog("✗ TMDB 配置错误: " + err.Error())
 		return results, 0
@@ -2240,33 +2137,6 @@ func isAVAdFile(name string) bool {
 	return false
 }
 
-// recordSeenSha1s 登记文件指纹与去向（广告/冗余/已存在），重复内容
-// 二次出现时前置秒判（CMS 的 sha1 历史库同款免疫机制）
-func recordSeenSha1s(files []remoteFile, dest string) {
-	if model.DB == nil {
-		return
-	}
-	for _, f := range files {
-		if f.Sha1 == "" {
-			continue
-		}
-		row := model.SeenSha1{Sha1: f.Sha1, Dest: dest}
-		model.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
-	}
-}
-
-// sha1SeenBefore 指纹是否在历史库中（去向冗余/已存在均算）
-func sha1SeenBefore(sha1 string) (string, bool) {
-	if model.DB == nil || sha1 == "" {
-		return "", false
-	}
-	var row model.SeenSha1
-	if err := model.DB.Where("sha1 = ?", sha1).First(&row).Error; err != nil {
-		return "", false
-	}
-	return row.Dest, true
-}
-
 // isAdOnlyVideo 判断视频文件是否为纯广告/引流载体：
 // 清洗发布站广告（【…】块/域名）后连片名都没剩下（文件名整体是广告），
 // 或清洗后仍残留域名。"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4"
@@ -2376,7 +2246,6 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 
 	// 广告/垃圾先行移到冗余（登记指纹：重复投放的引流内容秒判）
 	if len(junkFiles) > 0 {
-		recordSeenSha1s(junkFiles, "redundant")
 		if err := ops.moveFiles(cfg.Redundant, junkFids); err != nil {
 			onLog(fmt.Sprintf("○ %s/ - 垃圾文件移到冗余失败: %v", dir.Name, err))
 		}
@@ -2459,11 +2328,6 @@ func tmdbImageBase() string {
 		return strings.TrimRight(cfg.ImageApiUrl, "/")
 	}
 	return "https://image.tmdb.org"
-}
-
-// notifyMediaStored 入库成功富通知（兼容旧签名）
-func notifyMediaStored(media *TmdbMedia, oldName, newName, category string) {
-	notifyMediaStoredFull(media, oldName, newName, category, nil, "", 0, 0)
 }
 
 // humanSizeBytes 字节数转可读大小
@@ -2560,7 +2424,7 @@ func episodeRangeWithMissing(videoFiles []remoteFile, media *TmdbMedia) (string,
 	}
 	season := eps[0].season
 	total := 0
-	if tc, err := loadTmdbClient(nil); err == nil {
+	if tc, err := loadTmdbClient(); err == nil {
 		total = tc.SeasonEpisodeCount(media.TmdbID, season)
 	}
 	if total <= 0 {

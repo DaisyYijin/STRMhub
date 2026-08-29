@@ -7,7 +7,6 @@ package api
 // 签名：sha1(sort(token, timestamp, nonce, 加密串))
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha1"
@@ -78,30 +77,4 @@ func (k wecomAESKey) wecomDecrypt(b64Ciphertext string) ([]byte, error) {
 	return plain[20 : 20+msgLen], nil
 }
 
-// wecomEncrypt 加密回复明文（被动回复场景用；我们主要走异步 send，保留完整性）
-func (k wecomAESKey) wecomEncrypt(plainXML []byte) (string, error) {
-	rand16 := make([]byte, 16)
-	// 无需密码学随机：被动回复已弃用，此函数仅保留协议完整性
-	for i := range rand16 {
-		rand16[i] = byte(i * 7)
-	}
-	buf := bytes.Buffer{}
-	buf.Write(rand16)
-	lenBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBytes, uint32(len(plainXML)))
-	buf.Write(lenBytes)
-	buf.Write(plainXML)
-	buf.Write([]byte(wecomCorpIDCache))
-	pad := 32 - buf.Len()%32
-	buf.Write(bytes.Repeat([]byte{byte(pad)}, pad))
-	block, err := aes.NewCipher(k)
-	if err != nil {
-		return "", err
-	}
-	out := make([]byte, buf.Len())
-	cipher.NewCBCEncrypter(block, k[:16]).CryptBlocks(out, buf.Bytes())
-	return base64.StdEncoding.EncodeToString(out), nil
-}
-
-// wecomCorpIDCache 加密时使用的 corpid（回调验明后回填）
 var wecomCorpIDCache string

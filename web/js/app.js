@@ -486,19 +486,6 @@ async function startIncrementalSync() {
   }
 }
 
-// 分享链接转存
-async function receiveShare() {
-  const link = document.getElementById('share-url').value.trim();
-  const code = document.getElementById('share-code').value.trim();
-  if (!link || !code) { toast('请填写分享链接和提取码'); return; }
-  try {
-    toast('转存进行中...');
-    const data = await api('/share/receive', { method: 'POST', body: JSON.stringify({ url: link, code }) });
-    toast(data.message || '转存完成');
-    appendLog('分享转存: ' + (data.message || ''));
-  } catch (e) { toast('转存失败: ' + e.message); }
-}
-
 async function testEmbyConnection() {
   const url = val('emby-server-url').trim();
   const key = val('emby-api-key').trim();
@@ -827,21 +814,6 @@ async function startFullSync() {
     toast(data.message || '全量同步完成');
     appendLog(`任务完成: 全量同步 · 视频 ${data.total} 个（生成 STRM ${data.created}），附属文件 ${data.assets_total} 个（下载 ${data.assets_downloaded}，跳过 ${data.assets_skipped}，失败 ${data.assets_failed}）；详细耗时见服务端日志`);
   } catch (e) { toast(e.message); }
-}
-
-// ==================== 同步记录 ====================
-async function loadRecords() {
-  try {
-    const data = await api('/strm?page=1&page_size=30');
-    const tbody = document.getElementById('record-tbody');
-    if (data.data && data.data.length) {
-      tbody.innerHTML = data.data.map(f => `<tr>
-        <td><input type="checkbox"></td><td>${esc(f.rel_path || '-')}</td><td>${f.kind === 'video' ? 'STRM' : '附属'}</td><td>${esc(f.pick_code || '-')}</td><td>${fmtSize(f.size)}</td>
-        <td><button class="btn btn-outline btn-sm">删除</button></td></tr>`).join('');
-    } else {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-3)">暂无同步记录</td></tr>';
-    }
-  } catch (e) {}
 }
 
 // ==================== 转存 / 订阅（占位） ====================
@@ -2048,10 +2020,6 @@ function embyLibConfig() {
 }
 function embyLibScanAgain() { embyLibScanTo('modal'); }
 function closeEmbyLibModal() { document.getElementById('emby-lib-modal').style.display = 'none'; }
-async function embyLibPreview() {
-  document.getElementById('emby-lib-result').style.display = 'block';
-  await embyLibScanTo('panel');
-}
 async function embyLibRun() {
   const box = document.getElementById('emby-lib-result');
   const btn = document.getElementById('emby-lib-run-btn');
@@ -2163,19 +2131,6 @@ function attachYamlHighlight(id) {
   ta._yamlRender = () => { render(); sync(); };
   ta.dataset.yamlHl = '1';
   render();
-}
-
-// ==================== 孤儿 STRM 清理 ====================
-async function cleanupOrphanStrm() {
-  try {
-    const dry = await api('/strm/cleanup', { method: 'POST', body: JSON.stringify({ confirm: false }) });
-    if (!dry.count) { toast('没有发现孤儿文件'); return; }
-    const sample = (dry.sample || []).slice(0, 5).join('\n');
-    if (!confirm(`发现 ${dry.count} 个孤儿文件（云端已删/移走的本地残留）\n\n${sample}${dry.count > 5 ? '\n...' : ''}\n\n确定删除？`)) return;
-    const res = await api('/strm/cleanup', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    toast(`已删除 ${res.deleted} 个孤儿文件`);
-    appendLog && appendLog(`孤儿清理: 删除 ${res.deleted} 个文件`);
-  } catch (e) { toast(e.message); }
 }
 
 // ==================== 日志级别 ====================
@@ -2429,10 +2384,6 @@ let logPollTimer = null;
 // 操作日志面板已移除（日志页只保留服务端任务日志）；
 // appendLog 保留为空操作，历史调用点无需逐一清理
 function appendLog(line) {}
-function clearLogViewer() {
-  const sv = document.getElementById('server-log-viewer');
-  if (sv) sv.textContent = '暂无日志...';
-}
 function openLog() {
   showPage('logs');
   startLogPoll();

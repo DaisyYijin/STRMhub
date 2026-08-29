@@ -18,9 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -432,5 +430,3 @@ func hlsCleaner() {
 	}
 }
 
-var _ = sort.Strings
-var _ = regexp.MustCompile

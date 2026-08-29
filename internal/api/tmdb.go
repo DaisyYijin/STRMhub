@@ -50,7 +50,7 @@ type TmdbMedia struct {
 }
 
 // loadTmdbClient 从数据库加载配置构建客户端
-func loadTmdbClient(db interface{ Where(query interface{}, args ...interface{}) interface{ First(dest interface{}) interface{} } }) (*TmdbClient, error) {
+func loadTmdbClient() (*TmdbClient, error) {
 	// 通过全局 DB 读取
 	var cfg model.TmdbConfig
 	if err := model.DB.First(&cfg).Error; err != nil {
@@ -489,7 +489,6 @@ var (
 	// 发布组常见标记（用于截断标题）
 	reReleaseMarkers = regexp.MustCompile(`(?i)[\.\s_-](BluRay|BDRip|BRRip|DVDRip|WEBRip|WEB-DL|HDTV|REMUX|CAM|TS|TC|R5|HDRip|HC|HQ|PROPER|REPACK|iNTERNAL|LIMITED|UNRATED|DC|EXTENDED|UNCUT|DUBBED|SUBBED|DUAL|MULTi|MULTIAUDIO|RETAIL|COMPLETE|FINAL|REMASTERED|IMAX|3D|HSBS|HOU|DOVi|Dolby|Atmos|TrueHD|DTS|DDP|DD\+?|AAC|AC3|x264|x265|h264|h265|AVC|HEVC|10bit|SDR|HDR|\d{3,4}p|10-Bit)`)
 	// 发布组后缀（-GROUP）
-	reReleaseGroup = regexp.MustCompile(`[\.\s_-]([A-Za-z0-9]+)$`)
 )
 
 // reAdBracketBlock / reAdDomain 发布站广告：全角括号块与域名。
