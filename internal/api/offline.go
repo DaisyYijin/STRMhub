@@ -342,6 +342,7 @@ func StartTransferWatcher(h *Handler) {
 // 状态码语义与 LitePan/openapi 一致：-1 失败 / 0 排队 / 1 下载中 / 2 完成
 func StartOfflineTaskMonitor(h *Handler) {
 	go func() {
+		bootAt := time.Now().Unix() // 只处理本进程启动之后完成的任务
 		lastStatus := map[string]int{} // info_hash/url → 上次状态
 		notified := map[string]bool{}  // 已处理过的终态任务（避免重复告警/触发）
 		for {
@@ -358,6 +359,9 @@ func StartOfflineTaskMonitor(h *Handler) {
 			if err != nil {
 				continue // 网络抖动/接口拒绝：下轮再看
 			}
+			// 本轮新完成的任务（聚合为一条通知+一次整理触发，防止批量完成时
+			// 一秒内发几十条企微消息、并发几十个整理触发）
+			var doneNames, failedNames []string
 			for _, t := range tasks {
 				key := t.key
 				prev, seen := lastStatus[key]
@@ -365,19 +369,40 @@ func StartOfflineTaskMonitor(h *Handler) {
 				if notified[key] || (seen && prev == t.status) {
 					continue
 				}
-				// !seen 且已终态：进程重启/停机期间完成的任务，同样要处理
-				//（此前首轮必须先"见到非终态"才会触发，秒传任务永远漏掉）
+				// !seen 且已终态的任务：只处理「本进程启动之后完成的」——
+				// 115 任务列表会长期保留全部历史任务，重启后首轮若不加时间
+				// 门槛，会把陈年旧账全部当成新完成的通知+触发整理（刷屏事故）
+				if !seen {
+					if t.delTime == 0 || t.delTime <= bootAt {
+						continue
+					}
+				}
 				switch t.status {
 				case 2: // 完成
 					log.Printf("[离线] ✓ 下载完成: %s（触发整理）", truncateStr(t.name, 60))
 					notified[key] = true
-					go NotifyMessage("✅ 离线下载完成", truncateStr(t.name, 120)+"\n已自动开始整理入库，完成后另行通知")
-					go h.triggerOrganizeAndSync()
+					doneNames = append(doneNames, truncateStr(t.name, 80))
 				case -1: // 失败
 					log.Printf("[离线] ✗ 磁力下载失败: %s（115 离线任务报错，请检查资源或重新提交）", truncateStr(t.name, 60))
-					go NotifyMessage("❌ 磁力下载失败", truncateStr(t.name, 120)+"\n（115 离线任务报错，请检查资源或重新提交）")
+					failedNames = append(failedNames, truncateStr(t.name, 80))
 					notified[key] = true
 				}
+			}
+			// 聚合通知：本轮全部新完成/失败合并为一条（名称列表截断防超长）
+			clip := func(names []string, keep int) string {
+				if len(names) <= keep {
+					return strings.Join(names, "\n")
+				}
+				return strings.Join(names[:keep], "\n") + fmt.Sprintf("\n…等共 %d 个", len(names))
+			}
+			if len(doneNames) > 0 {
+				NotifyMessage("✅ 离线下载完成", fmt.Sprintf("%d 个任务完成，已开始整理入库（完成后另行通知）：\n%s",
+					len(doneNames), clip(doneNames, 15)))
+				go h.triggerOrganizeAndSync()
+			}
+			if len(failedNames) > 0 {
+				NotifyMessage("❌ 磁力下载失败", fmt.Sprintf("%d 个任务失败（115 离线任务报错，请检查资源或重新提交）：\n%s",
+					len(failedNames), clip(failedNames, 15)))
 			}
 			// 终态表防膨胀：只保留最近一轮见到的任务
 			if len(notified) > 500 {
