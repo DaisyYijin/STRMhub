@@ -573,55 +573,82 @@ func titleFirstLetter(title string) string {
 }
 
 // checkByCloudSHA1 直接查网盘媒体库目标目录的 SHA1 去重（不依赖本地缓存表）
-// 流程：根据 TMDB ID 计算目标目录路径 → 去网盘列出该目录的文件 → 比对 SHA1
+// 流程：与实际入库同源计算目标标题目录路径（媒体类型/分类/标题目录）→
+// 列出该目录及其 Season 子目录的文件 → 比对 SHA1
 // 返回 true=已存在 / false=不存在或目录为空
-func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs string, currentSHA1 string) bool {
-	if ops.cookie == "" || libAbs == "" || currentSHA1 == "" {
+//
+// 目录计算必须与 buildNewNameWithTemplate 完全同源：真实的 parsed（季集等
+// 模板变量）+ 原文件名（资源变量）+ 媒体类型/分类前缀 + sanitizePath 分段。
+// 此前查 `库根/标题目录`（少了「电影|剧集/分类」层），cloudPathCid 必然
+// not found → 去重恒失效；剧集文件在 Season 子目录里，还要多列一层
+func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs, currentSHA1 string, parsed *ParsedName, originalName string) bool {
+	if ops.cookie == "" || libAbs == "" || currentSHA1 == "" || parsed == nil || originalName == "" {
 		return false // 条件不足，不判已存在（宁可重复入库也不误判）
 	}
-
-	// 计算目标目录（与实际入库同源：优先模板引擎，未加载时降级硬编码——
-	// 此前固定拼默认格式，用户自定义模板后去重永远查错目录 → 重复入库）
-	folderName := ""
-	if renameTpl != nil {
-		mediaCopy := *media
-		mediaCopy.Title = sanitizeName(mediaCopy.Title)
-		ctx := buildRenameContext(&mediaCopy, &ParsedName{}, "")
-		switch media.MediaType {
-		case "movie":
-			folderName = ctx.ApplyTemplate(renameTpl.MovieFolder)
-		case "tv":
-			folderName = ctx.ApplyTemplate(renameTpl.TVFolder)
-		default:
-			folderName = ctx.ApplyTemplate(renameTpl.AVFolder)
-		}
-		folderName = sanitizeName(folderName)
-	}
+	folderName := titleDirOf(media, parsed, originalName)
 	if folderName == "" {
-		firstLetter := titleFirstLetter(media.Title)
-		year := media.Year
-		if year == "" {
-			year = "0000"
-		}
-		folderName = fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+		return false
 	}
-	absDir := strings.TrimSuffix(libAbs, "/") + "/" + folderName
+	absDir := strings.TrimSuffix(libAbs, "/") + "/" +
+		mediaTypeCategory(media.MediaType) + "/" + classifyMedia(media) + "/" + folderName
 
-	// 查目标目录 cid
+	// 查目标标题目录 cid
 	cid, ok := cloudPathCid(ops.cookie, absDir)
 	if !ok {
 		return false // 目录不存在 → 新片
 	}
 
-	// 列出目录下的文件（limit 提到 1000：剧集季目录常超 50 集，此前 50 截断会漏比）
+	// 列标题目录（电影文件直接在其下，剧集在 Season 子目录下）：
+	// 一次调用同时拿文件 SHA1 与子目录 cid，再逐季比对
+	if cloudDirHasSHA1(ops.cookie, cid, currentSHA1) {
+		return true
+	}
+	for _, seasonCid := range cloudSubDirCids(ops.cookie, cid) {
+		if cloudDirHasSHA1(ops.cookie, seasonCid, currentSHA1) {
+			return true
+		}
+	}
+	return false
+}
+
+// titleDirOf 与入库同源计算标题目录名（newPath 的第一段）
+func titleDirOf(media *TmdbMedia, parsed *ParsedName, originalName string) string {
+	if renameTpl != nil {
+		mediaCopy := *media
+		mediaCopy.Title = sanitizeName(mediaCopy.Title)
+		ctx := buildRenameContext(&mediaCopy, parsed, originalName)
+		var folderTpl string
+		switch media.MediaType {
+		case "movie":
+			folderTpl = renameTpl.MovieFolder
+		case "tv":
+			folderTpl = renameTpl.TVFolder
+		default:
+			folderTpl = renameTpl.AVFolder
+		}
+		// 拼占位文件段走与入库相同的 sanitizePath 分段清洗，取第一段
+		if p := sanitizePath(ctx.ApplyTemplate(folderTpl) + "/x"); p != "" && p != "x" {
+			return strings.SplitN(p, "/", 2)[0]
+		}
+	}
+	firstLetter := titleFirstLetter(media.Title)
+	year := media.Year
+	if year == "" {
+		year = "0000"
+	}
+	return fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+}
+
+// cloudDirHasSHA1 列出目录（limit 1000）比对是否存在指定 SHA1 的文件
+func cloudDirHasSHA1(cookie, cid, sha1Want string) bool {
 	body, err := httpGet115UA("https://webapi.115.com/files",
 		url.Values{
 			"aid":      {"1"},
 			"cid":      {cid},
-			"show_dir": {"1"},
+			"show_dir": {"0"},
 			"limit":    {"1000"},
 			"format":   {"json"},
-		}, ops.cookie, ua115Unified(), 15*time.Second)
+		}, cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
 		return false // 查询失败，不判已存在
 	}
@@ -632,21 +659,50 @@ func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs s
 	if json.Unmarshal(body, &r) != nil || !r.State {
 		return false
 	}
-
-	// 比对 SHA1：目录里有任何文件的 SHA1 与当前文件相同 → 已存在
 	for _, d := range r.Data {
 		if fmt.Sprint(d["f"]) != "1" {
-			continue // 只看文件
+			continue
 		}
 		sha1 := fmt.Sprint(d["sha"])
 		if sha1 == "<nil>" {
 			continue
 		}
-		if strings.EqualFold(sha1, currentSHA1) {
+		if strings.EqualFold(sha1, sha1Want) {
 			return true
 		}
 	}
-	return false // 目录存在但没有相同 SHA1 的文件 → 可能是不同版本/不同季
+	return false
+}
+
+// cloudSubDirCids 列出目录的一层子目录 cid（剧集的 Season 目录）
+func cloudSubDirCids(cookie, cid string) []string {
+	body, err := httpGet115UA("https://webapi.115.com/files",
+		url.Values{
+			"aid":      {"1"},
+			"cid":      {cid},
+			"show_dir": {"1"},
+			"limit":    {"100"},
+			"format":   {"json"},
+		}, cookie, ua115Unified(), 15*time.Second)
+	if err != nil {
+		return nil
+	}
+	var r struct {
+		State bool                      `json:"state"`
+		Data  []map[string]interface{} `json:"data"`
+	}
+	if json.Unmarshal(body, &r) != nil || !r.State {
+		return nil
+	}
+	var out []string
+	for _, d := range r.Data {
+		if fmt.Sprint(d["f"]) == "0" {
+			if c := fmt.Sprint(d["cid"]); c != "" && c != "<nil>" {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
 }
 
 // cloudDirHasVideos 检查网盘目录下是否有视频文件（空目录或不存在都返回 false）
@@ -1344,7 +1400,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 
 	// 直接查网盘去重（不依赖本地缓存表，不会过期）
 	// 检查网盘目标目录里是否有相同 SHA1 的文件
-	if checkByCloudSHA1(ops, media, cfg, libAbs, mainVideo.Sha1) {
+	if checkByCloudSHA1(ops, media, cfg, libAbs, mainVideo.Sha1, parsed, mainVideo.Name) {
 		if err := ops.moveFiles(cfg.Existing, []string{dir.Fid}); err != nil {
 			onLog(fmt.Sprintf("✗ %s/ - 移动到已存在失败: %v", dir.Name, err))
 		} else {
@@ -1358,8 +1414,9 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	}
 
 	// 洗版判定：库内已有同一部影视时按优先级规则比较版本
+	// （rec.TargetPath 是文件路径，台账查询需要目录前缀，必须 path.Dir）
 	if rec, ok := lookupMediaRecord(media); ok {
-		switch tryWashReplace(ops, cfg, media, mainVideo.Name, rec.TargetPath, onLog) {
+		switch tryWashReplace(ops, cfg, media, mainVideo.Name, path.Dir(rec.TargetPath), onLog) {
 		case washReplaced:
 			// 旧版已让位，落入下方正常入库
 		case washNotBetter:
@@ -1786,7 +1843,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s) [%s/tmdb=%d]", f.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
 
 	// 直接查网盘去重（不依赖本地缓存表）
-	if checkByCloudSHA1(ops, media, cfg, libAbs, f.Sha1) {
+	if checkByCloudSHA1(ops, media, cfg, libAbs, f.Sha1, parsed, f.Name) {
 		ops.moveFiles(cfg.Existing, []string{f.Fid})
 		moveSiblingAttachments(ops, cfg.Pending, oldBase, "", cfg.Existing, false, onLog)
 		result.Status = "exists"

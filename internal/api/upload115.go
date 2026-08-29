@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/SheltonZhu/115driver/pkg/crypto/ec115"
@@ -584,15 +585,14 @@ func monitorOnce(h *Handler) {
 		cid, ok := cloudPathCid(cookie, targetAbs)
 		if !ok {
 			// 连续多轮查不到云端目录就停止重试（本引擎每分钟一轮，防刷屏）
-			metaMissCount[img]++
-			if metaMissCount[img] <= 2 {
+			if n := metaMissIncr(img); n <= 2 {
 				log.Printf("[上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
-			} else if metaMissCount[img] == 3 {
+			} else if n == 3 {
 				log.Printf("[上传] ○ %s 连续 3 轮未找到云端目录，本会话内不再重试（如目录确实存在请反馈日志）", rel)
 			}
 			continue
 		}
-		delete(metaMissCount, img)
+		metaMissClear(img)
 		data, err := os.ReadFile(img)
 		if err != nil {
 			continue
@@ -717,15 +717,14 @@ func (h *Handler) uploadMetadataOnce() {
 		cid, found := cloudPathCid(cookie, targetAbs)
 		if !found {
 			// 同一文件连续多轮查不到云端目录就停止重试（防每 5 分钟刷屏）
-			metaMissCount[f]++
-			if metaMissCount[f] <= 2 {
+			if n := metaMissIncr(f); n <= 2 {
 				log.Printf("[元数据回传] ○ 云端目录不存在，跳过 %s（%s）", rel, targetAbs)
-			} else if metaMissCount[f] == 3 {
+			} else if n == 3 {
 				log.Printf("[元数据回传] ○ %s 连续 3 轮未找到云端目录，本会话内不再重试（如目录确实存在请反馈日志）", rel)
 			}
 			continue
 		}
-		delete(metaMissCount, f)
+		metaMissClear(f)
 		data, err := os.ReadFile(f)
 		if err != nil {
 			continue
@@ -746,8 +745,28 @@ func (h *Handler) uploadMetadataOnce() {
 	}
 }
 
-// metaMissCount 云端目录连续未命中计数（会话级；达到上限后不再重试防刷屏）
-var metaMissCount = map[string]int{}
+// metaMissCount 云端目录连续未命中计数（会话级；达到上限后不再重试防刷屏）。
+// 监控引擎（1 分钟轮）与元数据回传引擎（5 分钟轮）两个 goroutine 并发访问，
+// 必须持锁——此前裸 map 并发写是进程级 panic（直接宕服务）
+var (
+	metaMissCount = map[string]int{}
+	metaMissMu    sync.Mutex
+)
+
+// metaMissIncr 计数 +1 并返回新值（持锁）
+func metaMissIncr(key string) int {
+	metaMissMu.Lock()
+	defer metaMissMu.Unlock()
+	metaMissCount[key]++
+	return metaMissCount[key]
+}
+
+// metaMissClear 命中后清零（持锁）
+func metaMissClear(key string) {
+	metaMissMu.Lock()
+	delete(metaMissCount, key)
+	metaMissMu.Unlock()
+}
 
 // isStandardMediaImageName Emby/Jellyfin 标准媒体图片命名
 //（poster/fanart/banner/logo/clearart/disc…及 seasonXX-poster 等变体）

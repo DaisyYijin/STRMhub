@@ -255,8 +255,10 @@ const (
 //     清理台账/记录，返回 washReplaced 让调用方继续正常入库
 //   - 旧版更好 → 返回 washNotBetter，调用方应把新文件移「已存在」
 //   - 无规则/库内无文件 → 返回 washSkip
+// targetDir 必须是目录（不含文件名）：台账按 rel_path LIKE dir+"/%" 匹配，
+// 此前调用方传入的 TargetPath 是文件路径，恒查空 → 洗版从未真正生效
 func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, targetDir string, onLog func(string)) string {
-	st := matchWashStrategy(media.MediaType, "")
+	st := matchWashStrategy(media.MediaType, classifyMedia(media))
 	if st == nil || len(st.PriorityLevel) == 0 {
 		return washSkip // 未配置策略
 	}
@@ -277,19 +279,37 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 		libNames = append(libNames, path.Base(sf.RelPath))
 	}
 
+	// 比较对象选取：剧集用同一集的文件（否则多集时拿任意一行比较，结果随机）；
+	// 电影取第一个视频文件（跳过 poster.jpg/nfo 等附件行）
+	oldName := ""
+	if media.MediaType == "tv" {
+		if newEp := parseFileName(newName).Episode; newEp > 0 {
+			for _, ln := range libNames {
+				if parseFileName(ln).Episode == newEp {
+					oldName = ln
+					break
+				}
+			}
+		}
+	}
+	if oldName == "" {
+		for _, ln := range libNames {
+			if classifyFile(ln) == FileTypeVideo {
+				oldName = ln
+				break
+			}
+		}
+	}
+	if oldName == "" {
+		oldName = libNames[0]
+	}
+
 	// 剧集集数守卫（CMS 图解"当前集是否已存在"分支）：
 	// 新文件的集数在库内从未出现 → 是新增集，直接正常入库；
 	// 只有同一集已存在时才做画质洗版比较，否则新剧集会被误判进已存在
 	if media.MediaType == "tv" {
-		if newEp := parseFileName(newName).Episode; newEp > 0 {
-			sameEpisode := false
-			for _, ln := range libNames {
-				if parseFileName(ln).Episode == newEp {
-					sameEpisode = true
-					break
-				}
-			}
-			if !sameEpisode {
+		if newEp := parseFileName(newName).Episode; newEp > 0 && oldName != "" {
+			if parseFileName(oldName).Episode != newEp {
 				return washSkip
 			}
 		}
@@ -309,29 +329,19 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	// scope=group：按分辨率分组，组内各留一个最优版本。
 	// 新文件的分辨率在库内没有同组文件 → 新分组版本，共存入库；
 	// 有同组文件 → 只与同组文件比较
-	compareNames := libNames
 	if st.Scope == "group" {
 		newPix := strings.ToLower(ParseResourceInfo(newName).Pix)
-		var groupNames []string
-		for _, ln := range libNames {
-			if strings.ToLower(ParseResourceInfo(ln).Pix) == newPix {
-				groupNames = append(groupNames, ln)
-			}
-		}
-		if len(groupNames) == 0 {
-			onLog(fmt.Sprintf("○ 洗版判定: group 模式，%s 为新分辨率分组（%s），共存入库", truncateStr(newName, 50), newPix))
+		oldPix := strings.ToLower(ParseResourceInfo(oldName).Pix)
+		if newPix != oldPix {
+			onLog(fmt.Sprintf("○ 洗版判定: group 模式，%s 为新分辨率分组（%s vs 库内 %s），共存入库", truncateStr(newName, 50), newPix, oldPix))
 			return washSkip
 		}
-		compareNames = groupNames
 	}
 
-	// replace：按优先级规则判定
-	better := washDecision(newName, compareNames, st.PriorityLevel)
+	// replace：按优先级规则判定（与选定的旧版文件单对单比较）
+	better := washDecision(newName, []string{oldName}, st.PriorityLevel)
 	// max_size/min_size：规则分不出高下（平局）时保守不替换——
 	// 新文件在网盘移动前拿不到可靠大小，误删更优版本代价比保守大
-	if !better && (mode == "max_size" || mode == "min_size") {
-		better = false
-	}
 	if !better {
 		onLog(fmt.Sprintf("○ 《%s》洗版判定：新版不优于库内版本（mode=%s），按已存在处理", media.Title, mode))
 		return washNotBetter
@@ -347,39 +357,57 @@ func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, t
 	if len(sfs) == 0 {
 		model.DB.Where("rel_path LIKE ?", base+"/%").Find(&sfs)
 	}
+	// group 模式只搬同分辨率组的旧文件（此前不过滤，其他组/其他集一并被搬走）
+	if st.Scope == "group" {
+		newPix := strings.ToLower(ParseResourceInfo(newName).Pix)
+		filtered := sfs[:0]
+		for _, sf := range sfs {
+			if strings.ToLower(ParseResourceInfo(path.Base(sf.RelPath)).Pix) == newPix {
+				filtered = append(filtered, sf)
+			}
+		}
+		sfs = filtered
+	}
 	fids := make([]string, 0, len(sfs))
 	for _, sf := range sfs {
 		fids = append(fids, sf.FileID)
 	}
-		if len(fids) > 0 {
-			oldDir := path.Dir(targetDir)
-			destCid := cfg.Redundant
-			if oldTarget == "existing" {
-				destCid = cfg.Existing
-			} else if oldTarget == "delete" {
-				// 「删除」按约定不做网盘真删除，直接移入冗余目录
-				onLog("○ 旧版去向「删除」按移入冗余目录处理（不做网盘删除）")
-			}
-			junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+path.Base(oldDir))
-			if err == nil {
-				if err := ops.moveFiles(junkCid, fids); err != nil {
-					onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v", err))
-					return washSkip
-				}
-			}
-			// 按查到的行精确清理台账（避免前缀字符串推导）
-			ids := make([]uint, 0, len(sfs))
-			for _, sf := range sfs {
-				ids = append(ids, sf.ID)
-			}
-			model.DB.Where("id IN ?", ids).Delete(&model.SyncedFile{})
+	if len(fids) > 0 {
+		destCid := cfg.Redundant
+		if oldTarget == "existing" {
+			destCid = cfg.Existing
+		} else if oldTarget == "delete" {
+			// 「删除」按约定不做网盘真删除，直接移入冗余目录
+			onLog("○ 旧版去向「删除」按移入冗余目录处理（不做网盘删除）")
 		}
+		// 旧版去向目录：电影用标题目录；剧集用 标题/Season（保留季结构便于辨认）
+		destRel := path.Base(targetDir)
+		if strings.HasPrefix(strings.ToLower(destRel), "season") {
+			destRel = path.Base(path.Dir(targetDir)) + "/" + destRel
+		}
+		junkCid, err := ops.ensurePath(destCid, "洗版-旧版本/"+destRel)
+		if err != nil {
+			// 建目录失败绝不能清台账：文件还在库里，台账一删同步/去重全部失明
+			onLog(fmt.Sprintf("✗ 洗版：创建旧版目录失败: %v（本轮跳过，台账保留）", err))
+			return washSkip
+		}
+		if err := ops.moveFiles(junkCid, fids); err != nil {
+			onLog(fmt.Sprintf("✗ 洗版移动旧版失败: %v（台账保留）", err))
+			return washSkip
+		}
+		// 搬移成功后才清台账（按查到的行精确清理，避免前缀字符串推导）
+		ids := make([]uint, 0, len(sfs))
+		for _, sf := range sfs {
+			ids = append(ids, sf.ID)
+		}
+		model.DB.Where("id IN ?", ids).Delete(&model.SyncedFile{})
+	}
 	model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).Delete(&model.MediaLibrary{})
 	destLabel := "冗余"
 	if oldTarget == "existing" {
 		destLabel = "已存在"
 	}
-	onLog(fmt.Sprintf("✦ 洗版替换: %s 优于库内版本（%s），旧版已移到%s/洗版-旧版本", newName, libNames[0], destLabel))
-	go NotifyMessage("🔄 洗版替换", fmt.Sprintf("新版: %s\n旧版: %s\n旧版已移到%s/洗版-旧版本", truncateStr(newName, 80), truncateStr(libNames[0], 80), destLabel))
+	onLog(fmt.Sprintf("✦ 洗版替换: %s 优于库内版本（%s），旧版已移到%s/洗版-旧版本", newName, oldName, destLabel))
+	go NotifyMessage("🔄 洗版替换", fmt.Sprintf("新版: %s\n旧版: %s\n旧版已移到%s/洗版-旧版本", truncateStr(newName, 80), truncateStr(oldName, 80), destLabel))
 	return washReplaced
 }

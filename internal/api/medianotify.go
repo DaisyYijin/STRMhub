@@ -157,11 +157,21 @@ func sendMediaNotifBatch(cfg *MessageConfig, items []mediaNotifEntry) {
 	log.Printf("[通知] 聚合入库通知已发送: %d 部", len(items))
 }
 
+// pickPicURL 选企微 news 卡片的封面图。PosterAlt 是 Emby 内网封面直链，
+// 通常带 ?api_key=… 鉴权参数——picurl 会被企微/Telegram 的服务器抓取，
+// 带密钥的 URL 等于把 Emby api_key 交给第三方（密钥泄露），必须剥掉
+// 查询串再给（无密钥的内网地址对方拉不到图会自然回退纯文本，无害）
 func pickPicURL(e mediaNotifEntry) string {
 	if e.PosterURL != "" {
 		return e.PosterURL
 	}
-	return e.PosterAlt
+	if e.PosterAlt != "" {
+		if i := strings.Index(e.PosterAlt, "?"); i > 0 {
+			return e.PosterAlt[:i]
+		}
+		return e.PosterAlt
+	}
+	return ""
 }
 
 // sendWecomNewsMulti 企微多卡片图文（每部一张封面，news 最多 8 条 article）

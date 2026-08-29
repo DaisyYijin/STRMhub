@@ -338,16 +338,30 @@ func (h *Handler) enrichProcessOne() {
 	// 台账 rel_path 同步（本地 strm 无需改名：strm 名与源文件解耦，内容按 pickcode 取流）
 }
 
-// enrichQueueTask 入队（同文件不重复入队；failed 且未超次的可复活重试，
-// 避免反复整理时同一 file_id 的行数无限增长）
+// enrichQueueTask 入队（同文件不重复入队）。
+// 状态语义：pending/done/skipped 在队即跳过（skipped 的"名实相符"等原因
+// 不会随时间变化，重复扫描不再重新探测）；failed 且未超次 → 复活为
+// pending 重试（此前 failed 也阻止新建、又无任何代码复活它 → 一次探测
+// 失败后该文件永久进不了队列的死锁）
 func enrichQueueTask(f remoteFile) {
 	if model.DB == nil || f.Fid == "" || f.PickCode == "" {
 		return
 	}
 	var exist model.MediaEnrich
-	if err := model.DB.Where("file_id = ? AND (status IN ? OR (status = ? AND attempts < ?))", f.Fid,
-		[]string{"pending", "done"}, "failed", 3).First(&exist).Error; err == nil {
-		return // 已在队列/已完成/失败未超次（超次复活无意义）
+	if err := model.DB.Where("file_id = ?", f.Fid).Order("id DESC").First(&exist).Error; err == nil {
+		switch exist.Status {
+		case "pending", "done", "skipped":
+			return
+		case "failed":
+			if exist.Attempts >= 3 {
+				return // 重试耗尽
+			}
+			model.DB.Model(&exist).Updates(map[string]interface{}{
+				"status": "pending", "file_name": f.Name, "pick_code": f.PickCode, "message": "",
+			})
+			log.Printf("[补全] ▶ 复活重试: %s（此前失败 %d 次）", f.Name, exist.Attempts)
+			return
+		}
 	}
 	model.DB.Create(&model.MediaEnrich{
 		FileID: f.Fid, PickCode: f.PickCode, FileName: f.Name, Status: "pending",
@@ -477,8 +491,16 @@ func enrichDecide(fileName string, probe *probeResult, policy enrichPolicy) (str
 	ri := ParseResourceInfo(fileName)
 	claimedPix, probedPix := ri.Pix, probe.Pix
 
-	// 情形2：名实一致（pix 都有且相同）→ 跳过
+	// 情形2：名实一致（pix 都有且相同）→ 跳过；
+	// 例外：名里缺编码但探测到了（门控放宽为"任一缺失"后这类文件会进探测，
+	// 若仍 keep 则探测白做且编码永远补不上）
 	if claimedPix != "" && probedPix != "" && claimedPix == probedPix {
+		if ri.VideoEncode == "" && probe.Video != "" {
+			if policy.Missing == "keep" {
+				return "keep", "策略：名缺不改（保守设置）"
+			}
+			return "rename", fmt.Sprintf("分辨率相符，补齐缺失编码（%s）", probe.Video)
+		}
 		return "keep", "名实相符"
 	}
 	// 情形1：名缺 + 探测有 → 补充

@@ -495,11 +495,11 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 				continue
 			case "library":
 				// 精确删除：台账 → 路径推导（支持整目录删除与无台账的旧文件）
-				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, false) {
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, false, false) {
 					sum.Deleted++
 				}
 			default: // unknown（cid=0 等）：仅按台账名称匹配，静默处理
-				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
+				if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true, false) {
 					sum.Deleted++
 				} else {
 					sum.Ignored++
@@ -507,8 +507,9 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			}
 			sum.Structural++
 		case evMove, evMoveImage, evRename:
-			// 移动/改名：清理旧位置（台账/路径推导），新位置精确重建或回退遍历
-			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true) {
+			// 移动/改名：清理旧位置只按台账精确匹配（事件的 Cid/FileName 均为
+			// 新位置信息，模糊删除会误删库内同名字幕树），新位置精确重建或回退遍历
+			if h.removeSyncedItem(ev, cookie, p.Cid, p.LocalPath, memo, true, true) {
 				sum.Moved++
 			}
 			if ev.Cid != "" && scopeOf(ev.Cid) == "library" {
@@ -777,10 +778,22 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 // 2) 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
 //    （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
 // 3) 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
-func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo, quiet bool) bool {
+// removeSyncedItem 清理本地同步产物（strm/附属实体+台账行）。
+// ledgerOnly=true 时只允许按台账 file_id 精确删除：move/rename 事件的
+// Cid 是【新】父目录、FileName 是【新】名，路径推导与按名模糊兜底
+// （LIKE %/名/% 整树删、全盘同名删）都会指向错误目标——工作区里与库内
+// 同名的文件（重复转存同名片名极常见）会被误删媒体库 STRM 树。
+// delete 事件（Cid=被删位置）才允许全级联
+func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoot string, memo map[string]dirInfo, quiet, ledgerOnly bool) bool {
 	// 1) 台账精确匹配
 	if ev.FileID != "" && h.removeSyncedFile(ev.FileID, localRoot) {
 		return true
+	}
+	if ledgerOnly {
+		if !quiet {
+			log.Printf("[同步] ○ 移动/改名无台账记录，跳过清理: %s（file_id=%s）", ev.FileName, ev.FileID)
+		}
+		return false
 	}
 	// 2) 路径推导
 	if ev.Cid != "" && ev.FileName != "" {
