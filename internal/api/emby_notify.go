@@ -21,15 +21,17 @@ import (
 // 统一使用 EMBY管理 配置（emby：服务器地址/API密钥/本地路径映射/路径风格/入库时刷新），
 // 兼容旧版 emby-refresh（path_rule/enabled）与从 webhook 地址提取 host 的配置方式
 func (h *Handler) notifyEmbyRefresh(localPath string) {
-	var s model.Setting
-	if err := h.DB.Where("key = ?", "emby").First(&s).Error; err != nil {
+	// emby 配置走 YAML 优先（settingValueCompat），与保存路径一致；
+	// 此前直查 DB：新装环境 DB 无 emby 行 → 刷新永不触发；老环境读到过期配置
+	v := settingValueCompat("emby")
+	if v == "" {
 		return
 	}
 	var cfg struct {
 		Style          string `json:"style"`
 		RefreshEnabled any    `json:"refresh_enabled"`
 	}
-	if json.Unmarshal([]byte(s.Value), &cfg) != nil {
+	if json.Unmarshal([]byte(v), &cfg) != nil {
 		return
 	}
 	// 检查是否启用；未写 refresh_enabled 时回退旧版 emby-refresh.enabled
@@ -265,7 +267,7 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	if content == "" {
 		content = event
 	}
-	if userName != "" && category != "added" && category != "deleted" {
+	if userName != "" && category != "deleted" {
 		content = userName + "：" + content
 	}
 	log.Printf("[Emby Webhook] %s %s", title, content)
@@ -311,7 +313,7 @@ func (h *Handler) queueEmbyAddedNotif(payload map[string]interface{}) {
 		if id := str(item, "Id"); id != "" {
 			qs := ""
 			if apiKey != "" {
-				qs = "?api_key=" + apiKey
+				qs = "?api_key=" + url.QueryEscape(apiKey)
 			}
 			imgURL := base + "/Items/" + id + "/Images/Primary" + qs
 			entry.PosterAlt = imgURL

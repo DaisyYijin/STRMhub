@@ -38,7 +38,7 @@ var (
 // SetVersion 注入构建版本号
 func SetVersion(v string) { buildVersion = v }
 
-// latestVersionCache GitHub 最新提交缓存（10 分钟，避免触发 API 频率限制）
+// latestVersionCache GitHub 最新提交缓存（15 秒去重防狂刷，见 fetchLatestSHA）
 var latestVersionCache struct {
 	sync.Mutex
 	sha string
@@ -52,6 +52,7 @@ var latestBuildCache struct {
 	status     string // queued / in_progress / completed
 	conclusion string // success / failure / ...
 	at         time.Time
+	noRunSince time.Time // latest 提交迟迟没有对应 run 的首见时刻（永久 building 兜底用）
 }
 
 // fetchLatestBuild 查询 main 分支最新一次 CI 构建（镜像是否已发布以此为准；
@@ -74,10 +75,16 @@ func fetchLatestBuild() (headSha, status, conclusion string) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
+		latestBuildCache.Lock() // 查询失败也要推进缓存时间：否则每次轮询都打 GitHub API 加速限流
+		latestBuildCache.at = time.Now()
+		latestBuildCache.Unlock()
 		return cachedHead, cachedStatus, cachedConclusion
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		latestBuildCache.Lock()
+		latestBuildCache.at = time.Now()
+		latestBuildCache.Unlock()
 		return cachedHead, cachedStatus, cachedConclusion
 	}
 	var out struct {
@@ -94,20 +101,39 @@ func fetchLatestBuild() (headSha, status, conclusion string) {
 		latestBuildCache.Unlock()
 		return out.Runs[0].HeadSha, out.Runs[0].Status, out.Runs[0].Conclusion
 	}
+	latestBuildCache.Lock()
+	latestBuildCache.at = time.Now()
+	latestBuildCache.Unlock()
 	return cachedHead, cachedStatus, cachedConclusion
 }
 
 // imageBuildState latest 提交对应的镜像状态：
 // ready=构建成功可更新 / building=构建中（含构建未注册）/ failed=构建失败 /
-// unknown=CI 状态查询失败（保持旧行为：允许更新，避免 API 抖动卡死更新）
+// unknown=CI 状态不可用（保持旧行为：允许更新，避免 API 抖动/CI 缺失卡死更新）
 func imageBuildState(latest string) string {
 	head, status, conclusion := fetchLatestBuild()
 	if head == "" {
 		return "unknown"
 	}
 	if head != latest {
-		return "building" // 新提交的 workflow 还没注册上（推送后几秒内的窗口期）
+		// 新提交的 workflow 还没注册上。若持续 10 分钟仍未出现（Actions 被
+		// 禁用/CI 故障/查到的是无关 workflow），降级 unknown 放行更新——
+		// 否则状态永远停在 building，用户被 503 拒绝且无法自救
+		latestBuildCache.Lock()
+		firstSeen := latestBuildCache.noRunSince
+		if firstSeen.IsZero() {
+			latestBuildCache.noRunSince = time.Now()
+			firstSeen = latestBuildCache.noRunSince
+		}
+		latestBuildCache.Unlock()
+		if time.Since(firstSeen) > 10*time.Minute {
+			return "unknown"
+		}
+		return "building"
 	}
+	latestBuildCache.Lock()
+	latestBuildCache.noRunSince = time.Time{}
+	latestBuildCache.Unlock()
 	if status != "completed" {
 		return "building"
 	}
@@ -329,12 +355,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		})
 
 		// 302 代理
-		protected.GET("/proxy/status", h.ProxyStatus)
-		protected.POST("/proxy/config", h.SaveProxyConfig)
 
 		// 系统设置
-		protected.GET("/settings", h.GetSettings)
-		protected.POST("/settings", h.SaveSettings)
 		protected.GET("/system/logs", h.GetSystemLogs)
 		protected.GET("/storage/115/diagnose", h.Diagnose115)
 	}
@@ -1219,35 +1241,6 @@ func (h *Handler) SaveWashRules(c *gin.Context) {
 
 // ==================== 302 代理（占位） ====================
 
-func (h *Handler) ProxyStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"enabled":  true,
-		"port":     h.Config.ProxyPort,
-		"running":  true,
-		"uptime":   "7d",
-		"requests": 45231,
-		"redirects": 12847,
-	})
-}
-
-func (h *Handler) SaveProxyConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
-}
-
-// ==================== 系统设置（占位） ====================
-
-func (h *Handler) GetSettings(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"port":          h.Config.Port,
-		"proxy_port":    h.Config.ProxyPort,
-		"notifications": gin.H{"telegram": false, "webhook": false},
-	})
-}
-
-func (h *Handler) SaveSettings(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
-}
-
 // GetSystemLogs 读取系统日志文件最后 500 行
 // GET /system/logs（日志页唯一数据源：整理/同步/转存等任务动作的实时输出）
 func (h *Handler) GetSystemLogs(c *gin.Context) {
@@ -1381,6 +1374,7 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 	// 消息配置保存后重新生成企微聊天底栏菜单（启动时也会自动生成；
 	// 覆盖式创建，配置齐全才尝试，失败只记日志不打断保存）
 	if req.Key == "message" {
+		invalidateMsgCfgCache() // 通知配置缓存立即失效（5 秒 TTL 内也立刻生效）
 		go func() {
 			cfg, err := loadMessageConfig()
 			if err != nil {

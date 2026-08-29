@@ -119,9 +119,22 @@ func (h *Handler) loadOrgConfig() (*OrgConfig, error) {
 	return &cfg, nil
 }
 
-// orgAttachmentExts 整理时随视频同行的附件后缀（字幕/元数据/图片）
+// nilSprint fmt.Sprint(map 缺键) 会得到 "<nil>"（OpenAPI 通道列表无 sha/pc 键），
+// 统一归一为空串，避免 "<nil>" 字面量进入台账造成误比对
+func nilSprint(v interface{}) string {
+	s := fmt.Sprint(v)
+	if s == "<nil>" {
+		return ""
+	}
+	return s
+}
+
+// orgAttachmentExts 整理时随视频同行的附件后缀（字幕/元数据/图片）。
+// .idx/.sup/.xml 与 classifyFile 的字幕/NFO 分类对齐——此前缺它们：
+// VobSub 的 .idx 随视频移动却不跟随改名，基名分裂后字幕不可用
 var orgAttachmentExts = map[string]bool{
 	".ass": true, ".srt": true, ".ssa": true, ".sub": true, ".vtt": true, ".smi": true,
+	".idx": true, ".sup": true, ".xml": true,
 	".nfo": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
 }
 
@@ -148,8 +161,9 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 		}
 		fid := fmt.Sprint(e["fid"])
 		base := baseName(name)
-		// 与视频同名的附件才随行（前缀匹配），其余字幕在多个视频混放时无法归属
-		if !strings.HasPrefix(base, videoOldBase) {
+		// 与视频同名的附件才随行（点界匹配，与 renameBeforeMove 规则一致；
+		// 裸前缀会把 "Show2.srt" 误挂在视频 "Show" 上）
+		if base != videoOldBase && !strings.HasPrefix(base, videoOldBase+".") {
 			continue
 		}
 		if err := ops.moveFiles(targetCid, []string{fid}); err != nil {
@@ -310,17 +324,9 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		}
 	}
 
-	// 补全入队在改名判断之前（文件不需要改名时同样需要探测补全）
-	policy := loadEnrichPolicy()
-	log.Printf("[补全] 策略: enabled=%v mode=%s missing=%s（若 false 请到自动整理→基础配置→媒体补全开启）",
-		policy.Enabled, policy.Mode, policy.Missing)
-	if policy.Enabled {
-		for _, vf := range videoFiles {
-			if n, _ := videoNewName(vf); n != "" && enrichNeedsProbe(n) {
-				enrichQueueTask(vf)
-			}
-		}
-	}
+	// 补全不再入异步队列：同步探测已在改名前完成（organize 主流程）；
+	// 此前这里入队后 worker 用入队时的旧文件名重建名，会覆盖随后的模板
+	// 重命名并使字幕失配。异步队列只保留给手动「补全」存量扫描用。
 	if len(names) == 0 {
 		return
 	}
@@ -637,13 +643,31 @@ func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs s
 		return false // 条件不足，不判已存在（宁可重复入库也不误判）
 	}
 
-	// 计算目标目录（用与 buildNewName 相同的目录规则）
-	firstLetter := titleFirstLetter(media.Title)
-	year := media.Year
-	if year == "" {
-		year = "0000"
+	// 计算目标目录（与实际入库同源：优先模板引擎，未加载时降级硬编码——
+	// 此前固定拼默认格式，用户自定义模板后去重永远查错目录 → 重复入库）
+	folderName := ""
+	if renameTpl != nil {
+		mediaCopy := *media
+		mediaCopy.Title = sanitizeName(mediaCopy.Title)
+		ctx := buildRenameContext(&mediaCopy, &ParsedName{}, "")
+		switch media.MediaType {
+		case "movie":
+			folderName = ctx.ApplyTemplate(renameTpl.MovieFolder)
+		case "tv":
+			folderName = ctx.ApplyTemplate(renameTpl.TVFolder)
+		default:
+			folderName = ctx.ApplyTemplate(renameTpl.AVFolder)
+		}
+		folderName = sanitizeName(folderName)
 	}
-	folderName := fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+	if folderName == "" {
+		firstLetter := titleFirstLetter(media.Title)
+		year := media.Year
+		if year == "" {
+			year = "0000"
+		}
+		folderName = fmt.Sprintf("%s-%s-%s-[tmdb=%d]", firstLetter, media.Title, year, media.TmdbID)
+	}
 	absDir := strings.TrimSuffix(libAbs, "/") + "/" + folderName
 
 	// 查目标目录 cid
@@ -652,13 +676,13 @@ func checkByCloudSHA1(ops *pan115Ops, media *TmdbMedia, cfg *OrgConfig, libAbs s
 		return false // 目录不存在 → 新片
 	}
 
-	// 列出目录下的文件
+	// 列出目录下的文件（limit 提到 1000：剧集季目录常超 50 集，此前 50 截断会漏比）
 	body, err := httpGet115UA("https://webapi.115.com/files",
 		url.Values{
 			"aid":      {"1"},
 			"cid":      {cid},
 			"show_dir": {"1"},
-			"limit":    {"50"},
+			"limit":    {"1000"},
 			"format":   {"json"},
 		}, ops.cookie, ua115Unified(), 15*time.Second)
 	if err != nil {
@@ -1675,12 +1699,16 @@ func processSingleFileWithSiblings(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClien
 			continue
 		}
 		if extractSeriesPrefix(name) == mainPrefix {
-			siblings = append(siblings, remoteFile{
+			sib := remoteFile{
 				Fid:  fmt.Sprint(e["fid"]),
 				Name: name,
 				Size: 0,
-				Sha1: fmt.Sprint(e["sha"]),
-			})
+				Sha1: nilSprint(e["sha"]),
+			}
+			if pc := nilSprint(e["pc"]); pc != "" {
+				sib.PickCode = pc // 散文件也要能触发补全探测（此前恒缺，静默跳过）
+			}
+			siblings = append(siblings, sib)
 		}
 	}
 

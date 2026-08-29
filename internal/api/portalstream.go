@@ -398,19 +398,37 @@ func portalExtractSub(c *gin.Context) {
 func hlsCleaner() {
 	for {
 		time.Sleep(30 * time.Second)
+		type deadSession struct {
+			dir    string
+			cancel context.CancelFunc
+			cmd    *exec.Cmd
+		}
+		var dead []deadSession
 		hlsSessionsMu.Lock()
 		for sid, ss := range hlsSessions {
 			if time.Since(ss.lastHit) > 2*time.Minute {
-				ss.cancel()
-				if ss.cmd.Process != nil {
-					ss.cmd.Process.Kill()
-				}
-				os.RemoveAll(ss.dir)
+				dead = append(dead, deadSession{ss.dir, ss.cancel, ss.cmd})
 				delete(hlsSessions, sid)
 				log.Printf("[门户] 转封装会话回收：%s", sid)
 			}
 		}
 		hlsSessionsMu.Unlock()
+		// 进程终止与目录删除放在锁外：此前持锁做文件 IO 会阻塞所有 HLS 请求
+		for _, d := range dead {
+			d.cancel()
+			if d.cmd != nil && d.cmd.Process != nil {
+				d.cmd.Process.Kill()
+			}
+			os.RemoveAll(d.dir)
+		}
+		// probeCache 过期清出（此前只写不删，TTL 仅在读取命中时判断）
+		probeCacheMu.Lock()
+		for k, pr := range probeCache {
+			if time.Since(pr.At) > 10*time.Minute {
+				delete(probeCache, k)
+			}
+		}
+		probeCacheMu.Unlock()
 	}
 }
 

@@ -74,6 +74,14 @@ func FlushMediaNotif() {
 	}
 	cfg, err := loadMessageConfig()
 	if err != nil {
+		// 配置读取失败不能静默吞掉整批：回灌队列并 60 秒后重试（此前直接
+		// return，整理 100 部片恰逢读取失败 = 100 条通知无声消失）
+		log.Printf("[通知] ✗ 消息配置读取失败，%d 条通知延迟 60 秒重试: %v", len(items), err)
+		mediaNotif.mu.Lock()
+		mediaNotif.items = append(items, mediaNotif.items...)
+		mediaNotif.firstAt = time.Now()
+		mediaNotif.timer = time.AfterFunc(60*time.Second, FlushMediaNotif)
+		mediaNotif.mu.Unlock()
 		return
 	}
 	if len(items) == 1 {
@@ -128,15 +136,20 @@ func sendMediaNotifBatch(cfg *MessageConfig, items []mediaNotifEntry) {
 	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
 		go sendWecomNewsMulti(cfg.Wecom, title, items)
 	}
-	// TG：首图 + 汇总列表
+	// TG：首图 + 汇总列表（caption 截到 3800：sendMessage/caption 上限 4096，
+	// 超限 TG 直接 400 整条丢失，此前无截断）
 	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
-		caption := title + "\n" + strings.Join(lines, "\n")
+		list := strings.Join(lines, "\n")
+		if len(list) > 3800 {
+			list = list[:3800] + "\n…（超长截断）"
+		}
+		caption := title + "\n" + list
 		first := items[0]
 		switch {
 		case len(first.PosterData) > 0:
 			go sendTelegramPhotoData(cfg.TG, caption, first.PosterData)
 		case first.PosterURL != "":
-			go sendTelegramPhoto(cfg.TG, title, strings.Join(lines, "\n"), first.PosterURL)
+			go sendTelegramPhoto(cfg.TG, title, list, first.PosterURL)
 		default:
 			go sendTelegram(cfg.TG, caption)
 		}

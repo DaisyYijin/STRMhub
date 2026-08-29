@@ -117,14 +117,20 @@ func parseTitleDir(dir string) (title, year string, tmdb int) {
 	if m := regexp.MustCompile(`\[tmdb=(\d+)\]`).FindStringSubmatch(dir); m != nil {
 		tmdb, _ = strconv.Atoi(m[1])
 	}
+	// 取最右侧的年份（目录名惯例是 标题-年份-[tmdb=x]；取最左会把
+	// 片名本身是年份的 "1917-2019" 剜成 "2019"）
 	year = ""
-	if m := regexp.MustCompile(`(?:^|[-. ])((?:19|20)\d{2})(?:$|[-. ])`).FindStringSubmatch(dir); m != nil {
-		year = m[1]
+	reYear := regexp.MustCompile(`(?:^|[-. ])((?:19|20)\d{2})(?:$|[-. ])`)
+	if ms := reYear.FindAllStringSubmatchIndex(dir, -1); len(ms) > 0 {
+		last := ms[len(ms)-1]
+		year = dir[last[2]:last[3]]
 	}
 	title = dir
 	title = regexp.MustCompile(`\[tmdb=\d+\]`).ReplaceAllString(title, "")
 	if year != "" {
-		title = strings.Replace(title, year, "", 1)
+		if i := strings.LastIndex(title, year); i >= 0 {
+			title = title[:i] + title[i+len(year):]
+		}
 	}
 	title = regexp.MustCompile(`^[A-Z\d]-`).ReplaceAllString(title, "")
 	title = strings.Trim(title, "- _.[]")
@@ -167,7 +173,10 @@ func portalList(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
-	const size = 36
+	size := 36
+	if v, e := strconv.Atoi(c.Query("size")); e == nil && v > 0 && v <= 48 {
+		size = v
+	}
 	cat := c.Query("cat")
 	kw := strings.TrimSpace(c.Query("q"))
 
@@ -426,13 +435,15 @@ func portalPoster(c *gin.Context) {
 		}
 	}
 	resp, err := client.Get(url)
+	if err == nil {
+		defer resp.Body.Close()
+	}
 	if err != nil || resp.StatusCode != http.StatusOK {
 		// 占位图：1x1 透明像素，避免卡片裂图
 		c.Header("Cache-Control", "no-store")
 		c.Data(http.StatusOK, "image/gif", []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"))
 		return
 	}
-	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if len(data) > 0 {
 		_ = os.WriteFile(cacheFile, data, 0644)
@@ -456,11 +467,13 @@ func portalSub(c *gin.Context) {
 	}
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(urlStr)
+	if err == nil {
+		defer resp.Body.Close()
+	}
 	if err != nil || resp.StatusCode != http.StatusOK {
 		c.String(http.StatusBadGateway, "拉取字幕失败")
 		return
 	}
-	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	c.Header("Access-Control-Allow-Origin", "*")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", data)
@@ -732,7 +745,9 @@ async function renderSearch(){
 
 /* ---------- 详情 ---------- */
 async function openDetail(key){
-  const d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json();
+  let d=null;
+  try{d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json()}catch(e){}
+  if(!d||!d.media){alert('条目已失效或加载失败，请返回列表刷新');return}
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d;
   $('d-poster').src=curMedia.poster_path?('/poster'+curMedia.poster_path):'';
   $('d-title').textContent=curMedia.title+(curMedia.year?'（'+curMedia.year+'）':'');
@@ -772,7 +787,7 @@ async function renderPlay(key,idx,pct){
         '<button class="ib" onclick="seekBy(10)" title="→ 快进10秒">'+svgFwd()+'</button>'+
         '<span class="pt" id="ptime">00:00 / 00:00</span>'+
         '<div id="seek" onclick="seekTo(event)"><div id="seekcur"><i></i></div></div>'+
-        '<button class="ib" id="spd" onclick="spdMenu()">倍速 1x</button>'+
+        '<button class="ib" id="spd" onclick="spdMenu()">倍速 '+curRate+'x</button>'+
         '<button class="ib" id="sub" onclick="subMenu()">字幕</button>'+
         '<button class="ib" onclick="audMenu()">音轨</button>'+
         '<button class="ib" onclick="voltoggle()" title="↑↓ 静音">'+svgVol()+'</button>'+
@@ -834,6 +849,16 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     v.src=f.url;
     v.onloadedmetadata=()=>{dbgStage('直连出画',performance.now()-t0,'时长'+Math.round(v.duration)+'s');if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     v.playbackRate=curRate;
+    v.onerror=()=>{const E=['','中止','网络错误','解码失败','格式不支持'];dbgStage('错误',performance.now()-t0,E[v.error.code]||('code '+v.error.code));$('fail').style.display='block';$('faillink').value=f.url};
+    v.play().then(()=>{$('pp').innerHTML=SVGNS.pause}).catch(e=>{if(e&&e.name!=='AbortError')console.warn('play:',e.name)});
+    v.onplay=()=>{$('pp').innerHTML=SVGNS.pause};
+    v.onpause=()=>{$('pp').innerHTML=SVGNS.play};
+    subOff=true;curSubIdx=-1;
+    [...v.querySelectorAll('track')].forEach(t=>t.remove());
+    clearInterval(progTimer);progTimer=setInterval(()=>saveProgress(false),5000);
+    let t;const pb=$('pbar'),pl=$('player');
+    pl.onmousemove=pl.ontouchstart=()=>{pb.classList.remove('hide');clearTimeout(t);t=setTimeout(()=>{if(!$('video').paused)pb.classList.add('hide')},2600)};
+    pl.onmouseleave=()=>{if(!$('video').paused)pb.classList.add('hide')}
     return
   }
   // MKV 等浏览器放不了：Emby 引擎（H.265 等不兼容编码由 Emby 转码）
@@ -990,7 +1015,7 @@ function subMenu(){
     if(embyPlay.subs&&embyPlay.subs.length){
       h2+='<div class="tip">字幕（Emby 服务端处理）：</div>';
       embyPlay.subs.forEach(x=>{
-        h2+='<div class="'+(embySub===x.index?'on':'')+'" onclick="switchEmbySub('+x.index+')">'+esc((x.external?'外挂 · ':'')+' 内嵌 · '+x.label)+'</div>'
+        h2+='<div class="'+(embySub===x.index?'on':'')+'" onclick="switchEmbySub('+x.index+')">'+esc((x.external?'外挂 · ':'内嵌 · ')+x.label)+'</div>'
       })
     }else{h2+='<div class="tip">该集没有可用字幕轨</div>'}
     m.innerHTML=h2;m.style.display='block';return

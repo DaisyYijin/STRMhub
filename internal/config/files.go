@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
@@ -201,6 +202,10 @@ func (c *Config) LoadSettings() (SettingMap, error) {
 	return s, nil
 }
 
+// settingsMu 配置文件读改写互斥：并发的 POST /config/setting 同时
+// LoadSettings→改→WriteFile 会互相覆盖丢 key
+var settingsMu sync.Mutex
+
 // GetSetting 读取单个配置
 func (c *Config) GetSetting(key string) string {
 	s, err := c.LoadSettings()
@@ -210,8 +215,12 @@ func (c *Config) GetSetting(key string) string {
 	return s[key]
 }
 
-// SaveSetting 保存单个配置（保留其他配置）
+// SaveSetting 保存单个配置（保留其他配置）。临时文件+rename 原子落盘：
+// 进程中途被杀/断电不会留下截断的 setting.yaml（截断文件会让全部配置
+// 读取回退到 DB 旧值，损坏被掩盖）
 func (c *Config) SaveSetting(key, value string) error {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
 	s, err := c.LoadSettings()
 	if err != nil {
 		s = SettingMap{}
@@ -221,7 +230,11 @@ func (c *Config) SaveSetting(key, value string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.SettingFile(), data, 0644)
+	tmp := c.SettingFile() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, c.SettingFile())
 }
 
 // EnsureConfigDir 确保配置目录存在

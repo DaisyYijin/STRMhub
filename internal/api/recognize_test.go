@@ -159,17 +159,22 @@ func TestIsStandardMediaImageName(t *testing.T) {
 }
 
 func TestEnrichHelpers(t *testing.T) {
-	// 需要探测：分辨率与编码都缺失
-	for _, n := range []string{"蜘蛛侠.2016.mkv", "movie.mp4"} {
+	// 需要探测：分辨率/编码任一缺失（只有编码没分辨率、或只有分辨率没编码
+	// 都要探测——后者使名实冲突分支可触发，决策矩阵不再不可达）
+	for _, n := range []string{
+		"蜘蛛侠.2016.mkv",
+		"movie.mp4",
+		"Movie.2020.H265.mkv",  // 缺分辨率
+		"蜘蛛侠.2016.1080p.mkv", // 缺编码
+	} {
 		if !enrichNeedsProbe(n) {
 			t.Errorf("%s 应判定为需要补全", n)
 		}
 	}
-	// 不需要：已有分辨率或编码
+	// 不需要：分辨率与编码都齐全
 	for _, n := range []string{
-		"蜘蛛侠.2016.1080p.mkv",
-		"Movie.2020.H265.mkv",
 		"剧 - S01E01.1080p.WEB-DL.H264.DDP.mkv",
+		"Movie.2160p.HEVC.mkv",
 	} {
 		if enrichNeedsProbe(n) {
 			t.Errorf("%s 不应判定为需要补全", n)

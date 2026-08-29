@@ -1879,10 +1879,10 @@ function resetConfig(key, btn) {
 // 各配置的默认值
 const DEFAULT_CONFIGS = {
   'emby': { server_url: '', api_key: '', path_mapping: '', style: 'unix', refresh_enabled: true },
-  'strm': { domain: '', format: 'p', keep_ext: 'true', skip_exist: 'overwrite' },
+  'strm': { domain: '', format: 'pick_code_name', keep_ext: 'true', exist: 'overwrite' },
   'proxy': { url: '' },
   'emby-notify': { token: '' },
-  'org-basic': { pending: '', pending_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '' },
+  'org-basic': { pending: '', pending_path: '', existing: '', existing_path: '', redundant: '', redundant_path: '', enrich: { enabled: false, mode: 'standard', missing: 'rename', conflict_low: 'rename', conflict_high: 'rename', full_named: 'keep' } },
   'org-recognize': { replace_rules: '', release_groups: '', min_size: '0' },
   'org-gpt': { url: 'https://api.siliconflow.cn/v1', key: '', model: '' },
   'org-rename': {
@@ -1894,7 +1894,7 @@ const DEFAULT_CONFIGS = {
     av_file: '{title}{ext}',
   },
   'monitor': { dir: '', target: '' },
-  'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', enabled: false }, tg: { token: '', chat_id: '', enabled: false } },
+  'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', token: '', encoding_aes_key: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false } },
   'full': { cid: '', local_path: '/media', video_ext: ['mp4','mkv','ts','avi','mov','rmvb','webm','flv','m2ts','wmv','mpg','iso'], image_ext: ['jpg','png','jpeg','webp'], data_ext: ['ass','srt','ssa','sub'] },
   'incr': { cron: '*/10 8-23 * * *' },
   'share': { folder: '' },
@@ -2359,6 +2359,9 @@ async function openUpdateModal() {
         : '<p>未获取到提交记录，可点「查看 GitHub」查看。</p>';
       return;
     }
+    if (d.build === 'building' && !updateBuildPollTimer) {
+      updateBuildPollTimer = setTimeout(() => { updateBuildPollTimer = null; openUpdateModal(); }, 45000);
+    }
     body.innerHTML =
       (d.build === 'building' ? '<p style="color:var(--warning)">⏳ 镜像还在 GitHub Actions 构建中（通常 3~8 分钟），完成后本按钮自动可用。</p>' : '') +
       (d.build === 'failed' ? '<p style="color:var(--danger)">✗ 最新提交的 CI 构建失败，镜像未发布；请到 GitHub Actions 查看失败原因。</p>' : '') +
@@ -2371,7 +2374,13 @@ async function openUpdateModal() {
     body.innerHTML = '<p>获取失败：' + escHtml(e.message) + '</p>';
   }
 }
-function closeUpdateModal() { document.getElementById('update-modal').style.display = 'none'; }
+let updatePollTimer = null;
+let updateBuildPollTimer = null;
+function closeUpdateModal() {
+  document.getElementById('update-modal').style.display = 'none';
+  if (updatePollTimer) { clearInterval(updatePollTimer); updatePollTimer = null; }
+  if (updateBuildPollTimer) { clearTimeout(updateBuildPollTimer); updateBuildPollTimer = null; }
+}
 
 async function applyUpdate(btn) {
   btn.disabled = true; btn.textContent = '更新中...';
@@ -2394,19 +2403,24 @@ async function applyUpdate(btn) {
       '<p style="color:var(--danger);white-space:pre-line">✗ ' + escHtml(e.message || '更新失败') + '</p>');
     return;
   }
-  // 轮询服务恢复：版本变化或服务可达即刷新
+  // 轮询服务恢复：版本变化或服务可达即刷新（关闭弹窗即取消，
+  // 此前关掉弹窗后最长 3 分钟仍会自动 reload）
   let tries = 0;
-  const timer = setInterval(async () => {
+  updatePollTimer = setInterval(async () => {
     tries++;
     try {
       const d = await api('/version');
       const v = String(d.version || '');
       if (v && v !== 'dev' && (!latest || v.slice(0, 7) === latest.slice(0, 7))) {
-        clearInterval(timer); toast('✓ 已更新到 v' + v.slice(0, 7));
+        clearInterval(updatePollTimer); updatePollTimer = null;
+        toast('✓ 已更新到 v' + v.slice(0, 7));
         setTimeout(() => location.reload(), 800);
       }
     } catch (e) { /* 重启期间不可达，继续等 */ }
-    if (tries > 60) { clearInterval(timer); btn.textContent = '请手动刷新'; }
+    if (tries > 60) {
+      clearInterval(updatePollTimer); updatePollTimer = null;
+      btn.disabled = false; btn.textContent = '重试';
+    }
   }, 3000);
 }
 

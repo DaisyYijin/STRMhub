@@ -278,7 +278,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	appErr := "未尝试"
 	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
 	form := url.Values{"data": {encrypt115(payload)}}
-	body, resp, err := post115FormResp("http://pro.api.115.com/android/2.0/ufile/download", form, cookie, signUA, 15*time.Second)
+	body, resp, err := post115FormResp("https://pro.api.115.com/android/2.0/ufile/download", form, cookie, signUA, 15*time.Second)
 	if err != nil {
 		appErr = "请求失败: " + err.Error()
 	} else {

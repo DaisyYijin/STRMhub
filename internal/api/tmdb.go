@@ -142,7 +142,13 @@ func tmdbCacheGet(kind, q, year string) (*TmdbMedia, error, bool) {
 	return nil, nil, false
 }
 
+// tmdbCachePut 只缓存成功结果与"确定无结果"（media==nil 且 err==nil 表示
+// 已查过且无匹配）；瞬时网络错误不缓存——此前 error 也缓存 5 分钟，一次
+// 抖动会让同一查询持续失败并短路识别链的全部重试
 func tmdbCachePut(kind, q, year string, media *TmdbMedia, err error) {
+	if err != nil {
+		return
+	}
 	tmdbSearchMu.Lock()
 	defer tmdbSearchMu.Unlock()
 	if len(tmdbSearchCache) > 2000 {
@@ -486,10 +492,12 @@ var (
 	reReleaseGroup = regexp.MustCompile(`[\.\s_-]([A-Za-z0-9]+)$`)
 )
 
-// reAdBracketBlock / reAdDomain 发布站广告：全角括号块与域名
+// reAdBracketBlock / reAdDomain 发布站广告：全角括号块与域名。
+// 域名匹配收紧为 www. 前缀或至少两段标签（如 web.4k688.com）——单段+TLD
+// 会把 "Call.Me.By.Your.Name"、"Best.of.Me" 这类片名当域名剜掉，标题残缺
 var (
 	reAdBracketBlock = regexp.MustCompile(`【[^【】]*】`)
-	reAdDomain       = regexp.MustCompile(`(?i)\b(www\.)?[a-z0-9][a-z0-9-]{1,15}\.(com|net|org|cc|xyz|me|tv|info|vip|top)\b`)
+	reAdDomain       = regexp.MustCompile(`(?i)(\bwww\.[a-z0-9][a-z0-9-]{1,15}\.(com|net|org|cc|xyz|info|vip|top|me|tv)\b|\b([a-z0-9][a-z0-9-]{1,15}\.){2,}(com|net|org|cc|xyz|info|vip|top|me|tv)\b)`)
 )
 
 // stripReleaseAds 剥离文件名/目录名中的发布站广告（【高清影视之家发布

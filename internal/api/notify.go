@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"strmhub/internal/config"
@@ -73,17 +74,77 @@ type TGConfig struct {
 	Enabled any    `json:"enabled"`
 }
 
-// loadMessageConfig 从数据库加载消息通知配置
+// msgCfgCache 消息配置短缓存：批量入库时每条通知都全量读盘解析 YAML
+// 太浪费；5 秒 TTL，保存配置时主动失效（SaveSetting 钩子调用）
+var msgCfgCache struct {
+	sync.Mutex
+	cfg *MessageConfig
+	err error
+	at  time.Time
+}
+
+// invalidateMsgCfgCache 消息配置保存后调用
+func invalidateMsgCfgCache() {
+	msgCfgCache.Lock()
+	msgCfgCache.cfg, msgCfgCache.err, msgCfgCache.at = nil, nil, time.Time{}
+	msgCfgCache.Unlock()
+}
+
+// loadMessageConfig 加载消息通知配置（YAML 优先/DB 回退，5 秒缓存）
 func loadMessageConfig() (*MessageConfig, error) {
+	msgCfgCache.Lock()
+	cached, cacheAt := msgCfgCache.cfg, msgCfgCache.at
+	msgCfgCache.Unlock()
+	if cached != nil && time.Since(cacheAt) < 5*time.Second {
+		return cached, nil
+	}
 	raw := settingValueCompat("message")
+	var cfg *MessageConfig
+	var err error
 	if raw == "" {
-		return nil, fmt.Errorf("尚未保存过消息配置：请到「消息配置」页填写并点击保存配置")
+		err = fmt.Errorf("尚未保存过消息配置：请到「消息配置」页填写并点击保存配置")
+	} else {
+		c := &MessageConfig{}
+		if jerr := json.Unmarshal([]byte(raw), c); jerr != nil {
+			err = fmt.Errorf("解析消息通知配置失败")
+		} else {
+			cfg = c
+		}
 	}
-	var cfg MessageConfig
-	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return nil, fmt.Errorf("解析消息通知配置失败")
+	if cfg != nil {
+		msgCfgCache.Lock()
+		msgCfgCache.cfg, msgCfgCache.at = cfg, time.Now()
+		msgCfgCache.Unlock()
 	}
-	return &cfg, nil
+	return cfg, err
+}
+
+// wecomTokenCache 企微 access_token 缓存（有效期约 7200 秒，提前 10 分钟刷新；
+// 此前每条消息独立 gettoken，批量通知易撞企微 gettoken 频控）
+var wecomTokenCache struct {
+	sync.Mutex
+	corpID string
+	secret string
+	token  string
+	expire time.Time
+}
+
+func wecomTokenCached(cfg WecomConfig) (string, bool) {
+	wecomTokenCache.Lock()
+	defer wecomTokenCache.Unlock()
+	if wecomTokenCache.token != "" && cfg.CorpID == wecomTokenCache.corpID &&
+		cfg.Secret == wecomTokenCache.secret && time.Now().Before(wecomTokenCache.expire) {
+		return wecomTokenCache.token, true
+	}
+	return "", false
+}
+
+func wecomTokenPut(cfg WecomConfig, token string, expiresIn int) {
+	wecomTokenCache.Lock()
+	defer wecomTokenCache.Unlock()
+	wecomTokenCache.corpID, wecomTokenCache.secret = cfg.CorpID, cfg.Secret
+	wecomTokenCache.token = token
+	wecomTokenCache.expire = time.Now().Add(time.Duration(expiresIn)*time.Second - 10*time.Minute)
 }
 
 func (c *WecomConfig) isEnabled() bool {
@@ -110,6 +171,7 @@ func (c *TGConfig) isEnabled() bool {
 func NotifyMessage(title, content string) {
 	cfg, err := loadMessageConfig()
 	if err != nil {
+		log.Printf("[通知] ✗ 配置不可用，消息未发送（%s）: %v", title, err)
 		return
 	}
 
@@ -135,6 +197,7 @@ func NotifyMessage(title, content string) {
 func NotifyMessageRich(title, content, posterURL, linkURL string) {
 	cfg, err := loadMessageConfig()
 	if err != nil {
+		log.Printf("[通知] ✗ 配置不可用，富通知未发送（%s）: %v", title, err)
 		return
 	}
 	if posterURL == "" {
@@ -149,8 +212,11 @@ func NotifyMessageRich(title, content, posterURL, linkURL string) {
 	}
 }
 
-// wecomAccessToken 获取企业微信 access_token
+// wecomAccessToken 获取企业微信 access_token（带缓存）
 func wecomAccessToken(cfg WecomConfig) (string, error) {
+	if t, ok := wecomTokenCached(cfg); ok {
+		return t, nil
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	tokenURL := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
 		cfg.apiBase(), cfg.CorpID, cfg.Secret)
@@ -165,6 +231,7 @@ func wecomAccessToken(cfg WecomConfig) (string, error) {
 		ErrCode     int    `json:"errcode"`
 		ErrMsg      string `json:"errmsg"`
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &tokenResult); err != nil {
 		return "", err
@@ -172,6 +239,9 @@ func wecomAccessToken(cfg WecomConfig) (string, error) {
 	if tokenResult.ErrCode != 0 {
 		log.Printf("企业微信获取 token 失败: %d %s", tokenResult.ErrCode, tokenResult.ErrMsg)
 		return "", fmt.Errorf("%s", tokenResult.ErrMsg)
+	}
+	if tokenResult.AccessToken != "" {
+		wecomTokenPut(cfg, tokenResult.AccessToken, tokenResult.ExpiresIn)
 	}
 	return tokenResult.AccessToken, nil
 }
@@ -221,7 +291,7 @@ func sendWecomNews(cfg WecomConfig, title, desc, picurl, linkURL string) error {
 	if r.ErrCode != 0 {
 		log.Printf("企业微信图文发送失败: %d %s（退回纯文本）", r.ErrCode, r.ErrMsg)
 		// 图文被拒（如 picurl 不可达）时退回纯文本，保证消息不丢
-		return sendWecom(cfg, title+"\\n"+desc)
+		return sendWecom(cfg, title+"\n"+desc)
 	}
 	log.Printf("企业微信图文消息发送成功: %s", truncateStr(title, 40))
 	return nil
@@ -237,7 +307,7 @@ func sendTelegramPhoto(cfg TGConfig, title, content, photoURL string) error {
 	}
 	caption := title
 	if content != "" {
-		caption += "\\n" + content
+		caption += "\n" + content
 	}
 	form := url.Values{
 		"chat_id": {cfg.ChatID},
@@ -300,7 +370,7 @@ func sendWecom(cfg WecomConfig, msg string) error {
 	json.Unmarshal(body2, &sendResult)
 	if sendResult.ErrCode != 0 {
 		log.Printf("企业微信发送消息失败: %d %s", sendResult.ErrCode, sendResult.ErrMsg)
-		return fmt.Errorf(sendResult.ErrMsg)
+		return fmt.Errorf("%s", sendResult.ErrMsg)
 	}
 
 	log.Printf("企业微信消息发送成功: %s", msg)

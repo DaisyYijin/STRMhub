@@ -104,14 +104,14 @@ func embyUserID() string {
 	embyUIDMu.Unlock()
 	body, err := embyGet("/Users", nil)
 	if err != nil {
-		return "1" // 查询失败退回默认值
+		return "" // 查询失败返回空（"1" 不是合法 GUID，后续 /Shows/{id}/Episodes 必然失败）
 	}
 	var users []struct {
 		Id   string `json:"Id"`
 		Name string `json:"Name"`
 	}
 	if json.Unmarshal(body, &users) != nil || len(users) == 0 {
-		return "1"
+		return ""
 	}
 	uid := users[0].Id
 	log.Printf("[门户Emby] 管理员用户: %s (%s)，共 %d 个用户", users[0].Name, uid, len(users))
@@ -121,7 +121,8 @@ func embyUserID() string {
 	return uid
 }
 
-// embyGet 代理 GET 到 Emby（服务端间调用）
+// embyGet 代理 GET 到 Emby（服务端间调用）。带超时：Emby 挂起时无超时的
+// http.Get 会让 goroutine 与连接永久占用，且该函数被公开端点触发
 func embyGet(path string, params map[string]string) ([]byte, error) {
 	base, apiKey, ok := portalEmbyInfo()
 	if !ok {
@@ -133,7 +134,8 @@ func embyGet(path string, params map[string]string) ([]byte, error) {
 		q.Set(k, v)
 	}
 	q.Set("api_key", apiKey)
-	resp, err := http.Get(u + "?" + q.Encode())
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(u + "?" + q.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +215,18 @@ func portalEmbyPlay(c *gin.Context) {
 	itemId := item.Id
 	if isTV {
 		// 2. 剧集：定位到具体集（按文件名匹配 Path）
+		uid := embyUserID()
+		if uid == "" {
+			c.JSON(http.StatusOK, gin.H{"found": false, "reason": "Emby 用户查询失败"})
+			return
+		}
+		if want := strings.TrimSuffix(fname, ".strm"); want == "" {
+			// f 参数缺省时 Contains(Path,"") 恒真会永远匹配第一集，拒绝更安全
+			c.JSON(http.StatusOK, gin.H{"found": false, "reason": "缺少文件名参数"})
+			return
+		}
 		epBody, err := embyGet("/Shows/"+item.Id+"/Episodes", map[string]string{
-			"UserId": embyUserID(), "Fields": "Path",
+			"UserId": uid, "Fields": "Path",
 		})
 		if err != nil {
 			log.Printf("[门户Emby] 剧集查询失败: %v", err)

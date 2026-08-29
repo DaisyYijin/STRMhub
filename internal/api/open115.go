@@ -361,7 +361,8 @@ func (o *open115Client) apiCall(method, path string, query url.Values, form url.
 	return err
 }
 
-// rawCall 发起一次带 Bearer 的请求
+// rawCall 发起一次带 Bearer 的请求（完成后推进全局节流锚点——apiCall 只在
+// 请求前 throttle，锚点不推进的话连续 OpenAPI 调用之间实际没有强制间隔）
 func (o *open115Client) rawCall(token, method, path string, query url.Values, form url.Values, out any) error {
 	full := openBase + path
 	if len(query) > 0 {
@@ -380,7 +381,9 @@ func (o *open115Client) rawCall(token, method, path string, query url.Values, fo
 	if len(form) > 0 {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	return openDo(req, out)
+	err = openDo(req, out)
+	throttle115Done(openBase)
+	return err
 }
 
 // ==================== PKCE 扫码登录 ====================
@@ -666,6 +669,8 @@ func (o *open115Client) listEntries(cid string, offset int) ([]map[string]interf
 	if err != nil {
 		return nil, 0, err
 	}
+	throttle115(openBase) // 全量同步走此通道列目录，不加节流会高频触发风控（此前完全绕过限流器）
+	defer throttle115Done(openBase)
 	req, err := http.NewRequest(http.MethodGet, openBase+openPathList+"?"+query.Encode(), nil)
 	if err != nil {
 		return nil, 0, err
@@ -985,13 +990,14 @@ func proxyDownloadURL(db *gorm.DB, cfg *config.Config, pickcode, ua string) (str
 // proxyDownloadURLFull 同 proxyDownloadURL，但一并返回直链要求的请求头
 //（含必须绑定的 User-Agent，服务端中转拉流时使用）
 func proxyDownloadURLFull(db *gorm.DB, cfg *config.Config, pickcode, ua string) (string, map[string]string, error) {
-	// OpenAPI 通道
+	// OpenAPI 通道（失败不直接报错——回退 Cookie 通道；OpenAPI 撞限流/额度
+	// 时 302 与补全探测不能整体失败，而 Cookie 明明可用）
 	if oc := open115FromDB(db, cfg); oc != nil && oc.authorized() {
 		u, err := oc.downloadURL(pickcode)
-		if err != nil {
-			return "", nil, err
+		if err == nil && u != "" {
+			return u, map[string]string{"User-Agent": ua}, nil
 		}
-		return u, map[string]string{"User-Agent": ua}, nil
+		log.Printf("[直链] ○ OpenAPI 取链失败，回退 Cookie 通道: %v", err)
 	}
 	// Cookie 通道（文件优先，回退 DB）
 	cookie := ""

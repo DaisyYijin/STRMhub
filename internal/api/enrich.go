@@ -74,7 +74,11 @@ func probeViaTempFile(u string, headers map[string]string) (*probeResult, error)
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
-	req, _ := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		tmp.Close()
+		return nil, err
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -88,7 +92,15 @@ func probeViaTempFile(u string, headers map[string]string) (*probeResult, error)
 		tmp.Close()
 		return nil, fmt.Errorf("CDN 状态 %d", resp.StatusCode)
 	}
-	io.CopyN(tmp, resp.Body, 8<<20) // 最多 8MB
+	// 下载中断得到的是残缺文件：要求至少 1MB 才值得探测（moov 头通常在前几 MB；
+	// 完全没下到时直接报错，不把短读当完整文件送 ffprobe）
+	if n, cerr := io.CopyN(tmp, resp.Body, 8<<20); cerr != nil && cerr != io.EOF && n == 0 {
+		tmp.Close()
+		return nil, fmt.Errorf("头部下载失败: %v", cerr)
+	} else if n < 1<<20 {
+		tmp.Close()
+		return nil, fmt.Errorf("头部下载过短（%d 字节）", n)
+	}
 	tmp.Close()
 	return probeMediaInfoFile(tmp.Name())
 }
@@ -251,10 +263,12 @@ func parseDuration(s string) (float64, error) {
 	return d, err
 }
 
-// enrichNeedsProbe 文件名是否缺可探测的画质信息（分辨率/编码都解析不到）
+// enrichNeedsProbe 文件名是否缺可探测的画质信息（分辨率或编码任一缺失）。
+// 此前要求两者同时为空才探测：只有编码没有分辨率的文件永不补全，且
+// enrichDecide 的冲突分支（名1080探2160等）永远不可达、策略开关形同虚设
 func enrichNeedsProbe(fileName string) bool {
 	ri := ParseResourceInfo(fileName)
-	return ri.Pix == "" && ri.VideoEncode == ""
+	return ri.Pix == "" || ri.VideoEncode == ""
 }
 
 // StartEnrichWorker 补全队列 worker：串行处理 pending 任务，
@@ -275,6 +289,11 @@ func StartEnrichWorker(h *Handler) {
 
 // enrichProcessOne 取一个 pending 任务处理
 func (h *Handler) enrichProcessOne() {
+	// 总开关关闭时不处理（语义：关闭=暂停整条补全管线；此前只有入队侧被门控，
+	// 关闭后已入队任务仍会继续探测改名）
+	if !loadEnrichPolicy().Enabled {
+		return
+	}
 	var task model.MediaEnrich
 	if err := h.DB.Where("status = ? AND attempts < 3", "pending").Order("id").First(&task).Error; err != nil {
 		return // 队列空
@@ -300,13 +319,18 @@ func (h *Handler) enrichProcessOne() {
 	}
 	newName := buildEnrichedName(base, ext, probe)
 
+	// 网盘操作客户端不可用必须如实标失败——此前 err != nil 时跳过改名
+	// 却照标 done 打成功日志，文件未改名且不会再重试（假成功）
 	ops, err := h.newPan115Ops()
-	if err == nil {
-		if rerr := ops.rename(task.FileID, newName); rerr != nil {
-			h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": "重命名失败: " + rerr.Error()})
-			log.Printf("[补全] ✗ 重命名失败 %s: %v", task.FileName, rerr)
-			return
-		}
+	if err != nil {
+		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": "网盘客户端不可用: " + err.Error()})
+		log.Printf("[补全] ✗ %s: 网盘客户端不可用: %v", task.FileName, err)
+		return
+	}
+	if rerr := ops.rename(task.FileID, newName); rerr != nil {
+		h.DB.Model(&task).Updates(map[string]interface{}{"status": "failed", "message": "重命名失败: " + rerr.Error()})
+		log.Printf("[补全] ✗ 重命名失败 %s: %v", task.FileName, rerr)
+		return
 	}
 	h.DB.Model(&task).Updates(map[string]interface{}{"status": "done", "message": probe.Pix + " " + probe.Video + " " + probe.Audio})
 	log.Printf("[补全] ✓ %s → %s", task.FileName, newName)
@@ -314,22 +338,30 @@ func (h *Handler) enrichProcessOne() {
 	// 台账 rel_path 同步（本地 strm 无需改名：strm 名与源文件解耦，内容按 pickcode 取流）
 }
 
-// enrichQueueTask 入队（整理识别成功但缺画质信息时调用；同文件不重复入队）
+// enrichQueueTask 入队（同文件不重复入队；failed 且未超次的可复活重试，
+// 避免反复整理时同一 file_id 的行数无限增长）
 func enrichQueueTask(f remoteFile) {
 	if model.DB == nil || f.Fid == "" || f.PickCode == "" {
-		log.Printf("[补全] ○ 跳过入队（fid=%q pick=%q 无效）", f.Fid, f.PickCode)
 		return
 	}
 	var exist model.MediaEnrich
-	if err := model.DB.Where("file_id = ? AND status IN ?", f.Fid,
-		[]string{"pending", "done"}).First(&exist).Error; err == nil {
-		log.Printf("[补全] ○ 已在队列（%s status=%s）", exist.FileName, exist.Status)
-		return // 已在队列或已完成
+	if err := model.DB.Where("file_id = ? AND (status IN ? OR (status = ? AND attempts < ?))", f.Fid,
+		[]string{"pending", "done"}, "failed", 3).First(&exist).Error; err == nil {
+		return // 已在队列/已完成/失败未超次（超次复活无意义）
 	}
 	model.DB.Create(&model.MediaEnrich{
 		FileID: f.Fid, PickCode: f.PickCode, FileName: f.Name, Status: "pending",
 	})
 	log.Printf("[补全] ▶ 入队: %s（文件名缺画质信息，将探测后规范命名）", f.Name)
+}
+
+// enrichPendingCount 队列 pending 行数（入队是否生效的判断依据）
+func enrichPendingCount() int64 {
+	var n int64
+	if model.DB != nil {
+		model.DB.Model(&model.MediaEnrich{}).Where("status = ?", "pending").Count(&n)
+	}
+	return n
 }
 
 // executeEnrichScan 扫描媒体库入队（HTTP 与企微指令共用），返回 (视频总数, 入队数, 错误)
@@ -362,8 +394,11 @@ func (h *Handler) executeEnrichScan() (int, int, error) {
 		if !enrichNeedsProbe(v.Name) {
 			continue
 		}
+		before := enrichPendingCount()
 		enrichQueueTask(v)
-		queued++
+		if enrichPendingCount() > before {
+			queued++
+		}
 	}
 	log.Printf("[补全] ▶ 存量扫描完成: 共 %d 个视频，%d 个缺画质信息已入队", len(videos), queued)
 	return len(videos), queued, nil
