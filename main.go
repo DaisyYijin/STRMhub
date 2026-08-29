@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -160,14 +161,17 @@ func main() {
 
 	// 静态文件（前端）：no-cache = 协商缓存（ETag 校验，未变返回 304 不重下）。
 	// 之前靠 index.html 里手写的 ?v=N 版本号失效缓存——更新后浏览器仍可能
-	// 用旧 JS 调新接口/碰已删除的元素（本次登录页报错即此因），改为服务端
-	// 强制校验，一劳永逸
-	noCacheStatic := func(c *gin.Context, path string) {
-		c.Header("Cache-Control", "no-cache")
-		c.File(path)
-	}
-	r.GET("/css/style.css", func(c *gin.Context) { noCacheStatic(c, "./web/css/style.css") })
-	r.GET("/js/app.js", func(c *gin.Context) { noCacheStatic(c, "./web/js/app.js") })
+	// 用旧 JS 调新接口/碰已删除的元素（登录页报错即此因），改为服务端
+	// 强制校验，一劳永逸。
+	// 用中间件而非精确路由：r.Static 注册 /css/*filepath 通配，gin 不允许
+	// 与 /css/style.css 精确段共存（路由树冲突 → 启动 panic）
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/css/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/js/") {
+			c.Header("Cache-Control", "no-cache")
+		}
+		c.Next()
+	})
 	r.Static("/css", "./web/css")
 	r.Static("/js", "./web/js")
 	r.StaticFile("/cms-115.png", "./web/cms-115.png")
