@@ -29,7 +29,7 @@ async function api(path, options = {}) {
       authRedirecting = true;
       localStorage.removeItem('token');
       stopLogPoll();
-      showAuth('login');
+      showAuth(false);
       toast('登录已过期，请重新登录');
       setTimeout(() => { authRedirecting = false; }, 1000);
     }
@@ -199,6 +199,7 @@ async function checkAuth() {
 }
 
 function showAuth(notInitialized) {
+  stopTaskPoll(); // 登录页不轮询任务状态（否则每 5 秒刷一屏 401 报错）
   document.getElementById('auth-page').style.display = 'flex';
   document.getElementById('main-app').style.display = 'none';
   // 地址栏显示 /login；但保留深链接路径（如直接访问 /plugins）以便登录后跳回目标页
@@ -217,6 +218,7 @@ function showAuth(notInitialized) {
 function showMain() {
   document.getElementById('auth-page').style.display = 'none';
   document.getElementById('main-app').style.display = 'flex';
+  startTaskPoll(); // 登录后才轮询任务状态（登录页轮询只会刷 401）
   loadVersion();
   loadLogLevel();
   // 优先按地址栏路径恢复（深链接 / 刷新），其次上次停留页面，默认仪表盘
@@ -2523,6 +2525,5 @@ window.addEventListener('DOMContentLoaded', () => {
   attachCIDResolvers();
   attachYamlHighlight('category-yaml');
   attachYamlHighlight('wash-yaml');
-  startTaskPoll();
   checkAuth();
 });
