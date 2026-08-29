@@ -269,7 +269,9 @@ details[open] summary{margin-bottom:8px}
       - /var/run/docker.sock:/var/run/docker.sock
                                   # 应用内自更新必需；不挂载则只能手动更新
     environment:
-      - TZ=Asia/Shanghai</code><button class="copy-btn" onclick="cp(this)">复制</button></pre>
+      - TZ=Asia/Shanghai
+      - AUTH_USER=admin          # ★ 管理后台账号（环境变量管理，无网页注册）
+      - AUTH_PASSWORD=change-me  # ★ 改成强密码，改后 docker compose up -d 生效</code><button class="copy-btn" onclick="cp(this)">复制</button></pre>
 
   <h4>docker run 等价命令</h4>
   <pre><code>docker run -d --name strmhub --restart unless-stopped --stop-grace-period 20s \
@@ -288,6 +290,7 @@ details[open] summary{margin-bottom:8px}
     <tr><td>PORTAL_PORT</td><td>6688</td><td>观影门户端口（不要用 6665–6669 其他值，浏览器会拦）</td></tr>
     <tr><td>DATA_DIR / CONFIG_DIR</td><td>/data / /config</td><td>一般不改</td></tr>
     <tr><td>TZ</td><td>—</td><td>时区，建议 Asia/Shanghai（影响 cron 与日志时间）</td></tr>
+    <tr><td>AUTH_USER / AUTH_PASSWORD</td><td>自动生成</td><td><b>管理员账号</b>。compose 里显式配置（推荐）；两者都未配置且无历史账号时，首启自动生成随机密码并打印在容器日志。改环境变量即改密码（重启生效）</td></tr>
     <tr><td>JWT_SECRET</td><td>自动生成</td><td>登录令牌签名密钥。不设则首启自动生成随机密钥存 <code>/config/jwt.key</code>，重启不失效；换机迁移时把 jwt.key 一起带走，否则需重新登录</td></tr>
   </table>
 
@@ -308,7 +311,7 @@ details[open] summary{margin-bottom:8px}
   <h3>启动验证</h3>
   <ol class="steps">
     <li><code>docker logs -f strmhub</code>，看到 <code>StrmHub 管理后台: http://localhost:6060</code>、<code>观影门户启动</code> 即正常</li>
-    <li>浏览器开 <code>http://服务器IP:6060</code> → 首次进入要求<strong>注册管理员</strong>（自设用户名密码）</li>
+    <li>浏览器开 <code>http://服务器IP:6060</code> → 用环境变量 <code>AUTH_USER/AUTH_PASSWORD</code> 配置的账号登录（未配置时首启自动生成随机密码，<code>docker logs strmhub</code> 查看）</li>
     <li>云服务器记得放行三个端口的安全组/防火墙规则</li>
   </ol>
 

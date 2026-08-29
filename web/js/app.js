@@ -183,33 +183,35 @@ function switchTab(pageId, tabName) {
 }
 
 // ==================== 认证 ====================
+// 账号来源：容器环境变量 AUTH_USER / AUTH_PASSWORD（未配置时首启自动生成
+// 随机密码，见容器日志）。网页注册功能已移除
 async function checkAuth() {
   try {
     const data = await api('/auth/status');
-    if (!data.initialized) {
-      showAuth('register');
-    } else if (!localStorage.getItem('token')) {
-      showAuth('login');
+    if (!localStorage.getItem('token')) {
+      showAuth(!data.initialized);
     } else {
       showMain();
     }
   } catch (e) {
-    showAuth('login');
+    showAuth(false);
   }
 }
 
-function showAuth(mode) {
+function showAuth(notInitialized) {
   document.getElementById('auth-page').style.display = 'flex';
   document.getElementById('main-app').style.display = 'none';
-  document.getElementById('auth-mode').value = mode;
   // 地址栏显示 /login；但保留深链接路径（如直接访问 /plugins）以便登录后跳回目标页
   if (location.pathname === '/' || location.pathname === '/login') {
     history.replaceState(null, '', '/login');
   }
-  const isReg = mode === 'register';
-  document.getElementById('auth-heading').textContent = isReg ? '首次部署，注册管理员' : '请输入账号密码登录';
-  document.getElementById('auth-submit').textContent = isReg ? '注册' : '登录';
-  document.getElementById('auth-confirm-row').style.display = isReg ? 'block' : 'none';
+  document.getElementById('auth-heading').textContent = notInitialized
+    ? '尚未设置管理员账号'
+    : '请输入账号密码登录';
+  document.getElementById('auth-subtitle').innerHTML = notInitialized
+    ? '请在 docker-compose 中配置环境变量 <b>AUTH_USER</b> / <b>AUTH_PASSWORD</b> 后重启容器<br>（未配置时首次启动已生成随机账号，见容器日志）'
+    : '115 媒体库管理 · STRM 自动生成';
+  document.getElementById('auth-submit').textContent = '登录';
 }
 
 function showMain() {
@@ -226,20 +228,15 @@ function showMain() {
 
 async function handleAuth(e) {
   e.preventDefault();
-  const mode = document.getElementById('auth-mode').value;
   const username = document.getElementById('auth-username').value;
   const password = document.getElementById('auth-password').value;
   if (!username || !password) { toast('请输入账号和密码'); return; }
-  if (mode === 'register') {
-    const confirm = document.getElementById('auth-confirm').value;
-    if (password !== confirm) { toast('两次密码不一致'); return; }
-  }
   try {
-    const data = await api('/auth/' + mode, { method: 'POST', body: JSON.stringify({ username, password }) });
+    const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
     localStorage.setItem('token', data.token);
     localStorage.setItem('username', data.username);
     showMain();
-    toast(mode === 'register' ? '注册成功' : '登录成功');
+    toast('登录成功');
   } catch (e) { toast(e.message); }
 }
 
@@ -2348,52 +2345,9 @@ document.addEventListener('click', e => {
 
 function openAccountModal() {
   document.getElementById('account-modal').style.display = '';
-  document.getElementById('acc-username').value = localStorage.getItem('username') || '';
-  document.getElementById('acc-old-pwd').value = '';
-  document.getElementById('acc-new-pwd').value = '';
-  document.getElementById('acc-new-pwd2').value = '';
-  const msg = document.getElementById('account-msg');
-  msg.textContent = ''; msg.style.color = '';
+  document.getElementById('acc-current-user').textContent = localStorage.getItem('username') || '-';
 }
 function closeAccountModal() { document.getElementById('account-modal').style.display = 'none'; }
-
-async function saveAccountModal(btn) {
-  const newUsername = document.getElementById('acc-username').value.trim();
-  const oldPwd = document.getElementById('acc-old-pwd').value;
-  const newPwd = document.getElementById('acc-new-pwd').value;
-  const newPwd2 = document.getElementById('acc-new-pwd2').value;
-  const msg = document.getElementById('account-msg');
-  msg.style.color = '';
-  const curUsername = localStorage.getItem('username') || '';
-  const changeUser = newUsername && newUsername !== curUsername;
-  const changePwd = !!newPwd;
-  if (!oldPwd) { msg.textContent = '请填写原密码'; return; }
-  if (!changeUser && !changePwd) { msg.textContent = '没有修改任何内容'; return; }
-  if (changeUser && newUsername.length < 2) { msg.textContent = '用户名至少 2 个字符'; return; }
-  if (changePwd) {
-    if (newPwd.length < 6) { msg.textContent = '新密码至少 6 位'; return; }
-    if (newPwd !== newPwd2) { msg.textContent = '两次输入的新密码不一致'; return; }
-  }
-  btn.disabled = true; btn.textContent = '提交中...';
-  try {
-    const d = await api('/auth/update-account', { method: 'POST', body: JSON.stringify({
-      old_password: oldPwd, new_username: changeUser ? newUsername : '', new_password: newPwd,
-    }) });
-    // 后端签发了新 token（用户名可能已变），更新本地会话
-    if (d.token) localStorage.setItem('token', d.token);
-    if (d.username) localStorage.setItem('username', d.username);
-    msg.style.color = 'var(--success)';
-    msg.textContent = '✓ ' + (d.message || '修改成功');
-    document.getElementById('acc-old-pwd').value = '';
-    document.getElementById('acc-new-pwd').value = '';
-    document.getElementById('acc-new-pwd2').value = '';
-  } catch (e) {
-    msg.style.color = 'var(--danger)';
-    msg.textContent = '✗ ' + e.message;
-  } finally {
-    btn.disabled = false; btn.textContent = '保存修改';
-  }
-}
 
 function logoutNow() {
   localStorage.clear();

@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
 	"fmt"
+	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +29,10 @@ func (c *Config) SettingFile() string {
 }
 
 // ===== 管理员账号（auth.yaml）=====
+//
+// 账号来源：环境变量 AUTH_USER / AUTH_PASSWORD（推荐，容器部署在 compose 里
+// 写死）> 已有 auth.yaml（历史保留）> 启动时自动生成随机密码并打印日志。
+// 网页注册功能已移除——首次账号一律来自环境变量或启动日志
 
 type AuthConfig struct {
 	Username     string `yaml:"username"`
@@ -36,6 +43,50 @@ type AuthConfig struct {
 func (c *Config) IsAuthExists() bool {
 	_, err := os.Stat(c.AuthFile())
 	return err == nil
+}
+
+// EnsureAdmin 保证存在可用管理员：环境变量优先（每次启动同步一次，改环境
+// 变量即改密码）；否则沿用 auth.yaml；都没有则生成随机密码落盘并打印日志
+func (c *Config) EnsureAdmin() error {
+	envUser := strings.TrimSpace(os.Getenv("AUTH_USER"))
+	envPass := os.Getenv("AUTH_PASSWORD")
+	if envUser != "" && envPass != "" {
+		// 环境变量即权威：与 auth.yaml 不一致时静默同步（改 env 即改密）
+		if auth, err := c.LoadAuth(); err != nil || auth.Username != envUser ||
+			!c.VerifyAuth(envUser, envPass) {
+			if err := c.SaveAuth(envUser, envPass); err != nil {
+				return err
+			}
+			log.Println("[账号] ✓ 管理员账号已按环境变量 AUTH_USER/AUTH_PASSWORD 设置")
+		}
+		return nil
+	}
+	if c.IsAuthExists() {
+		return nil // 历史账号继续有效
+	}
+	// 首次部署且未配置环境变量：生成随机凭据（用户名 admin，密码随机 12 位）
+	pass := randomPassword(12)
+	if err := c.SaveAuth("admin", pass); err != nil {
+		return err
+	}
+	log.Printf("════════════════════════════════════════════════")
+	log.Printf("  首次启动：已生成管理员账号（请立即查看并记录）")
+	log.Printf("  用户名：admin")
+	log.Printf("  密码：%s", pass)
+	log.Printf("  建议在 docker-compose 中配置 AUTH_USER / AUTH_PASSWORD 固定账号")
+	log.Printf("════════════════════════════════════════════════")
+	return nil
+}
+
+// randomPassword 生成无易混淆字符的随机密码
+func randomPassword(n int) string {
+	const charset = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, n)
+	for i := range b {
+		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		b[i] = charset[idx.Int64()]
+	}
+	return string(b)
 }
 
 // LoadAuth 读取管理员配置

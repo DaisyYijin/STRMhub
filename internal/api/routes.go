@@ -181,12 +181,12 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 
-	// 认证
+	// 认证（账号由环境变量 AUTH_USER/AUTH_PASSWORD 提供或启动时自动生成，
+	// 网页注册已移除）
 	auth := r.Group("/auth")
 	{
-		auth.GET("/status", h.AuthStatus)     // 检查是否已初始化
-		auth.POST("/register", h.Register)     // 首次注册
-		auth.POST("/login", h.Login)           // 登录
+		auth.GET("/status", h.AuthStatus) // 检查是否已初始化（前端提示文案用）
+		auth.POST("/login", h.Login)      // 登录
 	}
 
 	// Emby Webhook 接收端（无需登录鉴权：Emby 服务器推送事件，token 可选）
@@ -382,93 +382,10 @@ func (h *Handler) AuthStatus(c *gin.Context) {
 	})
 }
 
-// UpdateAccount POST /auth/update-account —— 修改用户名和/或密码（校验原密码；改用户名后签发新 token）
+// UpdateAccount POST /auth/update-account —— 已废弃：账号由环境变量
+// AUTH_USER/AUTH_PASSWORD 管理，网页修改入口随注册功能一并移除
 func (h *Handler) UpdateAccount(c *gin.Context) {
-	var req struct {
-		OldPassword string `json:"old_password" binding:"required"`
-		NewUsername string `json:"new_username"`
-		NewPassword string `json:"new_password"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
-		return
-	}
-	username := c.GetString("username")
-	if username == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
-		return
-	}
-	if !h.Config.VerifyAuth(username, req.OldPassword) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "原密码错误"})
-		return
-	}
-	newUsername := req.NewUsername
-	if newUsername == "" {
-		newUsername = username
-	}
-	if len(newUsername) < 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "用户名至少 2 个字符"})
-		return
-	}
-	changed := []string{}
-	if newUsername != username {
-		changed = append(changed, "用户名")
-	}
-	if req.NewPassword != "" {
-		if len(req.NewPassword) < 6 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少 6 位"})
-			return
-		}
-		if err := h.Config.SaveAuth(newUsername, req.NewPassword); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
-			return
-		}
-		changed = append(changed, "密码")
-	} else if newUsername != username {
-		// 只改用户名：保留原密码哈希
-		if err := h.Config.UpdateAuthUsername(newUsername); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
-			return
-		}
-	}
-	if len(changed) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "没有修改任何内容：新用户名与新密码至少填一项"})
-		return
-	}
-	log.Printf("[账号] %s 已修改：%s → %s", strings.Join(changed, "和"), username, newUsername)
-	c.JSON(http.StatusOK, gin.H{
-		"message":  strings.Join(changed, "和") + "修改成功",
-		"token":    h.generateToken(1, newUsername),
-		"username": newUsername,
-	})
-}
-
-func (h *Handler) Register(c *gin.Context) {
-	var req struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
-		return
-	}
-
-	if h.Config.IsAuthExists() {
-		c.JSON(http.StatusForbidden, gin.H{"error": "系统已初始化，不允许注册"})
-		return
-	}
-
-	if err := h.Config.SaveAuth(req.Username, req.Password); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "注册失败: " + err.Error()})
-		return
-	}
-
-	token := h.generateToken(1, req.Username)
-	c.JSON(http.StatusOK, gin.H{
-		"token":    token,
-		"username": req.Username,
-		"message":  "注册成功",
-	})
+	c.JSON(http.StatusForbidden, gin.H{"error": "账号由环境变量 AUTH_USER / AUTH_PASSWORD 管理，请修改容器环境变量后重启"})
 }
 
 func (h *Handler) Login(c *gin.Context) {

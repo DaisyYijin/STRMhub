@@ -69,12 +69,12 @@ func main() {
 	// 初始化配置
 	cfg := config.Load()
 
-	// 命令行参数：--reset-admin 重置管理员密码（只删 auth.yaml，不丢其他配置）
+	// 命令行参数：--reset-admin 重置管理员（只删 auth.yaml，不丢其他配置）
 	if len(os.Args) > 1 && os.Args[1] == "--reset-admin" {
 		if err := cfg.ResetAuth(); err != nil {
-			fmt.Printf("重置失败（可能尚未注册）: %v\n", err)
+			fmt.Printf("重置失败（可能尚无账号文件）: %v\n", err)
 		} else {
-			fmt.Println("管理员账号已重置，所有配置已保留。请重新启动程序并注册新账号。")
+			fmt.Println("管理员账号文件已删除，所有配置已保留。重启后按环境变量 AUTH_USER/AUTH_PASSWORD 重建，未配置则生成随机密码（见启动日志）。")
 		}
 		return
 	}
@@ -84,6 +84,12 @@ func main() {
 	// 确保配置目录存在
 	if err := cfg.EnsureConfigDir(); err != nil {
 		log.Fatalf("创建配置目录失败: %v", err)
+	}
+
+	// 管理员账号：环境变量 AUTH_USER/AUTH_PASSWORD 优先（未配置且无历史账号
+	// 时自动生成随机密码并打印日志）。网页注册功能已移除
+	if err := cfg.EnsureAdmin(); err != nil {
+		log.Printf("[账号] ○ 管理员账号初始化失败（登录不可用，请检查权限）: %v", err)
 	}
 
 	// 确保数据目录存在

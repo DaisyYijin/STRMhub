@@ -15,3 +15,5 @@ services:
       - ./logs:/logs
     environment:
       - TZ=Asia/Shanghai
+      - AUTH_USER=admin              # 管理后台账号（环境变量管理，网页注册已移除）
+      - AUTH_PASSWORD=change-me      # 改成强密码后 up -d 重启生效
