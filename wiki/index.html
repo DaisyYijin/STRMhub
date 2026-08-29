@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>StrmHub 使用文档</title>
+<meta name="description" content="StrmHub — 115 网盘直链 · STRM 生成 · 自动整理入库 · Emby 对接 · 观影门户">
+<style>
+:root{
+  --bg:#f6f7fb; --card:#ffffff; --text:#1d2129; --text2:#4e5969; --text3:#86909c;
+  --border:#e5e6eb; --primary:#7c3aed; --primary-weak:#f3ecff;
+  --success:#00b42a; --danger:#f53f3f; --warning:#ff7d00;
+  --code-bg:#1e1b2e; --code-text:#e2defa;
+  --sidebar-w:240px; --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.75;font-size:15px}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;background:#f0edf9;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:.9em}
+pre{background:var(--code-bg);color:var(--code-text);padding:16px 18px;border-radius:var(--radius);overflow-x:auto;font-size:13px;line-height:1.7;position:relative}
+pre code{background:none;color:inherit;padding:0;font-size:inherit}
+.copy-btn{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.12);color:#cfc8f0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.copy-btn:hover{background:rgba(255,255,255,.22)}
+
+/* ===== 布局 ===== */
+.layout{display:flex;min-height:100vh}
+.sidebar{width:var(--sidebar-w);background:var(--card);border-right:1px solid var(--border);padding:20px 0;position:fixed;top:0;bottom:0;left:0;overflow-y:auto;z-index:50}
+.sidebar .logo{padding:0 20px 16px;font-size:19px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sidebar .logo .v{font-size:11px;color:var(--text3);font-weight:400}
+.sidebar .sec{padding:14px 20px 4px;font-size:12px;color:var(--text3);font-weight:600;letter-spacing:.5px}
+.sidebar a{display:block;padding:7px 20px;color:var(--text2);font-size:14px;border-left:3px solid transparent}
+.sidebar a:hover{background:var(--primary-weak);color:var(--primary);text-decoration:none}
+.sidebar a.active{color:var(--primary);border-left-color:var(--primary);background:var(--primary-weak);font-weight:600}
+.main{flex:1;margin-left:var(--sidebar-w);padding:36px 44px 100px;max-width:980px}
+.doc-hero{background:linear-gradient(135deg,#231a3d,#4c1d95 55%,#7c3aed);color:#fff;border-radius:16px;padding:38px 36px;margin-bottom:34px}
+.doc-hero h1{font-size:27px;margin-bottom:10px}
+.doc-hero p{color:#d9cffe;font-size:14.5px;max-width:640px}
+.doc-hero .tags{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap}
+.doc-hero .tags span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);padding:3px 12px;border-radius:999px;font-size:12.5px}
+section{margin-bottom:46px;scroll-margin-top:20px}
+h2{font-size:21px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+h2 .num{background:var(--primary);color:#fff;font-size:12px;width:24px;height:24px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+h3{font-size:16.5px;margin:26px 0 10px;color:var(--text)}
+h4{font-size:14.5px;margin:18px 0 8px}
+p{margin-bottom:10px;color:var(--text2)}
+p>strong,li>strong{color:var(--text)}
+ul,ol{margin:0 0 12px 22px;color:var(--text2)}
+li{margin-bottom:5px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 22px;margin:14px 0}
+.tip,.warn,.danger{border-radius:var(--radius);padding:12px 16px;margin:12px 0;font-size:14px;display:flex;gap:10px}
+.tip{background:#f0f9eb;border:1px solid #d5eecb;color:#3d7a1f}
+.warn{background:#fff7e8;border:1px solid #ffddb0;color:#92581a}
+.danger{background:#ffece8;border:1px solid #ffccc2;color:#b3231d}
+.tip b,.warn b,.danger b{flex:none}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card);border-radius:var(--radius);overflow:hidden}
+th{background:#f2f0fa;text-align:left;padding:9px 14px;font-weight:600;white-space:nowrap}
+td{padding:9px 14px;border-top:1px solid var(--border);color:var(--text2);vertical-align:top}
+td:first-child{color:var(--text);white-space:nowrap;font-weight:500}
+.tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;font-weight:500}
+.tag.g{background:#eafaf0;color:#00874a}.tag.o{background:#fff3e8;color:#d25f00}.tag.p{background:#f3ecff;color:#6d28d9}
+kbd{background:#f2f3f5;border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:1px 7px;font-size:12.5px;font-family:inherit}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0;font-size:13px}
+.flow .n{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 13px;font-weight:500}
+.flow .a{color:var(--text3)}
+details{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 18px;margin:10px 0}
+details summary{cursor:pointer;font-weight:600;color:var(--text)}
+details[open] summary{margin-bottom:8px}
+.footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--border);color:var(--text3);font-size:13px}
+
+/* 顶部搜索 & 移动端 */
+.topbar{display:none}
+#search{width:100%;padding:9px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--card);color:var(--text);margin-bottom:6px;outline:none}
+#search:focus{border-color:var(--primary)}
+.search-hit{background:#fff3b0}
+#menu-btn{display:none;position:fixed;top:14px;left:14px;z-index:60;background:var(--card);border:1px solid var(--border);border-radius:8px;width:40px;height:40px;font-size:18px;cursor:pointer}
+@media (max-width:900px){
+  .sidebar{transform:translateX(-100%);transition:transform .25s;box-shadow:0 0 40px rgba(0,0,0,.15)}
+  .sidebar.open{transform:none}
+  .main{margin-left:0;padding:70px 18px 90px}
+  #menu-btn{display:block}
+  .doc-hero{padding:26px 22px}
+}
+</style>
+</head>
+<body>
+
+<button id="menu-btn" onclick="document.querySelector('.sidebar').classList.toggle('open')">☰</button>
+
+<div class="layout">
+<nav class="sidebar" id="toc">
+  <div class="logo">🎬 StrmHub <span class="v">使用文档</span></div>
+  <input id="search" type="search" placeholder="搜索文档…">
+  <div class="sec">开始</div>
+  <a href="#intro">简介与功能</a>
+  <a href="#deploy">部署安装</a>
+  <a href="#ports">端口与访问</a>
+  <a href="#quickstart">首次配置引导</a>
+  <div class="sec">核心功能</div>
+  <a href="#account">账号管理（115）</a>
+  <a href="#fullsync">全量同步</a>
+  <a href="#incrsync">增量同步</a>
+  <a href="#strm">STRM 管理</a>
+  <a href="#organize">自动整理</a>
+  <a href="#rename">重命名模板</a>
+  <a href="#wash">洗版策略</a>
+  <a href="#enrich">媒体补全</a>
+  <div class="sec">播放与通知</div>
+  <a href="#portal">观影门户</a>
+  <a href="#emby">Emby 对接</a>
+  <a href="#message">消息通知与机器人</a>
+  <a href="#transfer">离线下载与转存</a>
+  <div class="sec">维护</div>
+  <a href="#update">应用内更新</a>
+  <a href="#backup">备份与迁移</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<main class="main">
+
+<div class="doc-hero">
+  <h1>StrmHub 使用文档</h1>
+  <p>115 网盘直链 · STRM 生成 · TMDB 自动整理入库 · Emby 对接 · 企微/TG 机器人 · 自带观影门户 · 应用内自更新。本页为官方使用 Wiki，随版本更新。</p>
+  <div class="tags"><span>115 网盘</span><span>STRM 直链播放</span><span>TMDB 刮削整理</span><span>洗版策略</span><span>观影门户</span><span>企业微信机器人</span></div>
+</div>
+
+<!-- ==================== 简介 ==================== -->
+<section id="intro">
+  <h2><span class="num">1</span>简介与功能</h2>
+  <p>StrmHub 把 <strong>115 网盘变成你的影视库存储</strong>：视频不出网盘，本地只生成体积几乎为零的 <code>.strm</code> 直链文件，Emby/Jellyfin 刮削后即可秒点秒播；配合 TMDB 识别自动重命名、分类入库、洗版与画质补全。</p>
+
+  <div class="flow">
+    <span class="n">115 网盘</span><span class="a">→</span>
+    <span class="n">转存/离线下载</span><span class="a">→</span>
+    <span class="n">待整理目录</span><span class="a">→</span>
+    <span class="n">TMDB 识别·重命名·洗版</span><span class="a">→</span>
+    <span class="n">媒体库（网盘内）</span><span class="a">→</span>
+    <span class="n">STRM 落盘</span><span class="a">→</span>
+    <span class="n">Emby 刮削播放</span>
+  </div>
+
+  <h3>核心特性</h3>
+  <ul>
+    <li><strong>302 直链代理</strong>：STRM 内只存短链，播放时按客户端动态 302 到 115 直链，Emby DirectPlay 不转码</li>
+    <li><strong>自动整理</strong>：TMDB 识别 → 模板重命名（电影/剧集/AV 三套模板）→ 分类入库 → 字幕跟随 → 企微/TG 入库通知（带海报）</li>
+    <li><strong>SHA1 云端去重 + 洗版</strong>：直接查网盘目标目录比对，重复不二次入库；按优先级规则自动淘汰旧版本</li>
+    <li><strong>画质补全</strong>：文件名缺分辨率/编码时 ffprobe 探测真实信息后规范命名</li>
+    <li><strong>增量同步</strong>：115 生活事件流驱动，网盘增删改实时映射到本地 STRM</li>
+    <li><strong>观影门户</strong>（6688 端口）：海报墙、分类、搜索、网页播放（直连 → Emby 引擎 → ffmpeg 转封装三级降级）、可选 PIN 码保护</li>
+    <li><strong>企业微信/TG 机器人</strong>：发链接即下载/转存，指令远程整理、同步、查状态</li>
+    <li><strong>应用内自更新</strong>：界面点按钮完成镜像更新，CI 构建完成才提示，失败自动回滚</li>
+  </ul>
+</section>
+
+<!-- ==================== 部署 ==================== -->
+<section id="deploy">
+  <h2><span class="num">2</span>部署安装</h2>
+
+  <h3>前置要求</h3>
+  <ul>
+    <li>一台能访问 115 与 TMDB 的服务器（国内服务器建议在「系统配置 → 代理」配置代理）</li>
+    <li>已安装 Docker 与 Docker Compose</li>
+    <li>115 网盘账号（VIP 更稳）</li>
+  </ul>
+
+  <h3>Docker Compose（推荐）</h3>
+  <p>新建目录 <code>strmhub</code>，保存以下内容为 <code>docker-compose.yml</code> 后执行 <code>docker compose up -d</code>：</p>
+  <pre><code class="lang-yaml">services:
+  strmhub:
+    image: ghcr.io/daisyyijin/strmhub:latest
+    container_name: strmhub
+    restart: unless-stopped
+    stop_grace_period: 20s        # 优雅退出窗口（停 worker、冲刷待发通知）
+    ports:
+      - "6060:6060"   # 管理后台
+      - "6086:6086"   # 302 直链代理 + Emby 反代 + 企微回调
+      - "6688:6688"   # 观影门户
+    volumes:
+      - ./config:/config           # 配置（账号/密钥/设置）
+      - ./data:/data               # 数据库
+      - ./media:/media             # STRM 本地目录（Emby 读这里）
+      - ./logs:/logs               # 日志
+      - /var/run/docker.sock:/var/run/docker.sock   # 应用内自更新必需
+    environment:
+      - TZ=Asia/Shanghai
+      # - JWT_SECRET=自定义密钥   # 不设则首次启动自动生成并持久化</code><button class="copy-btn" onclick="cp(this)">复制</button></pre>
+
+  <div class="tip"><b>💡</b><span>不挂载 <code>docker.sock</code> 也能正常使用，只是「应用内更新」不可用（只能手动 <code>docker compose pull && up -d</code>）。</span></div>
+
+  <h3>环境变量</h3>
+  <table>
+    <tr><th>变量</th><th>默认</th><th>说明</th></tr>
+    <tr><td>PORT</td><td>6060</td><td>管理后台端口</td></tr>
+    <tr><td>PROXY_PORT</td><td>6086</td><td>302 直链代理端口</td></tr>
+    <tr><td>PORTAL_PORT</td><td>6688</td><td>观影门户端口</td></tr>
+    <tr><td>TZ</td><td>—</td><td>时区，建议 Asia/Shanghai</td></tr>
+    <tr><td>JWT_SECRET</td><td>自动生成</td><td>登录令牌签名密钥；生成后存于 <code>/config/jwt.key</code>，换机时一并迁移</td></tr>
+  </table>
+
+  <h3>目录结构</h3>
+  <pre><code>strmhub/
+├── config/   # setting.yaml 全部配置、auth.yaml 管理员、jwt.key、115-cookie.txt
+├── data/     # strmhub.db（台账/媒体库/事件）
+├── media/    # STRM 文件（Emby 挂载的就是这个目录）
+└── logs/     # app.log（10MB 轮转 ×3）</code></pre>
+</section>
+
+<!-- ==================== 端口 ==================== -->
+<section id="ports">
+  <h2><span class="num">3</span>端口与访问</h2>
+  <table>
+    <tr><th>端口</th><th>服务</th><th>谁访问</th></tr>
+    <tr><td>6060</td><td>管理后台（全部管理界面）</td><td>你自己（登录保护）</td></tr>
+    <tr><td>6086</td><td>302 直链代理 + Emby 反代 + 企微机器人回调 <code>/wecom/callback</code></td><td>播放器 / Emby / 企业微信服务器</td></tr>
+    <tr><td>6688</td><td>观影门户（海报墙/播放）</td><td>你与家人（可设 PIN）</td></tr>
+  </table>
+  <div class="warn"><b>⚠️</b><span>门户端口必须用 <strong>6688</strong>：6665–6669 中除 6688 外都在浏览器「不安全端口」黑名单内，会报 <code>ERR_UNSAFE_PORT</code> 打不开。</span></div>
+</section>
+
+<!-- ==================== 快速开始 ==================== -->
+<section id="quickstart">
+  <h2><span class="num">4</span>首次配置引导</h2>
+  <p>部署后浏览器打开 <code>http://服务器IP:6060</code>，首次访问会要求<strong>注册管理员账号</strong>（用户名+密码，存在 <code>config/auth.yaml</code>）。登录后仪表盘顶部会出现「配置引导」卡片，按顺序完成：</p>
+  <ol>
+    <li><strong>绑定 115 账号</strong>（账号管理 → 扫码登录，强烈建议同时启用 OpenAPI）</li>
+    <li><strong>填写 TMDB API Key</strong>（系统配置 → TMDB 配置；themoviedb.org 注册免费获取）</li>
+    <li><strong>选择整理目录</strong>（自动整理 → 基础配置：待整理 / 已存在 / 冗余 三个目录，点「选择目录」从网盘挑）</li>
+    <li><strong>执行首次全量同步</strong>（账号同步 → 选择 115 媒体库目录 → 开始全量同步）</li>
+  </ol>
+  <p>四步完成后引导卡自动隐藏。可选进阶：对接 Emby、配置通知、设置门户 PIN。</p>
+  <div class="tip"><b>💡</b><span>忘记管理员密码？<code>docker exec strmhub ./strmhub --reset-admin</code> 重置账号（其余配置保留）。</span></div>
+</section>
+
+<!-- ==================== 账号 ==================== -->
+<section id="account">
+  <h2><span class="num">5</span>账号管理（115）</h2>
+
+  <h3>两种通道</h3>
+  <table>
+    <tr><th>通道</th><th>登录方式</th><th>说明</th></tr>
+    <tr><td>OpenAPI <span class="tag g">推荐</span></td><td>AppID + 115 App 扫码授权</td><td>官方开放平台接口，无 UA 风控、无「服务器开小差」、token 自动续期。在 <a href="https://open.115.com" target="_blank">open.115.com</a> 申请应用拿 AppID</td></tr>
+    <tr><td>Cookie</td><td>网页扫码 / 手动粘贴 Cookie</td><td>兼容性回退通道；设备类型要与 Cookie 来源匹配，否则容易风控</td></tr>
+  </table>
+  <p>两个通道可以同时配置：OpenAPI 优先，失败自动回退 Cookie。</p>
+
+  <h3>Cookie 设备</h3>
+  <p>默认「115浏览器_网页端」兼容性最好。如果你粘贴的是 App 端 Cookie，请把设备切成对应的 App 端，UA 不匹配会报「服务器开小差了」。</p>
+
+  <h3>API 请求间隔</h3>
+  <p>账号页可设 115 API 请求间隔（默认 3 秒）。被风控（报「服务器开小差」）时适当调大；整理/同步变慢属正常。写操作（改名/移动）内部强制 ≥3 秒间隔，读操作更快。</p>
+</section>
+
+<!-- ==================== 全量同步 ==================== -->
+<section id="fullsync">
+  <h2><span class="num">6</span>全量同步</h2>
+  <p>把 115 媒体库完整映射到本地：视频生成 <code>.strm</code>，附属文件（字幕/封面/NFO）实体下载。账号同步页配置：</p>
+  <table>
+    <tr><th>配置</th><th>说明</th></tr>
+    <tr><td>媒体库目录</td><td>点「选择目录」挑网盘里的库根（如 <code>/影视库</code>），或手填路径自动换算 cid</td></tr>
+    <tr><td>本地路径</td><td>STRM 落盘位置，默认 <code>/media</code>（Emby 挂载同目录）</td></tr>
+    <tr><td>后缀过滤</td><td>视频/图片/数据文件三组扩展名白名单</td></tr>
+  </table>
+
+  <h3>STRM 直链设置（系统配置）</h3>
+  <table>
+    <tr><th>配置</th><th>选项</th><th>说明</th></tr>
+    <tr><td>直连域名</td><td>—</td><td>302 短链使用的域名/IP（默认取请求 Host，反代后建议显式填写）</td></tr>
+    <tr><td>直连格式</td><td><code>pick_code_name</code> / <code>pick_code</code></td><td>前者直链带原文件名（播放器显示友好，推荐）；后者仅文件 ID 最短</td></tr>
+    <tr><td>保留扩展名</td><td>开/关</td><td>STRM 文件名是否带 <code>.mkv</code> 等后缀（Emby 识别格式用，推荐开）</td></tr>
+    <tr><td>本地已存在时</td><td>覆盖 / 跳过</td><td>覆盖=每次全量都重写（改配置后生效，推荐）；跳过=只生成一次</td></tr>
+  </table>
+
+  <div class="tip"><b>💡</b><span>全量同步只补不删——网盘删除的清理走「STRM 管理 → 清理孤儿」或增量同步事件。</span></div>
+</section>
+
+<!-- ==================== 增量 ==================== -->
+<section id="incrsync">
+  <h2><span class="num">7</span>增量同步</h2>
+  <p>基于 115 <strong>生活事件流</strong>：网盘里的上传/删除/移动/改名实时映射到本地 STRM（删旧建新、字幕附属同步处理），无需重复全量。</p>
+  <ul>
+    <li><strong>定时</strong>：增量页配置 cron（默认 <code>*/10 8-23 * * *</code> 即每天 8–23 点每 10 分钟），下方实时预览未来 5 次运行时间</li>
+    <li><strong>自动触发</strong>：整理完成、转存完成、离线下载完成都会自动补一轮增量</li>
+    <li><strong>参数继承</strong>：目录与后缀过滤沿用全量同步配置，改那里即可</li>
+  </ul>
+  <div class="warn"><b>⚠️</b><span>事件表保留 30 天：停用增量超过 30 天期间的删除会丢失，恢复后跑一次「STRM 管理 → 清理孤儿」对齐。</span></div>
+</section>
+
+<!-- ==================== STRM 管理 ==================== -->
+<section id="strm">
+  <h2><span class="num">8</span>STRM 管理</h2>
+  <p>同步台账的可视化管理（侧栏「STRM 管理」）：</p>
+  <ul>
+    <li><strong>列表</strong>：搜索路径、「仅看失效」（本地文件已丢失的记录）筛选、有效/失效标记</li>
+    <li><strong>删除</strong>：单条删除会同时清掉本地 strm 文件与台账行</li>
+    <li><strong>清理孤儿 STRM</strong>：扫描本地存在但网盘已删的 .strm——先统计确认再删，只删可再生的 strm（图片/NFO 只统计不动），随时可全量同步重建</li>
+  </ul>
+</section>
+
+<!-- ==================== 自动整理 ==================== -->
+<section id="organize">
+  <h2><span class="num">9</span>自动整理</h2>
+  <p>把「待整理目录」里的内容识别入库的全自动流水线：</p>
+  <div class="flow">
+    <span class="n">待整理目录</span><span class="a">→</span>
+    <span class="n">TMDB 识别</span><span class="a">→</span>
+    <span class="n">SHA1 云端去重</span><span class="a">→</span>
+    <span class="n">洗版判定</span><span class="a">→</span>
+    <span class="n">画质补全(可选)</span><span class="a">→</span>
+    <span class="n">模板重命名</span><span class="a">→</span>
+    <span class="n">移入媒体库</span><span class="a">→</span>
+    <span class="n">STRM+通知</span>
+  </div>
+
+  <h3>三个工作区目录（基础配置）</h3>
+  <table>
+    <tr><th>目录</th><th>用途</th></tr>
+    <tr><td>待整理</td><td>新内容的落点：离线下载/转存/手动丢进来都放这，整理从这里取</td></tr>
+    <tr><td>已存在</td><td>重复内容（SHA1 相同、或洗版判定新版不优）的去向</td></tr>
+    <tr><td>冗余</td><td>无法识别/广告文件/洗版淘汰旧版本的去向</td></tr>
+  </table>
+  <div class="warn"><b>⚠️</b><span>三个目录不要选在媒体库根或库的上层——系统会熔断增量同步防止误吞事件；选库内子目录或库外目录。</span></div>
+
+  <h3>识别规则（识别配置）</h3>
+  <ul>
+    <li><strong>替换规则</strong>：文件名清洗（如 <code>某站名|</code> 去广告前缀），一行一条正则</li>
+    <li><strong>最小体积</strong>：小于该值的视频直接进冗余（过滤广告/预告片）</li>
+    <li><strong>GPT 辅助</strong>（可选）：TMDB 搜不到时用大模型从文件名提取片名/年份再搜，配国内平台（硅基流动等）的 URL/Key 即可</li>
+  </ul>
+
+  <h3>分类策略（YAML）</h3>
+  <p>按 TMDB 属性把影视分到不同子目录（分类名即网盘目录名，支持 <code>/</code> 多级）：</p>
+  <pre><code class="lang-yaml">movie:
+  电影/动画电影:
+    genre_ids: '16'          # TMDB 类型 16=动画
+  电影/华语电影:
+    original_language: 'zh,cn,bo,za'
+  电影/外语电影:              # 兜底（放最后）
+
+tv:
+  电视剧/国漫:
+    genre_ids: '16'
+    original_language: 'zh,cn'
+  电视剧/海外剧:</code><button class="copy-btn" onclick="cp(this)">复制</button></pre>
+
+  <h3>运行方式</h3>
+  <ul>
+    <li>整理页手动「开始整理」；定时任务（增量 cron）每轮自动带一次整理</li>
+    <li>转存/离线下载完成后自动触发整理+增量</li>
+    <li>整理过程与结果实时输出到日志页；任务进行中全站同步/整理按钮互斥禁用，任务条显示实时进度</li>
+  </ul>
+</section>
+
+<!-- ==================== 重命名 ==================== -->
+<section id="rename">
+  <h2><span class="num">10</span>重命名模板</h2>
+  <p>电影/剧集/AV 各有「目录模板 + 文件模板」两套，编辑时下方<strong>实时示例</strong>预览效果。</p>
+
+  <h4>默认模板</h4>
+  <pre><code>电影目录：{first_letter}-{title}-{year}-[tmdb={tmdb_id}]
+电影文件：{title}.{year}&lt;.{resource_pix}&gt;&lt;.{resource_source}&gt;&lt;.{resource_type}&gt;&lt;.{resource_effect}&gt;&lt;.{video_encode}&gt;&lt;.{audio_encode}&gt;&lt;-{resource_team}&gt;{ext}
+剧集目录：{first_letter}-{title}-{year}-[tmdb={tmdb_id}]
+剧集文件：{title} - {season_episode}&lt;.{resource_pix}&gt;…（同上）</code></pre>
+
+  <h4>块语法</h4>
+  <p><code>&lt;…&gt;</code> 内的<strong>所有变量都非空</strong>才输出整块，否则整块丢弃——用于可选段，避免出现 <code>..</code> 或空括号。</p>
+
+  <h4>可用变量</h4>
+  <table>
+    <tr><th>变量</th><th>示例</th><th>变量</th><th>示例</th></tr>
+    <tr><td>{title}</td><td>钢铁侠</td><td>{resource_pix}</td><td>2160p</td></tr>
+    <tr><td>{en_title}</td><td>Iron Man</td><td>{fps}</td><td>60FPS</td></tr>
+    <tr><td>{original_name}</td><td>原始文件名</td><td>{resource_version}</td><td>IMAX</td></tr>
+    <tr><td>{year}</td><td>2008</td><td>{resource_source}</td><td>NF</td></tr>
+    <tr><td>{tmdb_id}</td><td>1726</td><td>{resource_type}</td><td>BluRay</td></tr>
+    <tr><td>{first_letter}</td><td>G</td><td>{resource_effect}</td><td>DV.HDR</td></tr>
+    <tr><td>{ext}</td><td>mkv</td><td>{video_encode}</td><td>H265.10bit</td></tr>
+    <tr><td>{season_episode}</td><td>S01E01</td><td>{audio_encode}</td><td>TrueHD.7.1</td></tr>
+    <tr><td>{season_num} / {episode_num}</td><td>1</td><td>{resource_team}</td><td>TnT</td></tr>
+    <tr><td>{season_name}</td><td>东海篇</td><td>{num}</td><td>ABC-123（AV 番号）</td></tr>
+    <tr><td>{episode_name}</td><td>我是路飞</td><td>{custom_regex_match}</td><td>自定义正则捕获</td></tr>
+  </table>
+  <div class="tip"><b>💡</b><span>字幕/NFO 自动跟随视频改名（保留语言后缀如 <code>.chs</code>），播放器才能自动挂载外挂字幕。</span></div>
+</section>
+
+<!-- ==================== 洗版 ==================== -->
+<section id="wash">
+  <h2><span class="num">11</span>洗版策略</h2>
+  <p>同一部影视来了新版本时，按优先级规则决定「新版替换旧版」还是「保留旧版」，旧版自动移入冗余/已存在下的 <code>洗版-旧版本/</code> 子目录。</p>
+  <pre><code class="lang-yaml">电影洗版策略:
+  mode: replace        # coexist共存 / skip跳过 / replace替换
+  scope: all           # all=全局只留一个最优 / group=按分辨率分组各留一个
+  media_type: movie
+  old_version_target: redundant   # 旧版去向 redundant / existing
+  priority_level:      # 从上到下，首条能分出高下的规则定胜负
+  - resource_team: "WiKi"         # 发布组优先
+    resource_effect: "!DV.HDR,!DV" # !前缀=排除
+  - resource_pix: "2160p"
+    resource_type: "BluRay"
+  - resource_pix: "1080p"
+    resource_type: "BluRay"
+
+剧集洗版策略:          # 剧集按「同一集」比较，新集数直接入库不洗版
+  mode: replace
+  media_type: tv
+  priority_level:
+  - resource_pix: "2160p"</code><button class="copy-btn" onclick="cp(this)">复制</button></pre>
+  <p>可用字段：<code>resource_team</code>（发布组）、<code>resource_pix</code>（分辨率）、<code>resource_type</code>（来源质量）、<code>video_encode</code> / <code>audio_encode</code>（编码）、<code>resource_effect</code>（特效，<code>!</code> 排除）。</p>
+</section>
+
+<!-- ==================== 补全 ==================== -->
+<section id="enrich">
+  <h2><span class="num">12</span>媒体补全</h2>
+  <p>文件名缺分辨率/编码（如 <code>蜘蛛侠.2016.mkv</code>）时，用 ffprobe 探测 115 直链头部（只拉几 MB）拿真实画质，再规范命名。整理时<strong>同步探测</strong>（探测→改名→入库一步完成），也可发企微指令「补全」扫描全库存量。</p>
+  <h4>决策矩阵（策略可逐项调 rename/keep）</h4>
+  <table>
+    <tr><th>情形</th><th>默认</th></tr>
+    <tr><td>名缺画质 + 探测有</td><td>改名补齐</td></tr>
+    <tr><td>分辨率相符但缺编码</td><td>补齐编码</td></tr>
+    <tr><td>名实冲突（名 1080 探 2160 等）</td><td>按探测改（跨 2 档视为探测异常保留原名）</td></tr>
+    <tr><td>命名已完整</td><td>保留</td></tr>
+  </table>
+  <p>三种预设模式：<strong>保守</strong>（尽量不动）、<strong>标准</strong>（推荐）、<strong>激进</strong>（完整命名也重排）。</p>
+</section>
+
+<!-- ==================== 门户 ==================== -->
+<section id="portal">
+  <h2><span class="num">13</span>观影门户（6688）</h2>
+  <p>手机/电脑浏览器直接看片：<code>http://服务器IP:6688</code></p>
+  <ul>
+    <li><strong>海报墙</strong>：最近入库 / 继续观看（进度记忆）/ 分类 / 搜索</li>
+    <li><strong>播放引擎三级降级</strong>：mp4/webm 浏览器直连（零服务器消耗）→ Emby 引擎（秒拖进度、内嵌音轨字幕切换、服务端转码）→ 门户 ffmpeg 转封装（H.265 自动转 H.264）</li>
+    <li><strong>播放器</strong>：0.5–3x 倍速、音轨/字幕菜单（内嵌+外挂）、进度条拖动、iOS 全屏、键盘快捷键（空格播放暂停、←→ 快退快进 10 秒）</li>
+    <li><strong>PIN 保护</strong>（系统配置 → 门户访问保护）：设置后打开门户先输 PIN，家人共用一个即可；修改 PIN 所有人需重新验证</li>
+  </ul>
+  <div class="warn"><b>⚠️</b><span>公网部署强烈建议设置 PIN——不设则任何知道地址的人都能浏览并播放你的媒体库。门户播放会占用服务器带宽与 CPU（转码时），并发播放会话有上限保护。</span></div>
+</section>
+
+<!-- ==================== Emby ==================== -->
+<section id="emby">
+  <h2><span class="num">14</span>Emby 对接</h2>
+  <h3>服务端配置（系统配置 → EMBY 管理）</h3>
+  <ul>
+    <li><strong>服务器地址 + API Key</strong>：Emby 后台「设置 → API 密钥」生成；填完点「测试连接」</li>
+    <li><strong>路径映射</strong>：StrmHub 的 <code>/media/xxx</code> 对应 Emby 内的挂载路径（两边挂同一目录则通常不用填）</li>
+    <li><strong>路径风格</strong>：unix / windows（影响通知 Emby 刷新时的路径格式）</li>
+    <li><strong>入库时刷新</strong>：开了才会在 STRM 生成后自动触发 Emby 媒体库刷新</li>
+  </ul>
+  <h3>Emby 侧要点</h3>
+  <ul>
+    <li>Emby 挂载 <code>./media</code> 目录建库；播放走 302 直链 DirectPlay 不转码</li>
+    <li>客户端限速/外网播放需要转码时，把 Emby 的串出地址指向 <code>http://服务器IP:6086/emby</code>（6086 是 Emby 反代）</li>
+    <li><strong>播放通知</strong>（开始/结束推送到企微/TG）：Emby 装 Webhooks 插件，URL 填 <code>http://服务器IP:6086/api/emby/webhook?token=界面生成的token</code></li>
+  </ul>
+</section>
+
+<!-- ==================== 通知 ==================== -->
+<section id="message">
+  <h2><span class="num">15</span>消息通知与机器人</h2>
+
+  <h3>企业微信</h3>
+  <ol>
+    <li>企业微信后台建<strong>自建应用</strong>，拿到 企业ID（CorpID）、Secret、AgentID 填入消息配置页</li>
+    <li>要双向互动：应用「接收消息」页设 URL 为 <code>http://公网IP:6086/wecom/callback</code>，Token 与 EncodingAESKey 填进消息配置</li>
+    <li>保存即自动生成聊天底栏菜单（自动整理 / 增量同步）</li>
+  </ol>
+  <h4>机器人用法</h4>
+  <table>
+    <tr><th>发什么</th><th>效果</th></tr>
+    <tr><td>磁力 / ed2k / HTTP 链接</td><td>提交 115 离线下载，完成后自动整理+通知</td></tr>
+    <tr><td>115 分享链接（连提取码一起发）</td><td>自动转存并整理入库</td></tr>
+    <tr><td><code>状态</code></td><td>当前任务/进度/转存目录待处理数/最近任务</td></tr>
+    <tr><td><code>搜索 片名</code></td><td>TMDB 搜片</td></tr>
+    <tr><td><code>整理</code> / <code>同步</code> / <code>补全</code></td><td>手动触发对应任务（与网页端互斥）</td></tr>
+  </table>
+
+  <h3>Telegram</h3>
+  <p>BotFather 建 Bot 拿 Token，向 <code>@userinfobot</code> 发消息拿 Chat ID，填入即用（国内服务器在系统配置代理卡配代理）。</p>
+
+  <h3>通知内容</h3>
+  <ul>
+    <li><strong>入库通知</strong>：带 TMDB 海报的图文卡片；批量入库 15~120 秒聚合防抖成一条</li>
+    <li><strong>任务通知</strong>：整理/同步/转存/离线下载完成与失败</li>
+    <li><strong>播放通知</strong>：Emby Webhook 接入后推送播放开始/停止</li>
+  </ul>
+</section>
+
+<!-- ==================== 离线/转存 ==================== -->
+<section id="transfer">
+  <h2><span class="num">16</span>离线下载与转存</h2>
+  <ul>
+    <li><strong>网页提交</strong>：上传下载页粘贴磁力/ed2k/HTTP 链接；115 分享链接在分享同步卡转存（填提取码）</li>
+    <li><strong>机器人提交</strong>：直接发链接（见上一节）</li>
+    <li><strong>全自动闭环</strong>：下载/转存完成 → 守望者检测到目录有内容 → 自动整理 → 增量同步 → 通知你入库结果</li>
+    <li>离线任务列表实时显示状态；失败任务自动告警</li>
+  </ul>
+</section>
+
+<!-- ==================== 更新 ==================== -->
+<section id="update">
+  <h2><span class="num">17</span>应用内更新</h2>
+  <p>左下角版本号即更新入口（也可点击版本号手动检查）：</p>
+  <table>
+    <tr><th>徽章</th><th>含义</th></tr>
+    <tr><td><span class="tag o">镜像构建中…</span></td><td>新代码已推送、CI 还在构建镜像（3~8 分钟），构建完自动变蓝</td></tr>
+    <tr><td><span class="tag" style="background:#fee2e2;color:#b91c1c">构建失败</span></td><td>CI 构建失败，镜像未发布，去 GitHub Actions 看原因</td></tr>
+    <tr><td><span class="tag p">有新版本</span></td><td>镜像就绪，点开看更新内容（提交列表）→「立即更新」</td></tr>
+  </table>
+  <p>更新流程：拉新镜像 → 创建新容器 → 独立辅助容器完成停旧/启新（主容器不能停自己）。<strong>新容器 20 秒内没跑起来不会删除旧容器</strong>（保留现场排查），启动失败自动回滚旧容器。前提：compose 挂载了 <code>docker.sock</code>。</p>
+</section>
+
+<!-- ==================== 备份 ==================== -->
+<section id="backup">
+  <h2><span class="num">18</span>备份与迁移</h2>
+  <ul>
+    <li><strong>一键备份</strong>：系统配置 →「⬇ 下载备份」得到 zip（全部配置 + 数据库一致性快照）</li>
+    <li><strong>换机迁移</strong>：新机器按第 2 节部署 → 停容器 → 把 zip 内 <code>config/</code>、<code>data/</code> 解压到对应目录 → 起容器即完整恢复</li>
+    <li><strong>只搬文件</strong>：直接打包宿主机 <code>config/</code> + <code>data/</code> 两个目录效果相同</li>
+  </ul>
+  <p>日志在 <code>logs/app.log</code>（10MB 自动轮转保留 3 份），日志页可回看最近 500 行。</p>
+</section>
+
+<!-- ==================== FAQ ==================== -->
+<section id="faq">
+  <h2><span class="num">19</span>常见问题</h2>
+
+  <details open>
+    <summary>播放器/Emby 报「服务器开小差了」？</summary>
+    <p>115 风控。①账号页把 API 间隔调大到 3~5 秒；②确认 Cookie 设备与来源匹配；③建议启用 OpenAPI 通道（无此风控）。</p>
+  </details>
+  <details>
+    <summary>门户 6666 打不开（ERR_UNSAFE_PORT）？</summary>
+    <p>浏览器不安全端口黑名单，门户用 <strong>6688</strong>。</p>
+  </details>
+  <details>
+    <summary>整理后外挂字幕没挂上？</summary>
+    <p>字幕需与视频<strong>同名</strong>（语言后缀保留，如 <code>片名.chs.srt</code>）。整理会自动跟随改名；自己放的字幕注意命名。</p>
+  </details>
+  <details>
+    <summary>重新放回同样的文件还是提示「已存在」？</summary>
+    <p>去重按<strong>网盘目标目录的 SHA1</strong> 比对——你删了库里的文件但目标目录里还有同 SHA1 的其他版本（或移去了已存在目录）。清掉目标目录内同内容即可。</p>
+  </details>
+  <details>
+    <summary>画质补全探测失败？</summary>
+    <p>探测读文件头部，个别封装（moov 在文件尾的 MP4）拿不到信息会保留原名，不影响入库。连续失败多为直链风控，稍后再试或跑「补全」重扫。</p>
+  </details>
+  <details>
+    <summary>更新后要重新登录？</summary>
+    <p>升级到「JWT 密钥随机化」版本时会生成新密钥，旧登录态失效一次，重新登录即可（仅一次）。</p>
+  </details>
+  <details>
+    <summary>机器人没反应？</summary>
+    <p>①回调地址要用 <strong>6086</strong> 端口且企业微信服务器能访问你的服务器（公网）；②Token/AESKey 与后台一致；③保存配置后菜单自动生成，聊天框没按钮就退出会话重进。</p>
+  </details>
+  <details>
+    <summary>TMDB 识别失败/搜不到？</summary>
+    <p>①检查 API Key；②国内服务器在「系统配置 → 代理」配代理（TMDB 识别走全局代理）；③片名太乱的文件配 GPT 辅助识别；④识别失败的内容留在待整理目录，<strong>不会</strong>误进冗余（网络瞬断时保护性跳过）。</p>
+  </details>
+  <details>
+    <summary>如何完全重置？</summary>
+    <p>停容器删除 <code>config/</code> + <code>data/</code> 后重启 = 全新安装（<code>media/</code> 里的 strm 也建议清掉重同步）。</p>
+  </details>
+
+  <div class="footer">
+    StrmHub 使用文档 · 项目主页
+    <a href="https://github.com/DaisyYijin/STRMhub" target="_blank">GitHub - DaisyYijin/STRMhub</a>
+    · 文档随版本更新，部署本页到静态托管（如热铁盒）即可作为线上 Wiki
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+// 复制按钮
+function cp(btn){
+  const code=btn.parentElement.querySelector('code');
+  const text=code.innerText.replace(/复制$/,'');
+  (navigator.clipboard?navigator.clipboard.writeText(text):Promise.reject()).then(()=>{btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500)}).catch(()=>{
+    const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+    btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1500);
+  });
+}
+// 滚动高亮目录
+const links=[...document.querySelectorAll('.sidebar a')];
+const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const spy=new IntersectionObserver(es=>{
+  es.forEach(e=>{if(e.isIntersecting){
+    links.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+e.target.id));
+  }});
+},{rootMargin:'-15% 0px -70% 0px'});
+secs.forEach(s=>spy.observe(s));
+// 移动端点目录后收起侧栏
+links.forEach(l=>l.addEventListener('click',()=>{if(innerWidth<=900)document.querySelector('.sidebar').classList.remove('open')}));
+// 搜索过滤：隐藏不匹配的小节，命中词高亮
+const search=document.getElementById('search');
+search.addEventListener('input',()=>{
+  const q=search.value.trim().toLowerCase();
+  secs.forEach((s,i)=>{
+    if(!q){s.style.display='';links[i].style.display='';return}
+    const hit=s.textContent.toLowerCase().includes(q);
+    s.style.display=hit?'':'none';
+    links[i].style.display=hit?'':'none';
+  });
+});
+</script>
+</body>
+</html>
