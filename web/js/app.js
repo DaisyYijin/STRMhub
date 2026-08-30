@@ -137,7 +137,6 @@ function showPage(id) {
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'config-message') loadConfigs();
-  if (id === 'config-system') loadPortalPin();
   if (id === 'dashboard') loadGuide();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
@@ -432,239 +431,6 @@ function confirmIncrementalSync(btn) {
   }, 0);
 }
 
-// 重置整理记录（清空去重数据库，误判"已存在"时使用）
-function resetOrgRecords(btn) {
-  closeConfirmBubble();
-  document.removeEventListener('click', closeConfirmBubbleOnOutside);
-  const bubble = document.createElement('div');
-  bubble.id = 'confirm-bubble';
-  bubble.className = 'confirm-bubble';
-  bubble.innerHTML = '<div class="cb-text">确定清空整理记录？</div><div class="cb-actions"><button class="cb-cancel">取消</button><button class="cb-ok cb-danger">确定清空</button></div>';
-  document.body.appendChild(bubble);
-  // fixed 定位到按钮上方
-  const rect = btn.getBoundingClientRect();
-  bubble.style.position = 'fixed';
-  bubble.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
-  bubble.style.left = 'auto';
-  bubble.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
-  bubble.classList.add('show');
-  bubble.querySelector('.cb-cancel').onclick = (e) => { e.stopPropagation(); closeConfirmBubble(); };
-  bubble.querySelector('.cb-ok').onclick = async (e) => {
-    e.stopPropagation();
-    closeConfirmBubble();
-    try {
-      const data = await api('/organize/reset-records', { method: 'POST' });
-      toast(data.message || '已重置');
-      appendLog('已重置整理记录: ' + (data.message || ''));
-    } catch (err) { toast('重置失败: ' + err.message); }
-  };
-  setTimeout(() => {
-    document.addEventListener('click', closeConfirmBubbleOnOutside, { once: true });
-  }, 0);
-}
-
-// ==================== 增量同步 ====================
-async function startIncrementalSync() {
-  await resolveInputCID('full-cid');
-  const cid = resolveCID('full-cid');
-  if (!cid || cid === '0') { toast('无法识别 115 目录：请点「选择目录」重新选择，或直接输入纯数字 cid'); return; }
-  try {
-    toast('增量同步进行中（受 API 间隔限制可能持续数分钟）...');
-    appendLog('开始增量同步（拉取 115 生活事件，定向同步受影响目录）...');
-    const data = await api('/sync/incremental', { method: 'POST', body: JSON.stringify({
-      cid: cid,
-      local_path: document.getElementById('full-local').value,
-      video_ext: getTags('video-ext'),
-      image_ext: getTags('image-ext'),
-      data_ext: getTags('data-ext'),
-    }) });
-    toast(data.message || '增量同步完成');
-    const sm = data.summary || {};
-    appendLog(`任务完成: 增量同步, 耗时 ${sm.elapsed || '-'} · 事件 ${sm.events_total}（新 ${sm.events_fresh}，媒体相关 ${sm.relevant}，结构性 ${sm.structural}：删 ${sm.deleted} 移/改 ${sm.moved}），目录 ${sm.dirs}（跳过 ${sm.dirs_skipped}），视频 ${sm.videos}（STRM ${sm.strm_created}），附属下载 ${sm.assets_downloaded}`);
-  } catch (e) {
-    appendLog('✗ 增量同步失败: ' + e.message);
-    toast('增量同步失败：' + e.message);
-  }
-}
-
-async function testEmbyConnection() {
-  const url = val('emby-server-url').trim();
-  const key = val('emby-api-key').trim();
-  const el = document.getElementById('emby-test-result');
-  if (!url) { toast('请填写 Emby 服务器地址'); return; }
-  el.textContent = '测试中...'; el.style.color = '';
-  try {
-    const d = await api('/config/test-emby', { method: 'POST', body: JSON.stringify({ server_url: url, api_key: key }) });
-    if (d.ok) {
-      el.textContent = '✓ 已连接（' + (d.server_name || 'Emby') + '，' + (d.library_count || 0) + ' 个媒体库）';
-      el.style.color = 'var(--primary)';
-    } else {
-      el.textContent = '✗ ' + (d.error || '连接失败');
-      el.style.color = '#e74c3c';
-    }
-  } catch (e) {
-    el.textContent = '✗ ' + e.message;
-    el.style.color = '#e74c3c';
-  }
-}
-
-// ==================== 仪表盘 ====================
-async function loadDashboard() {
-  try {
-    const d = await api('/dashboard');
-    /* ---- 存储空间 ---- */
-    const st = d.storage || {};
-    const stTotal = Number(st.total || 0), stUsed = Number(st.used || 0);
-    setTxt('dash-storage-used', st.used_h || humanBytes(stUsed));
-    const stPct = stTotal > 0 ? Math.min(100, stUsed / stTotal * 100) : 0;
-    setTxt('dash-storage-pct', '已使用 ' + stPct.toFixed(1) + '%');
-    setBar('dash-storage-bar', stPct);
-    setTxt('dash-storage-detail', '可用 ' + (st.free_h || humanBytes(stTotal - stUsed)) + ' / 总容量 ' + (st.total_h || humanBytes(stTotal)));
-    /* ---- 媒体统计 ---- */
-    const md = d.media || {};
-    setTxt('dash-movies', fmtN(md.movies));
-    setTxt('dash-tvs', fmtN(md.tvs));
-    setTxt('dash-movies-month', '+' + (md.movies_month || 0) + ' 本月新增');
-    setTxt('dash-tvs-month', '+' + (md.tvs_month || 0) + ' 本月新增');
-    const strm = d.strm || {};
-    setTxt('dash-strm-count', fmtN(strm.total));
-    setTxt('dash-strm-invalid', strm.invalid || 0);
-    setTxt('dash-organized', fmtN(d.organized));
-    setTxt('dash-synced', fmtN(d.synced_files));
-    /* ---- 当前任务 + 快捷操作 ---- */
-    const task = d.task || {};
-    const tb = document.getElementById('dash-task-box');
-    if (task.running) {
-      tb.innerHTML = '<div style="font-size:15px;font-weight:600">⏳ ' + esc(task.name || '任务') + '</div>'
-        + '<div style="font-size:12px;color:var(--text-3);margin-top:6px">已运行 ' + esc(task.elapsed || '-') + (task.progress ? ' · ' + esc(task.progress) : '') + '</div>';
-    } else {
-      tb.innerHTML = '<div style="font-size:15px;font-weight:600;color:var(--text-3)">空闲</div>'
-        + '<div style="font-size:12px;color:var(--text-3);margin-top:6px">无正在执行的任务 · 待处理事件 ' + (d.pending_events || 0) + ' 条</div>';
-    }
-    /* ---- 最近整理（海报行） ---- */
-    const recent = d.recent_media || [];
-    const rb = document.getElementById('dash-recent');
-    if (recent.length) {
-      rb.innerHTML = recent.map(m =>
-        '<div class="dash-recent-item">'
-        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy" onerror="this.style.opacity=0">' : '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">')
-        + '<div class="t">' + esc(m.title) + ' <span style="color:var(--text-3)">' + esc(m.year || '') + '</span><div style="font-size:11.5px;color:var(--text-3)">' + esc(m.category || m.type || '') + '</div></div>'
-        + '<div class="m">' + esc(m.at) + '</div></div>').join('');
-    } else {
-      rb.innerHTML = '<div class="dash-empty">暂无整理记录</div>';
-    }
-    /* ---- 后台任务 ---- */
-    const bg = d.bg_tasks || [];
-    document.getElementById('dash-bg').innerHTML = bg.map(t =>
-      '<div class="dash-bg-item"><span class="dash-bg-dot ' + (t.running ? 'on' : 'off') + '"></span>'
-      + '<span>' + esc(t.name) + '</span><span class="d">' + esc(t.detail || '') + '</span></div>').join('');
-    /* ---- 近 7 天入库（SVG 柱图） ---- */
-    renderWeekly(d.weekly || [], d.week_total || 0);
-    /* ---- 系统状态 ---- */
-    const sys = d.sys || {};
-    if (sys.mem_percent !== undefined) {
-      setTxt('dash-mem-pct', sys.mem_percent.toFixed(1) + '%');
-      setBar('dash-mem-bar', sys.mem_percent);
-      setTxt('dash-mem-detail', humanBytes(sys.mem_used_mb * 1048576) + ' / ' + humanBytes(sys.mem_total_mb * 1048576));
-    } else {
-      setTxt('dash-mem-pct', '-'); setTxt('dash-mem-detail', '不可用');
-    }
-    if (sys.cpu_percent !== undefined) {
-      setTxt('dash-cpu-pct', sys.cpu_percent.toFixed(1) + '%');
-      setBar('dash-cpu-bar', sys.cpu_percent);
-    } else {
-      setTxt('dash-cpu-pct', '-');
-    }
-    /* ---- 我的媒体库分类卡 ---- */
-    const cats = d.categories || [];
-    const cb = document.getElementById('dash-cats');
-    if (cats.length) {
-      cb.innerHTML = cats.map(c => {
-        let inner;
-        if (c.posters && c.posters.length) {
-          inner = '<div class="collage">' + [0,1,2,3].map(i =>
-            c.posters[i] ? '<img src="/poster' + esc(c.posters[i]) + '" loading="lazy">' : '<div style="background:var(--fill-2)"></div>').join('') + '</div>';
-        } else {
-          inner = '<div class="cat-placeholder">' + esc((c.name || '?').slice(0, 4)) + '</div>';
-        }
-        return '<div class="dash-cat" title="' + esc(c.name) + ' · ' + c.count + ' 部">' + inner
-          + '<div class="cat-name">' + esc(c.name) + '</div>'
-          + '<div class="cat-count">' + fmtN(c.count) + '</div></div>';
-      }).join('');
-    } else {
-      cb.innerHTML = '<div class="dash-empty">暂无入库记录 · 整理或同步后这里会显示分类卡片</div>';
-    }
-    /* ---- 最新入库海报墙 ---- */
-    const pb = document.getElementById('dash-posters');
-    if (recent.length) {
-      pb.innerHTML = recent.map(m =>
-        '<div class="dash-poster" title="' + esc(m.title + ' ' + (m.year || '')) + '">'
-        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy">'
-                    : '<div class="p-none">🎬</div>')
-        + '<div class="p-title">' + esc(m.title) + '</div></div>').join('');
-    } else {
-      pb.innerHTML = '<div class="dash-empty">暂无入库</div>';
-    }
-  } catch (e) {}
-}
-
-function setTxt(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
-function setBar(id, pct) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.style.width = Math.max(2, Math.min(100, pct)) + '%';
-  el.className = pct > 85 ? 'danger' : (pct > 65 ? 'warn' : '');
-}
-function fmtN(n) { return Number(n || 0).toLocaleString('en-US'); }
-function humanBytes(b) {
-  b = Number(b || 0);
-  if (b <= 0) return '0 B';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
-  return b.toFixed(i > 1 ? 2 : 0) + ' ' + u[i];
-}
-// 近 7 天入库柱状图（内联 SVG，无外部依赖）
-function renderWeekly(weekly, total) {
-  const box = document.getElementById('dash-weekly');
-  if (!box) return;
-  const max = Math.max(1, ...weekly.map(w => w.count));
-  const W = 320, H = 130, pad = 6, bw = W / weekly.length;
-  let bars = '';
-  weekly.forEach((w, i) => {
-    const h = w.count > 0 ? Math.max(4, (H - 30) * w.count / max) : 2;
-    const x = i * bw + bw * 0.18, y = H - 18 - h;
-    bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + (bw * 0.64).toFixed(1)
-      + '" height="' + h.toFixed(1) + '" rx="3" fill="#7c3aed"'
-      + (w.count ? ' opacity="0.9"' : ' opacity="0.25"') + '></rect>';
-    if (w.count) bars += '<text x="' + (x + bw * 0.32).toFixed(1) + '" y="' + (y - 4).toFixed(1)
-      + '" font-size="10" fill="#4e5969" text-anchor="middle">' + w.count + '</text>';
-    bars += '<text x="' + (x + bw * 0.32).toFixed(1) + '" y="' + (H - 5) + '" font-size="9.5" fill="#86909c" text-anchor="middle">' + esc(w.day.slice(3)) + '</text>';
-  });
-  box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + '</svg>';
-  setTxt('dash-week-total', '最近一周入库 ' + total + ' 部' + (total ? ' 🎉' : ' 😴'));
-}
-// 快捷操作（复用既有确认与执行逻辑）
-async function startFullSyncQuick(btn) { showPage('sync'); }
-async function quickOrganize(btn) {
-  if (!confirm('立即执行自动整理？完成后可在任务状态查看进度')) return;
-  // 整理是长任务（同步接口）：发后不管，进度在上方任务状态卡实时展示
-  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
-  toast('整理任务已开始');
-  api('/organize/pipeline', { method: 'POST', body: JSON.stringify({ sync_after: true }) })
-    .then(() => toast('✓ 整理完成')).catch(e => toast('✗ ' + e.message));
-}
-async function quickIncr(btn) {
-  if (!confirm('立即执行增量同步？完成后可在任务状态查看进度')) return;
-  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
-  toast('增量同步已开始');
-  api('/sync/incremental', { method: 'POST', body: '{}' })
-    .then(() => toast('✓ 增量同步完成')).catch(e => toast('✗ ' + e.message));
-}
-
-// ==================== STRM 管理 ====================
-
-
 // Cron 未来运行时间预览（防抖 500ms）
 let cronPreviewTimer = null;
 let cronPreviewLast = ''; // 上次已展示的表达式（相同则跳过，避免闪烁）
@@ -763,21 +529,40 @@ async function loadGuide() {
   } catch (e) { /* 引导失败静默 */ }
 }
 
-// ==================== 门户 PIN ====================
-async function savePortalPin(btn) {
-  btn.disabled = true; btn.textContent = '保存中...';
+// ==================== 密钥输入遮罩 ====================
+// 所有 type=password 的输入框支持双击切换明文（title 提示）
+document.addEventListener('dblclick', e => {
+  const el = e.target;
+  if (el && el.tagName === 'INPUT' && el.type === 'password') {
+    el.type = 'text';
+    el.dataset.masked = '1';
+    el.title = '双击恢复遮罩';
+  } else if (el && el.tagName === 'INPUT' && el.type === 'text' && el.dataset.masked === '1') {
+    el.type = 'password';
+    el.title = '双击显示明文';
+  }
+});
+
+// ==================== 首启引导 ====================
+async function loadGuide() {
+  const card = document.getElementById('guide-card');
+  if (!card) return;
   try {
-    const pin = document.getElementById('portal-pin').value.trim();
-    await api('/config/setting', { method: 'POST', body: JSON.stringify({ key: 'portal', value: JSON.stringify({ pin }) }) });
-    toast(pin ? '✓ 门户 PIN 已启用' : '✓ 门户 PIN 已关闭');
-  } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = '保存 PIN'; }
-}
-async function loadPortalPin() {
-  try {
-    const d = await api('/config/setting?key=portal');
-    const el = document.getElementById('portal-pin');
-    if (el && d.value) { try { el.value = JSON.parse(d.value).pin || ''; } catch (e) {} }
-  } catch (e) {}
+    const g = await api('/system/guide');
+    if (g.coreDone) { card.style.display = 'none'; return; }
+    const steps = [
+      [g.pan115, '绑定 115 账号（账号管理 → 扫码登录）', 'config-accounts'],
+      [g.tmdb, '填写 TMDB API Key（系统配置 → TMDB 配置）', 'config-system'],
+      [g.orgDirs, '选择待整理目录（自动整理 → 基础配置）', 'organize'],
+      [g.synced, '执行首次全量同步（账号同步 → 开始全量同步）', 'sync'],
+      [g.emby, '对接 Emby（可选，系统配置 → EMBY 管理）', 'config-system'],
+      [g.notify, '配置通知（可选，消息配置）', 'config-message'],
+    ];
+    document.getElementById('guide-steps').innerHTML = steps.map(([ok, text, page]) =>
+      '<div>' + (ok ? '✅' : '⬜') + ' <span style="' + (ok ? 'text-decoration:line-through;color:var(--text-3)' : '') + '">' + text + '</span>'
+      + (ok ? '' : ' <a href="javascript:void(0)" onclick="showPage(\'' + page + '\')" style="color:var(--primary)">去设置 →</a>') + '</div>').join('');
+    card.style.display = '';
+  } catch (e) { /* 引导失败静默 */ }
 }
 
 // ==================== 目录选择器 ====================

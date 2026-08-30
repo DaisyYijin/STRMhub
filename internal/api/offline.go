@@ -12,6 +12,9 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -116,6 +119,7 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 	}
 
 	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(req.URL, 60), linkType)
+	offlineMineAdd(h, req.URL) // 归属标记：完成通知只发给 StrmHub 内提交的任务
 
 	// 离线下载是异步的：提交后 10 秒先试探一轮（115 秒传命中时文件已就位，
 	// CMS 同款极速响应——秒传场景 ~15 秒即开始整理）；未命中则 60 秒后再试，
@@ -267,6 +271,108 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 	return true
 }
 
+// ==================== 离线任务「归属」标记 ====================
+//
+// 115 的离线任务列表是账号级的：用户直接在 115 App 里提交的任务也会出现。
+// 通知与自动整理只应响应 StrmHub 内提交的任务——提交时把任务指纹
+// （磁力 btih / ed2k hash / 原始 URL）写入持久化标记，监视器比对后才动作。
+
+const offlineMineKey = "offline-mine"
+
+// offlineMineLoad 读取归属标记（map 指纹 → 提交时间戳；顺带清理 7 天前的旧标记）
+func offlineMineLoad(h *Handler) map[string]int64 {
+	marks := map[string]int64{}
+	if v := h.getSettingValue(offlineMineKey); v != "" {
+		_ = json.Unmarshal([]byte(v), &marks)
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour).Unix()
+	changed := false
+	for k, ts := range marks {
+		if ts < cutoff {
+			delete(marks, k)
+			changed = true
+		}
+	}
+	if len(marks) > 300 { // 防膨胀：只留最近的
+		type kv struct {
+			k  string
+			ts int64
+		}
+		list := make([]kv, 0, len(marks))
+		for k, ts := range marks {
+			list = append(list, kv{k, ts})
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].ts > list[j].ts })
+		for _, e := range list[300:] {
+			delete(marks, e.k)
+		}
+		changed = true
+	}
+	if changed {
+		offlineMineSave(h, marks)
+	}
+	return marks
+}
+
+func offlineMineSave(h *Handler, marks map[string]int64) {
+	b, _ := json.Marshal(marks)
+	h.Config.SaveSetting(offlineMineKey, string(b))
+}
+
+// offlineMineAdd 提交成功后登记任务指纹（magnet→btih、ed2k→hash、以及原始 URL）
+func offlineMineAdd(h *Handler, rawURL string) {
+	lower := strings.ToLower(rawURL)
+	var keys []string
+	if strings.HasPrefix(lower, "magnet:?") {
+		if m := regexp.MustCompile(`(?i)btih:([A-Za-z0-9]+)`).FindStringSubmatch(rawURL); m != nil {
+			keys = append(keys, "btih:"+strings.ToUpper(m[1]))
+		}
+	} else if strings.HasPrefix(lower, "ed2k://") {
+		// ed2k 链接倒数第二段是文件 hash
+		parts := strings.Split(rawURL, "|")
+		if len(parts) >= 5 {
+			keys = append(keys, "ed2k:"+strings.ToUpper(parts[4]))
+		}
+	}
+	// 名称标记：115 对 HTTP/FTP 任务用链接里的文件名作为任务名，监视器
+	// 按「name:任务名」兜底匹配（磁力无名称，靠 btih 匹配）
+	if strings.HasPrefix(lower, "ed2k://") {
+		if parts := strings.Split(rawURL, "|"); len(parts) >= 3 && parts[2] != "" {
+			keys = append(keys, "name:"+parts[2])
+		}
+	} else if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "ftp://") {
+		if u, err := url.Parse(rawURL); err == nil {
+			if base := path.Base(u.Path); base != "" && base != "/" && base != "." {
+				keys = append(keys, "name:"+base)
+			}
+		}
+	}
+	keys = append(keys, "url:"+rawURL)
+	marks := offlineMineLoad(h)
+	now := time.Now().Unix()
+	for _, k := range keys {
+		marks[k] = now
+	}
+	offlineMineSave(h, marks)
+}
+
+// offlineMineMatch 任务是否属于 StrmHub 提交（info_hash / 任务名指纹 / URL 任一命中；
+// 115 对磁力任务返回的 info_hash 即 btih；名称兜底用于 HTTP/ed2k 无 hash 场景）
+func offlineMineMatch(h *Handler, marks map[string]int64, key, name string) bool {
+	if _, ok := marks["btih:"+strings.ToUpper(key)]; ok {
+		return true
+	}
+	if _, ok := marks["ed2k:"+strings.ToUpper(key)]; ok {
+		return true
+	}
+	if name != "" {
+		if _, ok := marks["name:"+name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // StartTransferWatcher 转存目录守望者：每分钟检查转存目录，发现内容且
 // 无任务运行时触发「自动整理+增量」。磁力/离线下载完成时间不可控，
 // 提交 60 秒后的触发器常在下载完成前跑掉，定时任务又要等下一轮 cron——
@@ -359,6 +465,7 @@ func StartOfflineTaskMonitor(h *Handler) {
 			if err != nil {
 				continue // 网络抖动/接口拒绝：下轮再看
 			}
+			mine := offlineMineLoad(h) // StrmHub 提交的归属标记（App 里提交的不在标记内 → 不通知）
 			// 本轮新完成的任务（聚合为一条通知+一次整理触发，防止批量完成时
 			// 一秒内发几十条企微消息、并发几十个整理触发）
 			var doneNames, failedNames []string
@@ -367,6 +474,11 @@ func StartOfflineTaskMonitor(h *Handler) {
 				prev, seen := lastStatus[key]
 				lastStatus[key] = t.status
 				if notified[key] || (seen && prev == t.status) {
+					continue
+				}
+				// 归属过滤：只响应 StrmHub 内提交的任务（用户直接在 115 App
+				// 提交的磁力/链接不发通知、不触发整理）
+				if !offlineMineMatch(h, mine, key, t.name) {
 					continue
 				}
 				// !seen 且已终态的任务：只处理「本进程启动之后完成的」——

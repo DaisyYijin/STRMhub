@@ -9,7 +9,6 @@ package api
 
 import (
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -28,6 +27,7 @@ import (
 	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 var portalCfg *config.Config
@@ -38,7 +38,7 @@ var portalCfg *config.Config
 func StartPortal(cfg *config.Config) {
 	portalCfg = cfg
 	r := gin.New()
-	r.Use(gin.Recovery(), portalPinGuard)
+	r.Use(gin.Recovery(), portalAuthGuard)
 
 	r.GET("/", portalPage)
 	r.GET("/api/portal/nav", portalNav)
@@ -57,7 +57,7 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/api/portal/embyplay", portalEmbyPlay)
 	r.Any("/api/portal/emby/*path", embyProxy)
 	// PIN 会话（guard 下方注册：通过 guard 后才会到达）
-	r.POST("/api/portal/auth", portalPinAuth)
+	r.POST("/api/portal/auth", portalAuthLogin)
 
 	go portalBackfillWorker()
 	go hlsCleaner()
@@ -68,86 +68,96 @@ func StartPortal(cfg *config.Config) {
 	}
 }
 
-// portalPinOf 门户 PIN 配置（空 = 不启用）
-func portalPinOf() string {
-	var cfg struct {
-		PIN string `json:"pin"`
-	}
-	_ = json.Unmarshal([]byte(settingValueCompat("portal")), &cfg)
-	return strings.TrimSpace(cfg.PIN)
-}
+// ==================== 门户访问认证（与管理后台同一套账号密码） ====================
+//
+// 首次访问任意门户页面 → 未携带有效会话 cookie 时返回登录页；
+// 登录成功下发 JWT cookie（与 6060 同一 JWTSecret、同一 auth.yaml 账号），
+// 30 天有效。改密码（环境变量）后门户会话同样需要重新登录。
 
-// portalPinToken 会话 cookie 值 = sha256(PIN + 固定盐)：无状态，改 PIN 即全员失效
-func portalPinToken(pin string) string {
-	sum := sha256.Sum256([]byte("strmhub-portal:" + pin))
-	return hex.EncodeToString(sum[:])
-}
+// portalSessionCookie 会话 cookie 名
+const portalSessionCookie = "portal_session"
 
-// portalPinGuard PIN 门卫：配置了 PIN 且会话 cookie 不匹配时，
-// 页面请求回 PIN 输入页、API 请求回 401（前端跳 PIN 页）
-func portalPinGuard(c *gin.Context) {
-	pin := portalPinOf()
-	if pin == "" {
-		c.Next()
+// portalAuthGuard 门户门卫：无有效会话时页面请求回登录页、API 请求回 401
+func portalAuthGuard(c *gin.Context) {
+	if c.Request.URL.Path == "/api/portal/auth" {
+		c.Next() // 登录端点自身放行
 		return
 	}
-	if cookie, err := c.Cookie("portal_pin"); err == nil && cookie == portalPinToken(pin) {
+	if _, err := c.Cookie(portalSessionCookie); err == nil && portalSessionValid(c) {
 		c.Next()
-		return
-	}
-	if strings.HasPrefix(c.Request.URL.Path, "/api/portal/auth") {
-		c.Next() // 认证端点本身放行（guard 只拦未授权访问）
 		return
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "pin_required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "auth_required"})
 		c.Abort()
 		return
 	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(portalPinHTML))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(portalLoginHTML))
 	c.Abort()
 }
 
-// PortalPinAuth POST /api/portal/auth body {"pin":"..."} → 校验并下发会话 cookie
-func portalPinAuth(c *gin.Context) {
+// portalSessionValid 校验会话 cookie 是否为有效 JWT
+func portalSessionValid(c *gin.Context) bool {
+	tok, err := c.Cookie(portalSessionCookie)
+	if err != nil || tok == "" {
+		return false
+	}
+	claims := jwt.MapClaims{}
+	_, err = jwt.ParseWithClaims(tok, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(portalCfg.JWTSecret), nil
+	})
+	return err == nil
+}
+
+// portalAuthLogin POST /api/portal/auth {"username","password"} → 校验与
+// 管理后台一致的账号密码，成功下发会话 cookie
+func portalAuthLogin(c *gin.Context) {
 	var req struct {
-		PIN string `json:"pin"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	want := portalPinOf()
-	if want == "" || strings.TrimSpace(req.PIN) != want {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "PIN 不正确"})
+	if !portalCfg.VerifyAuth(strings.TrimSpace(req.Username), req.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号或密码错误"})
 		return
 	}
-	c.SetCookie("portal_pin", portalPinToken(want), 30*24*3600, "/", "", false, true)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"scope": "portal",
+		"exp":   time.Now().Add(30 * 24 * time.Hour).Unix(),
+	})
+	signed, _ := token.SignedString([]byte(portalCfg.JWTSecret))
+	c.SetCookie(portalSessionCookie, signed, 30*24*3600, "/", "", false, true)
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
-// portalPinHTML PIN 输入页（暗色，与门户风格一致）
-const portalPinHTML = `<!DOCTYPE html>
+// portalLoginHTML 门户登录页（暗色，与门户风格一致；账号密码与管理后台相同）
+const portalLoginHTML = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>StrmHub · 访问验证</title>
+<title>StrmHub · 登录</title>
 <style>
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1115;color:#e5eaf3;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
 .card{background:#1a1e27;border:1px solid #2a3040;border-radius:14px;padding:36px 30px;width:min(92vw,360px);text-align:center}
 h1{font-size:18px;margin:0 0 6px}p{color:#8b93a7;font-size:13px;margin:0 0 22px}
-input{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:8px;border:1px solid #2a3040;background:#12151d;color:#e5eaf3;font-size:16px;text-align:center;letter-spacing:2px;outline:none}
+input{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:8px;border:1px solid #2a3040;background:#12151d;color:#e5eaf3;font-size:15px;outline:none;margin-bottom:12px}
 input:focus{border-color:#7c3aed}
-button{width:100%;margin-top:14px;padding:12px;border:none;border-radius:8px;background:#7c3aed;color:#fff;font-size:15px;cursor:pointer}
+button{width:100%;margin-top:6px;padding:12px;border:none;border-radius:8px;background:#7c3aed;color:#fff;font-size:15px;cursor:pointer}
 button:hover{background:#8b5cf6}
 .err{color:#ef4444;font-size:13px;min-height:18px;margin-top:10px}
 </style></head><body>
-<div class="card"><h1>🎬 观影门户</h1><p>该门户已启用访问验证</p>
-<input id="pin" type="password" placeholder="输入访问 PIN" autofocus>
-<button onclick="go()">进入</button><div class="err" id="err"></div></div>
+<div class="card"><h1>🎬 观影门户</h1><p>请登录（与管理后台相同的账号密码）</p>
+<form id="f">
+<input id="u" placeholder="账号" autocomplete="username" autofocus>
+<input id="p" type="password" placeholder="密码" autocomplete="current-password">
+<button type="submit">登 录</button><div class="err" id="err"></div>
+</form></div>
 <script>
-async function go(){
-  const pin=document.getElementById('pin').value.trim();
-  const r=await fetch('/api/portal/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
-  if(r.ok){location.reload()}else{document.getElementById('err').textContent='PIN 不正确'}
-}
-document.getElementById('pin').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+document.getElementById('f').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const r=await fetch('/api/portal/auth',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value.trim(),password:document.getElementById('p').value})});
+  if(r.ok){location.reload()}else{try{const d=await r.json();document.getElementById('err').textContent=d.error||'登录失败'}catch(_){document.getElementById('err').textContent='登录失败'}}
+});
 </script></body></html>`
 
 // portalTitleEntry 从台账聚合出的一个标题条目

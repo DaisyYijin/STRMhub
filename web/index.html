@@ -200,7 +200,7 @@
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
                 <div class="form-row"><div class="label">已存在文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-outline" onclick="resetOrgRecords(this)" style="position:relative">重置整理记录</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
       </div>
     </div>
 
@@ -874,10 +874,9 @@ av:
     <div class="page" id="page-config-system">
       
       <div class="card">
-        <div style="font-weight:600;margin-bottom:12px">门户访问保护</div>
-        <div class="form-row"><div class="label">门户 PIN 码<i class="help-tip" tabindex="0">?<span class="tip-bubble">设置后访问观影门户（6688）需先输入 PIN。留空 = 不启用。修改 PIN 后所有已登录设备需重新验证。手机扫码看片时家人共用一个 PIN 即可。</span></i></div><div class="control"><input type="text" id="portal-pin" placeholder="留空不启用访问验证"></div></div>
-        <div class="alert alert-info">公网部署建议设置：门户端口公开可达，未设 PIN 时任何人都能浏览海报墙并播放你的媒体。保存后立即生效。</div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="savePortalPin(this)">保存 PIN</button> <button class="btn btn-outline" onclick="location.href='/api/system/backup'">⬇ 下载备份（配置+数据库）</button></div></div>
+        <div style="font-weight:600;margin-bottom:12px">备份与门户访问</div>
+        <div class="alert alert-info">观影门户（6688）的登录账号与管理后台相同（环境变量 <b>AUTH_USER</b> / <b>AUTH_PASSWORD</b>），改密码后门户需重新登录。公网部署务必设置强密码。</div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-outline" onclick="location.href='/api/system/backup'">⬇ 下载备份（配置+数据库）</button></div></div>
       </div>
 <div class="tabs">
         <div class="tab active" data-tab="strm">STRM配置</div>

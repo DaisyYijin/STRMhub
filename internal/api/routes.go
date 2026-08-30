@@ -350,14 +350,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/offline/add", h.offlineAddTask)
 		protected.GET("/offline/tasks", h.offlineTaskList)
 
-		// 重置整理记录（清空 MediaLibrary 去重表，误判已存在时使用）
-		protected.POST("/organize/reset-records", func(c *gin.Context) {
-			var rec model.MediaLibrary
-			total := h.DB.Model(&rec).Where("1 = 1").Delete(&rec).RowsAffected
-			log.Printf("[整理] 已重置整理记录: 清除 %d 条", total)
-			c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("已清除 %d 条整理记录", total), "cleared": total})
-		})
-
 		// 302 代理
 
 		// 系统设置

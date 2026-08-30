@@ -155,7 +155,7 @@ details[open] summary{margin-bottom:8px}
     <tr><td>自动整理</td><td>目录/散文件两级识别；TMDB（含 GPT 兜底提取片名）；模板重命名；二级分类；字幕跟随；广告过滤</td></tr>
     <tr><td>去重与洗版</td><td>云端目标目录 SHA1 直比（不依赖缓存表）；优先级规则洗版，旧版自动归档</td></tr>
     <tr><td>画质补全</td><td>ffprobe 探测直链头部拿真实分辨率/编码/音轨，规范命名；八情形决策矩阵可配</td></tr>
-    <tr><td>观影门户</td><td>6688 端口海报墙/分类/搜索/继续观看；三级播放引擎（直连→Emby→ffmpeg 转封装）；倍速/音轨/字幕；可选 PIN 码</td></tr>
+    <tr><td>观影门户</td><td>6688 端口海报墙/分类/搜索/继续观看；三级播放引擎（直连→Emby→ffmpeg 转封装）；倍速/音轨/字幕；账号密码登录（与管理后台相同）</td></tr>
     <tr><td>Emby 对接</td><td>入库自动刷新；路径映射；302 DirectPlay；6086 反代支持转码场景；Webhook 播放通知</td></tr>
     <tr><td>消息机器人</td><td>企微图文通知（带海报）+ 双向机器人；TG 通知；批量入库聚合防抖</td></tr>
     <tr><td>离线/转存</td><td>磁力/ed2k/HTTP 离线下载、115 分享转存，完成自动整理闭环；失败告警</td></tr>
@@ -259,7 +259,7 @@ details[open] summary{margin-bottom:8px}
     ports:
       - "6060:6060"   # 管理后台（你自己用）
       - "6086:6086"   # 302 直链代理 + Emby 反代 + 企微回调（播放器/Emby/企微服务器访问）
-      - "6688:6688"   # 观影门户（你与家人；可设 PIN）
+      - "6688:6688"   # 观影门户（你与家人；账号密码登录）
     volumes:
       - ./config:/config           # ★ 全部配置：setting.yaml / auth.yaml(管理员) /
                                     #   jwt.key / 115-cookie.txt
@@ -336,7 +336,7 @@ emby302.example.com {           # 播放器/Emby 用的 302 域名（配到 STRM
     <tr><th style="width:70px">端口</th><th style="width:190px">服务</th><th>访问者 / 说明</th></tr>
     <tr><td>6060</td><td>管理后台</td><td>你。登录保护（JWT，30 天有效）；所有配置、监控、日志都在这</td></tr>
     <tr><td>6086</td><td>302 直链代理 + Emby 反代 + 企微回调</td><td>播放器与 Emby（直链短链）；Emby 客户端（反代 <code>/emby</code> 路径，用于需要转码的场景）；企业微信服务器回调 <code>/wecom/callback</code>。<strong>不能暴露给公网随意访问</strong>的部分只有回调路径，其余公开无碍</td></tr>
-    <tr><td>6688</td><td>观影门户</td><td>你与家人。海报墙/搜索/网页播放；<strong>建议设置 PIN</strong>（系统配置 → 门户访问保护）</td></tr>
+    <tr><td>6688</td><td>观影门户</td><td>你与家人。海报墙/搜索/网页播放；<strong>账号密码登录</strong>（与管理后台 AUTH_USER/AUTH_PASSWORD 相同）</td></tr>
   </table>
   <h3>为什么门户不能用 6666</h3>
   <p>Chromium 系浏览器维护着一份「不安全端口」黑名单（历史上被各类服务占用过），6665–6669 中除 6688 外全部在列——访问会直接报 <code>ERR_UNSAFE_PORT</code>，与你的部署无关。所以门户固定用 <strong>6688</strong>。</p>
@@ -801,13 +801,13 @@ tv:
     <li>调试：地址加 <code>?debug=1</code> 显示播放计时面板（引擎选择/出画耗时等，排障利器）</li>
   </ul>
 
-  <h3>PIN 码保护（强烈建议公网开启）</h3>
+  <h3>登录保护</h3>
   <ol class="steps">
-    <li>系统配置 → 「门户访问保护」→ 填 PIN → 保存（留空=关闭）</li>
-    <li>之后打开 6688 先出 PIN 输入页，输对后 30 天内免输（改 PIN 立即全员失效）</li>
-    <li>家人共用同一个 PIN 即可</li>
+    <li>打开 6688 先出登录页——<strong>账号密码与管理后台相同</strong>（compose 里的 AUTH_USER / AUTH_PASSWORD）</li>
+    <li>登录后 30 天内免输；修改环境变量密码后门户需重新登录</li>
+    <li>家人使用同一对账号即可</li>
   </ol>
-  <div class="warn"><b>⚠️</b><span>不设 PIN 时任何知道地址的人都能浏览并播放你的媒体库。门户转码播放占用服务器 CPU/带宽，并发会话数有上限保护（默认 4）。</span></div>
+  <div class="warn"><b>⚠️</b><span>公网部署务必设置强密码——门户转码播放占用服务器 CPU/带宽，并发会话数有上限保护（默认 4）。</span></div>
 </section>
 
 <!-- ============================================================ 19 -->

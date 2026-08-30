@@ -454,5 +454,6 @@ func (h *Handler) submitOfflineLink(rawURL string) error {
 		return fmt.Errorf("115 拒绝: %s", truncateStr(string(body), 100))
 	}
 	log.Printf("[机器人] ✓ 离线下载已提交: %s", truncateStr(rawURL, 60))
+	offlineMineAdd(h, rawURL) // 归属标记（企微提交的同样只在本项目内通知）
 	return nil
 }
