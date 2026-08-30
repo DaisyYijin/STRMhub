@@ -505,3 +505,58 @@ tr:hover td { background: var(--fill-1); }
 /* 表单行内与标签垂直居中：开关统一 32px，相对 36px 控件行偏移 2px */
 .form-row .control .segmented-control { margin-top: 2px; }
 
+
+/* ==================== 仪表盘（参考 MoviePilot 布局） ==================== */
+.dash-grid { display: grid; gap: 14px; margin-bottom: 14px; }
+.dash-grid-3 { grid-template-columns: 1fr 2fr; }
+.dash-grid-2 { grid-template-columns: 1fr 1fr; }
+@media (max-width: 1100px) { .dash-grid-3, .dash-grid-2 { grid-template-columns: 1fr; } }
+.dash-card { padding: 18px 22px; }
+.dash-card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.dash-storage-num { font-size: 26px; font-weight: 700; margin: 4px 0 2px; }
+.dash-bar { height: 8px; background: var(--fill-2); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+.dash-bar > i { display: block; height: 100%; width: 0; background: var(--primary); border-radius: 99px; transition: width .6s; }
+.dash-bar > i.warn { background: var(--warning); }
+.dash-bar > i.danger { background: var(--danger); }
+.dash-stats-row { display: flex; flex-wrap: wrap; gap: 18px; }
+.dash-stat { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 130px; }
+.dash-stat-ico { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex: none; }
+.i-purple { background: #f3ecff; } .i-green { background: #e8f7ee; } .i-orange { background: #fff3e6; } .i-blue { background: #e8f1ff; }
+.dash-stat-label { font-size: 12px; color: var(--text-3); }
+.dash-stat-num { font-size: 20px; font-weight: 700; line-height: 1.2; }
+.dash-stat-sub { font-size: 11.5px; color: #00b42a; }
+.dash-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dash-actions .btn { font-size: 13px; }
+.dash-recent-list { max-height: 300px; overflow-y: auto; font-size: 13px; }
+.dash-recent-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--fill-2); }
+.dash-recent-item:last-child { border-bottom: none; }
+.dash-recent-item img { width: 32px; height: 46px; object-fit: cover; border-radius: 4px; background: var(--fill-2); flex: none; }
+.dash-recent-item .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-recent-item .m { color: var(--text-3); font-size: 12px; flex: none; }
+.dash-bg-list { font-size: 13px; }
+.dash-bg-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--fill-2); }
+.dash-bg-item:last-child { border-bottom: none; }
+.dash-bg-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dash-bg-dot.on { background: #00b42a; box-shadow: 0 0 0 3px rgba(0,180,42,.12); }
+.dash-bg-dot.off { background: var(--text-4); }
+.dash-bg-item .d { color: var(--text-3); font-size: 12px; margin-left: auto; }
+.dash-section-title { font-size: 15px; font-weight: 600; margin: 20px 0 12px; }
+.dash-empty { color: var(--text-3); font-size: 13px; padding: 20px 0; text-align: center; }
+/* 分类卡片（海报四拼 + 角标计数） */
+.dash-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.dash-cat { position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 16/7; background: var(--fill-2); cursor: pointer; transition: transform .2s; }
+.dash-cat:hover { transform: translateY(-3px); }
+.dash-cat .collage { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.dash-cat .collage img { width: 100%; height: 100%; object-fit: cover; }
+.dash-cat .cat-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 12px 8px; background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #fff; font-size: 14px; font-weight: 600; }
+.dash-cat .cat-count { position: absolute; top: 0; right: 0; background: var(--primary); color: #fff; font-size: 12px; font-weight: 600; padding: 3px 12px; border-bottom-left-radius: 10px; }
+.dash-cat .cat-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 22px; font-weight: 700; background: linear-gradient(135deg, #7c3aed, #4c1d95); }
+/* 最新入库海报墙 */
+.dash-posters { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px; }
+.dash-poster { position: relative; aspect-ratio: 2/3; border-radius: 8px; overflow: hidden; background: var(--fill-2); }
+.dash-poster img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .25s; }
+.dash-poster:hover img { transform: scale(1.06); }
+.dash-poster .p-title { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 8px 6px; background: linear-gradient(transparent, rgba(0,0,0,.78)); color: #fff; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-poster .p-none { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--text-3); }
+/* 入库统计 SVG 图 */
+#dash-weekly svg { width: 100%; height: 140px; display: block; }

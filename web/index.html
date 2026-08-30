@@ -713,13 +713,84 @@ av:
         <div style="font-weight:600;margin-bottom:8px">🚀 配置引导</div>
         <div id="guide-steps" style="font-size:13px;line-height:2.2;color:var(--text-2)"></div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px">
-        <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">115 网盘容量</div><div style="font-size:22px;font-weight:700;margin:6px 0" id="dash-capacity">-</div><div class="acc-bar-wrap"><div class="acc-bar" id="dash-cap-bar" style="width:0%"></div></div><div style="font-size:12px;color:var(--text-3);margin-top:4px" id="dash-cap-text">-</div></div>
-        <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">STRM 文件</div><div style="font-size:22px;font-weight:700;margin:6px 0" id="dash-strm-count">-</div><div style="font-size:13px;color:var(--text-2)">有效 <span id="dash-strm-active">-</span> · 失效 <span id="dash-strm-invalid" style="color:#e74c3c">-</span></div></div>
-        <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">已同步文件</div><div style="font-size:22px;font-weight:700;margin:6px 0" id="dash-synced">-</div><div style="font-size:13px;color:var(--text-2)">已整理入库 <span id="dash-organized">-</span> 部</div></div>
-        <div class="card" style="padding:16px 20px"><div style="font-size:12px;color:var(--text-3)">任务状态</div><div style="font-size:16px;font-weight:600;margin:8px 0" id="dash-task">空闲</div><div style="font-size:12px;color:var(--text-3)" id="dash-task-detail">-</div></div>
+
+      <!-- 第一行：存储空间 + 媒体统计 -->
+      <div class="dash-grid dash-grid-3">
+        <div class="card dash-card">
+          <div class="dash-card-title">存储空间</div>
+          <div class="dash-storage-num" id="dash-storage-used">-</div>
+          <div style="font-size:12px;color:var(--text-3)" id="dash-storage-pct">已使用 -</div>
+          <div class="dash-bar"><i id="dash-storage-bar"></i></div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:6px" id="dash-storage-detail">-</div>
+        </div>
+        <div class="card dash-card">
+          <div class="dash-card-title">媒体统计</div>
+          <div class="dash-stats-row">
+            <div class="dash-stat"><div class="dash-stat-ico i-purple">🎬</div><div><div class="dash-stat-label">电影</div><div class="dash-stat-num" id="dash-movies">-</div><div class="dash-stat-sub" id="dash-movies-month"></div></div></div>
+            <div class="dash-stat"><div class="dash-stat-ico i-green">📺</div><div><div class="dash-stat-label">电视剧</div><div class="dash-stat-num" id="dash-tvs">-</div><div class="dash-stat-sub" id="dash-tvs-month"></div></div></div>
+            <div class="dash-stat"><div class="dash-stat-ico i-orange">🎞️</div><div><div class="dash-stat-label">STRM 文件</div><div class="dash-stat-num" id="dash-strm-count">-</div><div class="dash-stat-sub">失效 <span id="dash-strm-invalid" style="color:var(--danger)">-</span></div></div></div>
+            <div class="dash-stat"><div class="dash-stat-ico i-blue">📚</div><div><div class="dash-stat-label">已入库</div><div class="dash-stat-num" id="dash-organized">-</div><div class="dash-stat-sub">附属 <span id="dash-synced">-</span></div></div></div>
+          </div>
+        </div>
       </div>
-      <div class="card"><div style="font-weight:600;margin-bottom:10px">最近入库</div><div id="dash-recent" style="font-size:13px;line-height:2;color:var(--text-2)">加载中...</div></div>
+
+      <!-- 第二行：当前任务 + 最近整理 -->
+      <div class="dash-grid dash-grid-2">
+        <div class="card dash-card">
+          <div class="dash-card-title">任务状态</div>
+          <div id="dash-task-box">
+            <div style="font-size:15px;font-weight:600;color:var(--text-3)">空闲</div>
+            <div style="font-size:12px;color:var(--text-3);margin-top:6px">无正在执行的任务</div>
+          </div>
+          <div class="dash-card-title" style="margin-top:18px">快捷操作</div>
+          <div class="dash-actions">
+            <button class="btn btn-outline" onclick="startFullSyncQuick(this)">⇄ 全量同步</button>
+            <button class="btn btn-outline" onclick="quickOrganize(this)">⚙ 整理</button>
+            <button class="btn btn-outline" onclick="quickIncr(this)">⚡ 增量</button>
+            <button class="btn btn-outline" onclick="window.open(location.origin.replace(':6060',':6688'),'_blank')">🎬 门户</button>
+            <button class="btn btn-outline" onclick="location.href='/api/system/backup'">⬇ 备份</button>
+          </div>
+        </div>
+        <div class="card dash-card">
+          <div class="dash-card-title" style="display:flex;justify-content:space-between;align-items:center">最近整理
+            <button class="btn btn-outline" style="padding:3px 12px;font-size:12px" onclick="showPage('organize')">查看全部</button>
+          </div>
+          <div id="dash-recent" class="dash-recent-list">加载中…</div>
+        </div>
+      </div>
+
+      <!-- 第三行：后台任务 + 入库统计 + 系统状态 -->
+      <div class="dash-grid dash-grid-3">
+        <div class="card dash-card">
+          <div class="dash-card-title">后台任务</div>
+          <div id="dash-bg" class="dash-bg-list">加载中…</div>
+        </div>
+        <div class="card dash-card">
+          <div class="dash-card-title">近 7 天入库</div>
+          <div id="dash-weekly"></div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:8px" id="dash-week-total">-</div>
+        </div>
+        <div class="card dash-card">
+          <div class="dash-card-title">系统状态</div>
+          <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-size:13px"><span>💾 内存使用</span><b id="dash-mem-pct">-</b></div>
+            <div class="dash-bar"><i id="dash-mem-bar"></i></div>
+            <div style="font-size:12px;color:var(--text-3);margin-top:4px" id="dash-mem-detail">-</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px"><span>🧮 CPU 使用率</span><b id="dash-cpu-pct">-</b></div>
+            <div class="dash-bar"><i id="dash-cpu-bar"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 第四行：我的媒体库 -->
+      <div class="dash-section-title">我的媒体库</div>
+      <div class="dash-cats" id="dash-cats"><div class="dash-empty">加载中…</div></div>
+
+      <!-- 第五行：最新入库海报墙 -->
+      <div class="dash-section-title">最新入库</div>
+      <div class="dash-posters" id="dash-posters"><div class="dash-empty">加载中…</div></div>
     </div>
 
     <!-- 账号管理 -->

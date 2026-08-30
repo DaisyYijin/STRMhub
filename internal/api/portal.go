@@ -499,12 +499,18 @@ func portalBackfillTMDB(m *model.MediaLibrary) {
 
 // portalPoster 海报代理：TMDB 图片经本服务转发并缓存（局网客户端免翻墙）
 func portalPoster(c *gin.Context) {
+	serveTMDBPoster(c, portalCfg.DataDir)
+}
+
+// serveTMDBPoster TMDB 海报服务端代理（带 7 天磁盘缓存；portalCfg 来自门户，
+// 管理后台仪表盘复用同一逻辑，DataDir 由调用方传入）
+func serveTMDBPoster(c *gin.Context, dataDir string) {
 	p := strings.TrimPrefix(c.Param("path"), "/")
 	if p == "" || strings.Contains(p, "..") {
 		c.String(http.StatusBadRequest, "bad path")
 		return
 	}
-	cacheDir := filepath.Join(portalCfg.DataDir, "posters")
+	cacheDir := filepath.Join(dataDir, "posters")
 	_ = os.MkdirAll(cacheDir, 0755)
 	h := sha1.Sum([]byte(p))
 	cacheFile := filepath.Join(cacheDir, hex.EncodeToString(h[:8])+filepath.Ext(p))

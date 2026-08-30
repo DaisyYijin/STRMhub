@@ -294,6 +294,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 302 直连（与 6086 代理同款，6060 也能作为 strm 直连地址，CMS 二合一模式）
 		r.GET("/d/:pickcode", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
 		r.GET("/d/:pickcode/*filename", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
+		// TMDB 海报代理（仪表盘媒体库卡片/最新入库海报墙；与门户同款缓存逻辑）
+		r.GET("/poster/*path", func(c *gin.Context) { serveTMDBPoster(c, h.Config.DataDir) })
 
 						
 		// 刮削整理

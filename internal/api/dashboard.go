@@ -5,6 +5,9 @@ package api
 import (
 	"encoding/json"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"path/filepath"
 	"fmt"
 	"net/http"
@@ -52,10 +55,109 @@ func (h *Handler) TestProxyLatency(c *gin.Context) {
 	})
 }
 
+// cpuSample 上一次 /proc/stat 采样（CPU% 用两次调用差值计算）
+var (
+	cpuSampleMu   sync.Mutex
+	cpuSampleLast [10]int64
+	cpuSampleAt   time.Time
+)
+
+// cpuPercent 读取系统 CPU 使用率（/proc/stat 差值；无历史采样时短睡 150ms
+// 采一次；非 Linux 返回 -1 由前端隐藏）
+func cpuPercent() float64 {
+	stat, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return -1
+	}
+	cur := parseProcStat(stat)
+	cpuSampleMu.Lock()
+	last, lastAt := cpuSampleLast, cpuSampleAt
+	cpuSampleLast, cpuSampleAt = cur, time.Now()
+	cpuSampleMu.Unlock()
+	if lastAt.IsZero() || time.Since(lastAt) < 300*time.Millisecond {
+		time.Sleep(150 * time.Millisecond)
+		stat2, err := os.ReadFile("/proc/stat")
+		if err != nil {
+			return -1
+		}
+		cur = parseProcStat(stat2)
+		last = parseProcStat(stat)
+	}
+	idle := (cur[3] + cur[4]) - (last[3] + last[4])
+	total := int64(0)
+	for j := 0; j < 10; j++ {
+		total += cur[j] - last[j]
+	}
+	if total <= 0 {
+		return -1
+	}
+	pct := float64(total-idle) * 100 / float64(total)
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
+func parseProcStat(stat []byte) [10]int64 {
+	var out [10]int64
+	for i, line := range strings.Split(string(stat), "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			if i == 0 {
+				continue
+			}
+			break
+		}
+		fields := strings.Fields(strings.TrimSpace(line))[1:]
+		for j := 0; j < 10 && j < len(fields); j++ {
+			out[j], _ = strconv.ParseInt(fields[j], 10, 64)
+		}
+		break
+	}
+	return out
+}
+
+// memInfo 读取 /proc/meminfo，返回 totalMB/usedMB/percent；非 Linux 返回 ok=false
+func memInfo() (totalMB, usedMB uint64, pct float64, ok bool) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	get := func(prefix string) uint64 {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				f := strings.Fields(line)
+				if len(f) >= 2 {
+					v, _ := strconv.ParseUint(f[1], 10, 64)
+					return v / 1024
+				}
+			}
+		}
+		return 0
+	}
+	total := get("MemTotal:")
+	avail := get("MemAvailable:")
+	if total == 0 {
+		return 0, 0, 0, false
+	}
+	used := total - avail
+	return total, used, float64(used) * 100 / float64(total), true
+}
+
 // DashboardEnhanced 仪表盘（真实数据版）
 // GET /dashboard
 func (h *Handler) DashboardEnhanced(c *gin.Context) {
-	// strm 统计
+	// ---- 媒体统计（电影/剧集 + 本月新增）----
+	var movieCount, tvCount, movieMonth, tvMonth int64
+	monthStart := time.Now().Format("2006-01") + "-01"
+	h.DB.Model(&model.MediaLibrary{}).Where("media_type = ?", "movie").Count(&movieCount)
+	h.DB.Model(&model.MediaLibrary{}).Where("media_type = ?", "tv").Count(&tvCount)
+	h.DB.Model(&model.MediaLibrary{}).Where("media_type = ? AND created_at >= ?", "movie", monthStart).Count(&movieMonth)
+	h.DB.Model(&model.MediaLibrary{}).Where("media_type = ? AND created_at >= ?", "tv", monthStart).Count(&tvMonth)
+
+	// ---- STRM 统计（失效口径：台账 video 行中本地文件已不存在的，抽样上限防大库卡顿）----
 	var strmTotal, strmInvalid, syncedFiles int64
 	var dashRecentVideos []model.SyncedFile
 	dashLocalRoot := defaultLocalPath
@@ -66,7 +168,6 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 		dashLocalRoot = dashFullCfg.LocalPath
 	}
 	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Count(&strmTotal)
-	// 失效 STRM 真实口径：台账 video 行中本地 strm 文件已不存在的数量（有上限，防大库卡顿）
 	h.DB.Model(&model.SyncedFile{}).Where("kind = ?", "video").Order("updated_at DESC").Limit(500).Find(&dashRecentVideos)
 	for _, sf := range dashRecentVideos {
 		if _, err := os.Stat(filepath.Join(dashLocalRoot, filepath.FromSlash(sf.RelPath))); err != nil {
@@ -75,38 +176,125 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 	}
 	h.DB.Model(&model.SyncedFile{}).Count(&syncedFiles)
 
-	// 整理记录
-	var organizedTotal int64
-	h.DB.Model(&model.MediaLibrary{}).Count(&organizedTotal)
-
-	// 最近整理入库（前 10 部）
+	// ---- 最近整理（12 条，带海报）----
 	var recentMedia []model.MediaLibrary
-	h.DB.Order("created_at DESC").Limit(10).Find(&recentMedia)
+	h.DB.Order("created_at DESC").Limit(12).Find(&recentMedia)
 	recent := make([]gin.H, 0, len(recentMedia))
 	for _, m := range recentMedia {
 		recent = append(recent, gin.H{
 			"title": m.Title, "year": m.Year, "category": m.Category,
-			"type": m.MediaType, "path": m.TargetPath, "at": m.CreatedAt.Format("01-02 15:04"),
+			"type": m.MediaType, "poster": m.PosterPath, "at": m.CreatedAt.Format("01-02 15:04"),
 		})
 	}
 
-	// 最近同步事件（未处理的）
+	// ---- 近 7 天入库曲线 ----
+	type dayCount struct {
+		Day   string `json:"day"`
+		Count int64  `json:"count"`
+	}
+	weekly := make([]dayCount, 7)
+	type row struct {
+		Day   string
+		Count int64
+	}
+	var rows []row
+	weekAgo := time.Now().AddDate(0, 0, -6).Format("2006-01-02")
+	h.DB.Model(&model.MediaLibrary{}).
+		Select("DATE(created_at) as day, COUNT(*) as count").
+		Where("created_at >= ?", weekAgo).
+		Group("DATE(created_at)").Scan(&rows)
+	countByDay := map[string]int64{}
+	for _, r := range rows {
+		countByDay[r.Day] = r.Count
+	}
+	weekTotal := int64(0)
+	for i := 6; i >= 0; i-- {
+		d := time.Now().AddDate(0, 0, -i)
+		key := d.Format("2006-01-02")
+		n := countByDay[key]
+		weekly[6-i] = dayCount{Day: d.Format("01-02"), Count: n}
+		weekTotal += n
+	}
+
+	// ---- 我的媒体库（分类聚卡：计数 + 4 张海报拼贴）----
+	type catRow struct {
+		Category string
+		Count    int64
+	}
+	var catRows []catRow
+	h.DB.Model(&model.MediaLibrary{}).
+		Select("category, COUNT(*) as count").
+		Where("category != ''").
+		Group("category").Order("count DESC").Limit(8).Scan(&catRows)
+	categories := make([]gin.H, 0, len(catRows))
+	for _, cr := range catRows {
+		var posters []model.MediaLibrary
+		h.DB.Select("poster_path").
+			Where("category = ? AND poster_path != ''", cr.Category).
+			Order("created_at DESC").Limit(4).Find(&posters)
+		plist := make([]string, 0, 4)
+		for _, pm := range posters {
+			plist = append(plist, pm.PosterPath)
+		}
+		categories = append(categories, gin.H{"name": cr.Category, "count": cr.Count, "posters": plist})
+	}
+
+	// ---- 后台任务（真实组件状态）----
+	running, taskName, taskSince, taskProgress := TaskStatus()
+	bg := make([]gin.H, 0, 6)
+	bg = append(bg, gin.H{"name": "定时整理+增量", "detail": h.loadIncrCron(), "running": running && strings.Contains(taskName, "定时")})
+	bg = append(bg, gin.H{"name": "转存目录守望", "detail": "每分钟检测转存目录", "running": true})
+	bg = append(bg, gin.H{"name": "离线任务监视", "detail": "每 30 秒轮询 115 离线列表", "running": true})
+	bg = append(bg, gin.H{"name": "元数据回传", "detail": "Emby 图片/NFO 回传 115", "running": true})
+	var enrichPending int64
+	h.DB.Model(&model.MediaEnrich{}).Where("status = ?", "pending").Count(&enrichPending)
+	bg = append(bg, gin.H{"name": "画质补全队列", "detail": fmt.Sprintf("待处理 %d", enrichPending), "running": enrichPending > 0})
+	bg = append(bg, gin.H{"name": "门户海报回填", "detail": "补全入库记录的海报信息", "running": false})
+
+	// ---- 当前任务 ----
+	task := gin.H{"running": running}
+	if running {
+		task["name"] = taskName
+		task["elapsed"] = time.Since(taskSince).Truncate(time.Second).String()
+		task["progress"] = taskProgress
+	}
+
+	// ---- 系统状态（内存/CPU）----
+	sys := gin.H{}
+	if totalMB, usedMB, pct, ok := memInfo(); ok {
+		sys["mem_total_mb"] = totalMB
+		sys["mem_used_mb"] = usedMB
+		sys["mem_percent"] = pct
+	}
+	if cp := cpuPercent(); cp >= 0 {
+		sys["cpu_percent"] = cp
+	}
+
+	// ---- 待处理事件 ----
 	var pendingEvents int64
 	h.DB.Model(&model.SyncEvent{}).Where("status = ?", "pending").Count(&pendingEvents)
 
-	// 运行时间（进程启动时间）
+	var organizedTotal int64
+	h.DB.Model(&model.MediaLibrary{}).Count(&organizedTotal)
+
 	c.JSON(http.StatusOK, gin.H{
-		"strm": gin.H{
-			"total":   strmTotal,
-			"invalid": strmInvalid,
-			"active":  strmTotal - strmInvalid,
+		"storage": h.pan115CapacityCached(),
+		"media": gin.H{
+			"movies": movieCount, "tvs": tvCount,
+			"movies_month": movieMonth, "tvs_month": tvMonth,
+			"total": movieCount + tvCount,
 		},
-		"synced_files": syncedFiles,
-		"organized":    organizedTotal,
-		"recent_media": recent,
+		"strm":           gin.H{"total": strmTotal, "invalid": strmInvalid, "active": strmTotal - strmInvalid},
+		"synced_files":   syncedFiles,
+		"organized":      organizedTotal,
+		"recent_media":   recent,
+		"weekly":         weekly,
+		"week_total":     weekTotal,
+		"categories":     categories,
+		"bg_tasks":       bg,
+		"task":           task,
+		"sys":            sys,
 		"pending_events": pendingEvents,
-		"pan115":        h.pan115CapacityCached(),
-		"task_running":  func() bool { r, _, _, _ := TaskStatus(); return r }(),
 	})
 }
 
