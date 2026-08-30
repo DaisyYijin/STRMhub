@@ -2046,8 +2046,10 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 
 // avCategoryConfig AV 分类配置（与 UI 上的 YAML 对应）
 type avCategoryConfig struct {
-	Name      string   // 分类名（如"无码"）
-	Prefixes  []string // 番号前缀列表（空 = 兜底分类）
+	Name      string   // 分类名 = 网盘目录名（可任意命名，如英文）
+	Prefixes  []string // 自定义番号前缀（可选）
+	Builtin   string   // 内置库绑定："uncensored" / "domestic"（可选）；
+	                     // 未填写时按分类名含"无码"/"国产"自动映射
 }
 
 // avBuiltinUncensored 内置无码番号前缀库（常见厂牌；命中即归入名字含
@@ -2088,8 +2090,8 @@ func loadAVCategories() []avCategoryConfig {
 	// 默认分类：无码走内置前缀库识别；有码排最后作兜底
 	//（兜底=最后一个空前缀分类；未配置国产分类时国产内容也落有码）
 	return []avCategoryConfig{
-		{Name: "无码", Prefixes: nil},
-		{Name: "有码", Prefixes: nil},
+		{Name: "无码", Builtin: "uncensored"},
+		{Name: "有码"},
 	}
 }
 
@@ -2123,6 +2125,10 @@ func parseAVCategoriesFromYAML(src string) []avCategoryConfig {
 			if val.Content[j+1].Kind == yaml.MappingNode {
 				sub := val.Content[j+1]
 				for k := 0; k+1 < len(sub.Content); k += 2 {
+					if sub.Content[k].Value == "builtin" {
+						c.Builtin = strings.ToLower(strings.TrimSpace(sub.Content[k+1].Value))
+						continue
+					}
 					if sub.Content[k].Value != "num_prefix" {
 						continue
 					}
@@ -2160,10 +2166,11 @@ func classifyAVNumber(avNum, hint string) string {
 		}
 	}
 
-	// 2) 内置前缀库 → 按分类名含关键词解析
-	resolveTag := func(tag string) string {
+	// 2) 内置前缀库 → 解析到绑定了对应内置库的分类（Builtin 字段优先，
+	// 旧式"分类名含无码/国产"兼容回退）
+	matchBuiltinCat := func(code, nameHint string) string {
 		for _, cat := range cats {
-			if strings.Contains(cat.Name, tag) {
+			if cat.Builtin == code || (cat.Builtin == "" && strings.Contains(cat.Name, nameHint)) {
 				return cat.Name
 			}
 		}
@@ -2171,7 +2178,7 @@ func classifyAVNumber(avNum, hint string) string {
 	}
 	for _, p := range avBuiltinUncensored {
 		if strings.HasPrefix(norm, p) {
-			if n := resolveTag("无码"); n != "" {
+			if n := matchBuiltinCat("uncensored", "无码"); n != "" {
 				return n
 			}
 			break
@@ -2179,7 +2186,7 @@ func classifyAVNumber(avNum, hint string) string {
 	}
 	for _, p := range avBuiltinDomestic {
 		if strings.HasPrefix(norm, p) {
-			if n := resolveTag("国产"); n != "" {
+			if n := matchBuiltinCat("domestic", "国产"); n != "" {
 				return n
 			}
 			break
@@ -2190,11 +2197,11 @@ func classifyAVNumber(avNum, hint string) string {
 	hintLower := strings.ToLower(hint)
 	switch {
 	case strings.Contains(hintLower, "无码") || strings.Contains(hint, "無碼") || strings.Contains(hintLower, "uncensored") || strings.Contains(hintLower, "破解"):
-		if n := resolveTag("无码"); n != "" {
+		if n := matchBuiltinCat("uncensored", "无码"); n != "" {
 			return n
 		}
 	case strings.Contains(hint, "国产") || strings.Contains(hint, "麻豆") || strings.Contains(hint, "探花"):
-		if n := resolveTag("国产"); n != "" {
+		if n := matchBuiltinCat("domestic", "国产"); n != "" {
 			return n
 		}
 	}
