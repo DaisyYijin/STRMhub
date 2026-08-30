@@ -357,18 +357,18 @@ tv:
 
 # 配置AV的分类策略（按番号前缀或制作商分类）
 av:
-  # AV 分类：番号前缀由内置厂牌库自动识别，无需手填任何前缀
-  # 分类名 = 网盘目录名，可随意命名；builtin 绑定内置识别库：
-  #   uncensored = 内置无码厂牌库（FC2/HEYZO/Tokyo Hot/1Pondo 等）
-  #   domestic   = 内置国产厂牌库（MD/MDX/PMC/JD/91 等）
-  # 最后一个未绑定库、也未填 num_prefix 的分类 = 兜底
-  # 也可用 num_prefix: '自定义前缀1,前缀2' 精确补充
-  Uncensored:
+  # AV 分类：按番号前缀匹配，分类名即网盘目录名（可随意改）
+  # 判定顺序：各分类 num_prefix → builtin 绑定的内置库兜底
+  #          → 文件名关键词（无码/破解/国产/麻豆/探花）→ 留空分类兜底
+  无码:
+    num_prefix: 'FC2,HEYZO,N10,10MU,1PON,CARIB,PACO,MURA,KIN8,C0930,H0930,SCUTE,XXXAV,AV9898,GACHI,MESU'
     builtin: uncensored
-  Domestic:
+  国产:
+    num_prefix: 'MD,MDX,MDT,PMC,JD,TZ,MT,91,CHARU,MKY,MSN'
     builtin: domestic
-  Others:
-  # 未匹配以上分类
+  # 有码厂牌数千个，作为兜底分类（以上都未命中的归入这里）
+  有码:
+    num_prefix: ''
   未分类:`;
 
 function resetCategory(btn) {
