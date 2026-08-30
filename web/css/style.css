@@ -82,6 +82,26 @@ select { width: auto; min-width: 120px; max-width: 480px; cursor: pointer; }
 .help-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: 6px; border: 1px solid var(--text-4); border-radius: 50%; color: var(--text-3); font-size: 12px; cursor: help; line-height: 1; }
 .form-inline-group { display: flex; align-items: center; gap: 8px; max-width: 480px; }
 .inline-input { width: auto; flex: 1; max-width: 380px; }
+/* URL 展示框（如 Emby 接收地址）：随内容延长，超出容器宽度才换行；
+   外观与输入框一致；user-select:all = 单击整段选中（替代已移除的复制按钮） */
+.url-box {
+  display: block;
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 240px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  color: var(--text-1);
+  background: var(--fill-2);
+  word-break: break-all;
+  cursor: text;
+  user-select: all;
+}
 .input-suffix { font-size: 14px; color: var(--text-3); white-space: nowrap; }
 .form-actions { display: flex; align-items: center; gap: 12px; }
 .save-icon, .reset-icon, .qr-icon { font-size: 15px; }
