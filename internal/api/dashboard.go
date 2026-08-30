@@ -222,38 +222,60 @@ func fetchEmbyDashboard(h *Handler) gin.H {
 		}
 	}
 
-	// 媒体库（分类卡）：每个库的条目数 + 4 张封面拼贴
+	// 媒体库（分类卡）：每个库的条目数 + 4 张封面拼贴。
+	// 各库并发拉取（串行时 8 个库 × 每库一请求，冷缓存下仪表盘明显变慢）
 	libraries := []gin.H{}
 	if res, err := getJSON("/Library/MediaFolders", nil); err == nil {
 		if items, _ := res["Items"].([]interface{}); items != nil {
+			type libOut struct {
+				idx     int
+				name    string
+				count   int
+				collage []string
+			}
+			var wg sync.WaitGroup
+			outCh := make(chan libOut, len(items))
+			idx := 0
 			for _, it := range items {
 				m, _ := it.(map[string]interface{})
 				id, _ := m["Id"].(string)
 				name, _ := m["Name"].(string)
-				if id == "" || name == "" || len(libraries) >= 8 {
+				if id == "" || name == "" || idx >= 8 {
 					continue
 				}
-				count := 0
-				collage := []string{}
-				if lr, err := getJSON("/Items", url.Values{
-					"ParentId": {id}, "Recursive": {"true"}, "Limit": {"4"},
-					"SortBy": {"DateCreated"}, "SortOrder": {"Descending"},
-					"Fields": {"ProductionYear"},
-				}); err == nil {
-					if tc, ok := lr["TotalRecordCount"].(float64); ok {
-						count = int(tc)
-					}
-					if citems, _ := lr["Items"].([]interface{}); citems != nil {
-						for _, ci := range citems {
-							if cm, _ := ci.(map[string]interface{}); cm != nil {
-								if cid, _ := cm["Id"].(string); cid != "" {
-									collage = append(collage, "Items/"+cid+"/Images/Primary")
+				wg.Add(1)
+				go func(idx int, id, name string) {
+					defer wg.Done()
+					out := libOut{idx: idx, name: name}
+					if lr, err := getJSON("/Items", url.Values{
+						"ParentId": {id}, "Recursive": {"true"}, "Limit": {"4"},
+						"SortBy": {"DateCreated"}, "SortOrder": {"Descending"},
+					}); err == nil {
+						if tc, ok := lr["TotalRecordCount"].(float64); ok {
+							out.count = int(tc)
+						}
+						if citems, _ := lr["Items"].([]interface{}); citems != nil {
+							for _, ci := range citems {
+								if cm, _ := ci.(map[string]interface{}); cm != nil {
+									if cid, _ := cm["Id"].(string); cid != "" {
+										out.collage = append(out.collage, "Items/"+cid+"/Images/Primary")
+									}
 								}
 							}
 						}
 					}
-				}
-				libraries = append(libraries, gin.H{"name": name, "count": count, "collage": collage})
+					outCh <- out
+				}(idx, id, name)
+				idx++
+			}
+			wg.Wait()
+			close(outCh)
+			ordered := make([]libOut, idx)
+			for o := range outCh {
+				ordered[o.idx] = o
+			}
+			for _, o := range ordered {
+				libraries = append(libraries, gin.H{"name": o.name, "count": o.count, "collage": o.collage})
 			}
 		}
 	}

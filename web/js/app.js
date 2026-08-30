@@ -153,11 +153,11 @@ function showPage(id) {
   else stopOfflineTasksPoll();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
-  // 隐藏页面里初始化的 CodeMirror 宽度测量为 0（高亮/行号错位），显示后重算
-  (window._cmInstances || []).forEach(cm => { try { cm.refresh(); } catch (e) {} });
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
+  // 隐藏页面里初始化的 CodeMirror 测量为 0（高亮/行号错位、高度塌缩），显示后重算
+  refreshVisibleCM(document.getElementById('page-' + id));
 }
 
 // ==================== 移动端侧边栏 ====================
@@ -191,8 +191,24 @@ function switchTab(pageId, tabName) {
     // 元素可见后重新计算自适应高度
     panel.querySelectorAll('textarea.auto-resize').forEach(autoResizeTextarea);
   }
+  // 隐藏面板里初始化的 CodeMirror 宽高测量为 0：面板显示后必须 refresh
+  refreshVisibleCM(panel || page);
   // 记住当前 Tab（所有页面通用）
   localStorage.setItem('current-tab-' + pageId, tabName);
+}
+
+// 刷新作用域内可见的 CodeMirror 实例（display 变化后浏览器需重排，
+// 立即刷一次 + 下一帧再刷一次，保证测量准确）
+function refreshVisibleCM(scope) {
+  (window._cmInstances || []).forEach(cm => {
+    try {
+      const wrap = cm.getWrapperElement();
+      if ((!scope || scope.contains(wrap)) && wrap.offsetParent !== null) {
+        cm.refresh();
+        requestAnimationFrame(() => { try { cm.refresh(); } catch (e) {} });
+      }
+    } catch (e) {}
+  });
 }
 
 // ==================== 认证 ====================
@@ -2116,7 +2132,7 @@ function attachYamlHighlight(id) {
   // 兼容旧读写端：
   //   写：el.value = X; el._yamlRender()   → 同步进编辑器
   //   读：el._yamlSync() 后再读 el.value
-  ta._yamlRender = () => { cm.setValue(ta.value); cm.refresh(); };
+  ta._yamlRender = () => { cm.setValue(ta.value); cm.refresh(); refreshVisibleCM(ta.parentNode); };
   ta._yamlSync = () => cm.save();
   window._cmInstances = window._cmInstances || [];
   window._cmInstances.push(cm);
