@@ -928,7 +928,7 @@ av:
 
       <div class="alert alert-info">在 emby 入库/删除/播放时进行消息通知。把下方地址填到 Emby 的 Webhooks（请求方式 POST，内容类型 application/json），推送哪些事件由 Emby 侧勾选决定；token 为本实例自动生成的鉴权密钥。</div>
         <div class="card">
-          <div class="form-row"><div class="label">接收地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">把此地址填到 Emby 的 Webhooks（POST + application/json）。地址不挑来源：主机部分可换成 Emby 可达的任意地址（172.17.0.1 / 内网 IP / 公网 IP / 域名），路径与 token 不变。</span></i></div><div class="control"><code id="emby-webhook-url" class="url-box"></code><div class="hint">地址主机部分按 Emby 的网络环境替换：同宿主机容器间用 <code>172.17.0.1</code>，局域网用内网 IP，跨网用公网 IP/域名——路径与 token 保持不变即可。</div></div></div>
+          <div class="form-row"><div class="label">接收地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">把此地址填到 Emby 的 Webhooks（POST + application/json）。地址不挑来源：主机部分可换成 Emby 可达的任意地址（172.17.0.1 / 内网 IP / 公网 IP / 域名），路径与 token 不变。</span></i></div><div class="control control-wide"><code id="emby-webhook-url" class="url-box"></code><div class="hint">地址主机部分按 Emby 的网络环境替换：同宿主机容器间用 <code>172.17.0.1</code>，局域网用内网 IP，跨网用公网 IP/域名——路径与 token 保持不变即可。</div></div></div>
           <div class="form-row"><div class="label">鉴权 token<i class="help-tip" tabindex="0">?<span class="tip-bubble">自动生成，可改成自己好记的（仅字母数字）；修改后立即生效，Emby 侧地址需同步更新。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="emby-notify-token" class="inline-input" oninput="renderEmbyWebhookUrl()" onchange="saveEmbyNotifyToken(this.value.trim())" placeholder="自动生成，可自定义"><button class="btn btn-outline" onclick="rotateEmbyWebhookToken()">换一个</button></div><div class="hint">Emby 推送时必须携带相同 token，否则返回 401；「换一个」随机重新生成。</div></div></div>
 
       </div>
