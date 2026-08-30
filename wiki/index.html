@@ -681,6 +681,7 @@ tv:
   <p>识别到<strong>番号</strong>（如 <code>ABC-123</code>、<code>FC2-PPV-1234567</code>）的内容走独立流程：跳过 TMDB，按番号入库，用 AV 专属模板（<code>{num}</code> 变量可用），目录按番号前缀自动分类（无码/有码等内置前缀表）。</p>
   <ul>
     <li><strong>番号识别</strong>：目录名与文件名都会尝试；FC2 七位数字有专属规则；连字符差异（<code>START622</code>/<code>START-622</code>）容错</li>
+    <li><strong>分类</strong>：在「二级分类策略」YAML 的 <code>av:</code> 段配置。内置常见<strong>无码</strong>（FC2/HEYZO/Tokyo Hot/10Musume/1Pondo/Caribbean 等）与<strong>国产</strong>（MD/MDX/MDT/PMC/JD/TZ 等）前缀库自动识别，无需枚举上千个有码厂牌——自定义 <code>num_prefix</code> 优先，<code>num_prefix</code> 留空的分类作兜底；文件名含 无码/破解/国产/麻豆 等字样也会辅助归类</li>
     <li><strong>广告过滤</strong>：清洗后仍含发布站域名、或正文不带番号的文件视为引流视频 → 冗余</li>
     <li><strong>字幕跟随</strong>：与正片同名的 <code>.chs/.cht/.eng</code> 字幕随行改名（保留语言后缀）</li>
     <li>洗版/去重同样适用于 AV（按目标目录 SHA1）</li>

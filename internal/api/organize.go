@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mozillazg/go-pinyin"
+	"gopkg.in/yaml.v3"
 )
 
 // ==================== 整理引擎 ====================
@@ -2044,37 +2045,161 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 // ==================== AV 番号识别与处理 ====================
 
 // avCategoryConfig AV 分类配置（与 UI 上的 YAML 对应）
-// 无码/有码/未分类 按番号前缀匹配，空前缀 = 兜底
 type avCategoryConfig struct {
 	Name      string   // 分类名（如"无码"）
-	Prefixes  []string // 番号前缀列表（空 = 兜底）
+	Prefixes  []string // 番号前缀列表（空 = 兜底分类）
 }
 
-// loadAVCategories 从 org-basic 配置读 AV 分类（暂用内置默认，后续接 UI 的 YAML）
+// avBuiltinUncensored 内置无码番号前缀库（常见厂牌；命中即归入名字含
+// "无码"的分类）——无码厂牌是有限集合，适合内置；有码厂牌上千个，
+// 由"兜底分类"自然承接，用户无需枚举
+var avBuiltinUncensored = []string{
+	"FC2", "HEYZO", "N10", // Tokyo Hot（n1xxx）
+	"10MU", "1PON", "CARIB", "PACO", // 10Musume/1Pondo/Caribbean/Pacopacomama
+	"MURA", "KIN8", "C0930", "H0930", "SCUTE", "XXXAV", "AV9898", "GACHI", "MESU",
+}
+
+// avBuiltinDomestic 内置国产番号前缀库（命中归入名字含"国产"的分类）
+var avBuiltinDomestic = []string{
+	"MD", "MDX", "MDT", "PMC", "JD", "TZ", "MT", "91", "CHARU", "MKY", "MSN",
+}
+
+// normalizeAVNum 番号归一化：去分隔符、转大写（"fc2-ppv-123" → "FC2PPV123"）
+func normalizeAVNum(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(s) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// loadAVCategories 读 AV 分类：优先解析用户在分类策略 YAML 里保存的
+// av: 段（此前该段被解析器跳过、保存无效果）；无 av: 段时回退默认两分类
 func loadAVCategories() []avCategoryConfig {
-	// 默认配置（与用户 YAML 示例一致）
+	if model.DB != nil {
+		var rule model.ScrapeRule
+		model.DB.Where("type = ?", "category_config").First(&rule)
+		if cats := parseAVCategoriesFromYAML(rule.Config); len(cats) > 0 {
+			return cats
+		}
+	}
+	// 默认分类：内置无码前缀库自动识别；"有码"排第一作兜底
+	//（兜底=第一个空前缀分类，无国产分类时国产内容也会落到有码）
 	return []avCategoryConfig{
-		{Name: "无码", Prefixes: []string{"ABC", "DEF", "START"}},
-		{Name: "有码", Prefixes: nil}, // 兜底
+		{Name: "有码", Prefixes: nil},
+		{Name: "无码", Prefixes: nil},
 	}
 }
 
-// classifyAVNumber 按番号前缀分类，返回分类名
-func classifyAVNumber(avNum string) string {
-	cats := loadAVCategories()
-	avNumUpper := strings.ToUpper(avNum)
-	// 先精确匹配有前缀的分类
-	for _, cat := range cats {
-		if len(cat.Prefixes) == 0 {
-			continue // 跳过兜底
+// parseAVCategoriesFromYAML 解析分类 YAML 中的 av: 段
+//   av:
+//     无码:
+//       num_prefix: 'FC2,HEYZO'
+//     有码:
+//       num_prefix: ''   ← 空 = 兜底分类
+func parseAVCategoriesFromYAML(src string) []avCategoryConfig {
+	var root yaml.Node
+	if yaml.Unmarshal([]byte(src), &root) != nil || len(root.Content) == 0 {
+		return nil
+	}
+	mp := root.Content[0]
+	for i := 0; i+1 < len(mp.Content); i += 2 {
+		if mp.Content[i].Value != "av" {
+			continue
 		}
-		for _, prefix := range cat.Prefixes {
-			if strings.HasPrefix(avNumUpper, strings.ToUpper(prefix)) {
+		val := mp.Content[i+1]
+		if val.Kind != yaml.MappingNode {
+			return nil
+		}
+		var cats []avCategoryConfig
+		for j := 0; j+1 < len(val.Content); j += 2 {
+			name := strings.TrimSpace(val.Content[j].Value)
+			if name == "" {
+				continue
+			}
+			c := avCategoryConfig{Name: name}
+			if val.Content[j+1].Kind == yaml.MappingNode {
+				sub := val.Content[j+1]
+				for k := 0; k+1 < len(sub.Content); k += 2 {
+					if sub.Content[k].Value != "num_prefix" {
+						continue
+					}
+					raw := strings.Trim(strings.TrimSpace(sub.Content[k+1].Value), "'\"")
+					for _, p := range strings.Split(raw, ",") {
+						if p = strings.TrimSpace(p); p != "" {
+							c.Prefixes = append(c.Prefixes, p)
+						}
+					}
+				}
+			}
+			cats = append(cats, c)
+		}
+		return cats
+	}
+	return nil
+}
+
+// classifyAVNumber AV 分类判定（顺序）：
+//  1. 用户 YAML 里配的 num_prefix 前缀匹配
+//  2. 内置无码/国产前缀库 → 名字含"无码"/"国产"的分类
+//  3. 目录名关键词提示（无码/破解/uncensored → 无码；国产/麻豆/探花 → 国产）
+//  4. 第一个 num_prefix 为空的分类（兜底，如"有码"）
+//  5. 未分类
+func classifyAVNumber(avNum, hint string) string {
+	cats := loadAVCategories()
+	norm := normalizeAVNum(avNum)
+
+	// 1) 用户自定义前缀
+	for _, cat := range cats {
+		for _, p := range cat.Prefixes {
+			if p != "" && strings.HasPrefix(norm, normalizeAVNum(p)) {
 				return cat.Name
 			}
 		}
 	}
-	// 再找兜底分类
+
+	// 2) 内置前缀库 → 按分类名含关键词解析
+	resolveTag := func(tag string) string {
+		for _, cat := range cats {
+			if strings.Contains(cat.Name, tag) {
+				return cat.Name
+			}
+		}
+		return ""
+	}
+	for _, p := range avBuiltinUncensored {
+		if strings.HasPrefix(norm, p) {
+			if n := resolveTag("无码"); n != "" {
+				return n
+			}
+			break
+		}
+	}
+	for _, p := range avBuiltinDomestic {
+		if strings.HasPrefix(norm, p) {
+			if n := resolveTag("国产"); n != "" {
+				return n
+			}
+			break
+		}
+	}
+
+	// 3) 目录名关键词提示（文件名常自带"无码/破解/国产/麻豆"字样）
+	hintLower := strings.ToLower(hint)
+	switch {
+	case strings.Contains(hintLower, "无码") || strings.Contains(hint, "無碼") || strings.Contains(hintLower, "uncensored") || strings.Contains(hintLower, "破解"):
+		if n := resolveTag("无码"); n != "" {
+			return n
+		}
+	case strings.Contains(hint, "国产") || strings.Contains(hint, "麻豆") || strings.Contains(hint, "探花"):
+		if n := resolveTag("国产"); n != "" {
+			return n
+		}
+	}
+
+	// 4) 兜底：第一个 num_prefix 为空的分类（如"有码"）
 	for _, cat := range cats {
 		if len(cat.Prefixes) == 0 {
 			return cat.Name
@@ -2243,7 +2368,7 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	// AV 目录结构：/AV/分类/<AVFolder 模板>/（分类 = 无码/有码，按番号前缀匹配）。
 	// 目录与文件名走重命名模板（AVFolder/AVFile，UI 可配）；模板缺省时
 	// 降级为番号直命名（旧行为）
-	category := classifyAVNumber(media.Title)
+	category := classifyAVNumber(media.Title, dir.Name)
 	// 模板变量（画质/制作组等）取自体积最大的视频
 	mainName, mainSize := "", int64(-1)
 	for _, f := range files {
