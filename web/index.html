@@ -43,7 +43,6 @@
       <div class="menu-item active" data-page="dashboard"><span class="icon">▦</span><span>仪表盘</span></div>
       <div class="menu-item" data-page="config-accounts"><span class="icon">◈</span><span>账号管理</span></div>
       <div class="menu-item" data-page="sync"><span class="icon">⇄</span><span>账号同步</span></div>
-      <div class="menu-item" data-page="strm"><span class="icon">▤</span><span>STRM 管理</span></div>
       <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
       <div class="menu-item" data-page="upload-download"><span class="icon">⇅</span><span>上传下载</span></div>
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
@@ -64,30 +63,7 @@
       </div>
     </div>
 
-    <!-- 数据同步 -->    <div class="page" id="page-strm">
-      <div class="card">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-          <div style="font-weight:600">STRM 管理</div>
-          <span style="font-size:12px;color:var(--text-3)" id="strm-stat">-</span>
-          <div style="flex:1"></div>
-          <input type="text" id="strm-search" placeholder="搜索路径…" style="width:200px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text-1)">
-          <div class="segmented-control" id="strm-missing-switch"><div class="seg-item active" data-value="all" onclick="setStrmFilter('all')">全部</div><div class="seg-item" data-value="missing" onclick="setStrmFilter('missing')">仅看失效</div></div>
-          <button class="btn btn-outline" onclick="loadStrmList(1)">搜索</button>
-          <button class="btn btn-danger" onclick="cleanupOrphanStrm2(this)" style="position:relative">清理孤儿 STRM</button>
-        </div>
-        <div style="overflow-x:auto">
-        <table class="table" style="width:100%;font-size:13px">
-          <thead><tr><th>路径</th><th>类型</th><th>大小</th><th>状态</th><th style="width:70px">操作</th></tr></thead>
-          <tbody id="strm-tbody"><tr><td colspan="5" style="color:var(--text-3)">加载中…</td></tr></tbody>
-        </table>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13px;color:var(--text-3)">
-          <button class="btn btn-outline" id="strm-prev" onclick="strmPageNav(-1)">上一页</button>
-          <span id="strm-page-info">-</span>
-          <button class="btn btn-outline" id="strm-next" onclick="strmPageNav(1)">下一页</button>
-        </div>
-      </div>
-    </div>
+    <!-- 数据同步 -->    
 
     <div class="page" id="page-sync">
       <div class="tabs">
