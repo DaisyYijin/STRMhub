@@ -262,7 +262,7 @@
       <div class="tab-panel" data-panel="category">
       <div class="alert alert-info">二级分类策略：分类名即 115 目录名，整理时若目录不存在会自动创建。代码要求非常严格，多余的空格或格式错误会导致报错。</div>
       <div class="card">
-        <textarea id="category-yaml" rows="28" style="width:100%"># 配置电影的分类策略
+        <textarea id="category-yaml" rows="28" wrap="off" spellcheck="false" style="width:100%"># 配置电影的分类策略
 # 分类名即 115 目录名（支持多级，用 / 分隔）
 # 整理后路径：{已存在目录}/{分类名}/{重命名文件}
 movie:
@@ -513,7 +513,7 @@ av:
       <!-- 洗版策略 -->
       <div class="tab-panel" data-panel="wash">
       <div class="card">
-        <textarea id="wash-yaml" rows="20" style="width:100%"># 洗版模式：coexist共存 / skip跳过 / replace替换 / max_size最大 / min_size最小
+        <textarea id="wash-yaml" rows="20" wrap="off" spellcheck="false" style="width:100%"># 洗版模式：coexist共存 / skip跳过 / replace替换 / max_size最大 / min_size最小
 # scope：all=全局只留一个最优 / group=按分辨率分组各留一个（如1080p/2160p各一）
 # old_version_target：旧版去向 redundant冗余 / existing已存在（默认冗余）
 # 优先级字段说明：

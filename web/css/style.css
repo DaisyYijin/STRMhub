@@ -405,6 +405,12 @@ tr:hover td { background: var(--fill-1); }
   position: relative; z-index: 2; display: block; width: 100%;
   border: 1px solid var(--border, #d0d5dd); border-radius: 8px;
   outline: none;
+  resize: vertical; /* 禁止横向拖拽：横向尺寸变化会让高亮层错位 */
+}
+/* 选中高亮带半透明：底层高亮文字在选中时仍清晰可见且与光标对齐 */
+.yaml-wrap .yaml-ta::selection {
+  background: rgba(124, 58, 237, .25);
+  color: transparent;
 }
 .yaml-wrap .yaml-hl {
   font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
