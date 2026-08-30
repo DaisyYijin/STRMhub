@@ -296,7 +296,9 @@ async function loadCategory() {
 }
 
 async function saveCategory() {
-  const yaml = document.getElementById('category-yaml').value;
+  const ta = document.getElementById('category-yaml');
+  ta._yamlSync && ta._yamlSync();
+  const yaml = ta.value;
   try {
     await api('/scrape/categories', { method: 'POST', body: JSON.stringify({ yaml }) });
     toast('保存成功');
@@ -365,7 +367,9 @@ async function loadWash() {
   } catch (e) {}
 }
 async function saveWash() {
-  const yaml = document.getElementById('wash-yaml').value;
+  const ta = document.getElementById('wash-yaml');
+  ta._yamlSync && ta._yamlSync();
+  const yaml = ta.value;
   try {
     await api('/scrape/wash', { method: 'POST', body: JSON.stringify({ yaml }) });
     toast('保存成功');
@@ -2090,49 +2094,28 @@ function hlYamlValue(v) {
   else vh = escHtml(val);
   return vh + comment;
 }
-
-function hlYAML(src) {
-  return src.split('\n').map(line => {
-    if (/^\s*#/.test(line)) return '<span class="y-c">' + escHtml(line) + '</span>';
-    // 键: 值（支持中文键、带引号键、列表项前缀 "- "）
-    let m = line.match(/^(\s*)(-\s+)?("[^"]*"|[^:#\s][^:]*?)(\s*:)(.*)$/);
-    if (m) {
-      return escHtml(m[1]) +
-        (m[2] ? '<span class="y-d">-</span>' + escHtml(m[2].slice(1)) : '') +
-        '<span class="y-k">' + escHtml(m[3]) + '</span>' +
-        '<span class="y-p">' + escHtml(m[4]) + '</span>' +
-        hlYamlValue(m[5]);
-    }
-    // 纯列表项（无键值）
-    m = line.match(/^(\s*)(-)(\s+)(\S.*)$/);
-    if (m) {
-      return escHtml(m[1]) + '<span class="y-d">-</span>' + escHtml(m[3]) + hlYamlValue(' ' + m[4]).replace(/^ /, '');
-    }
-    return escHtml(line);
-  }).join('\n');
-}
-
 // 把已有 textarea 升级为高亮编辑器：包一层 wrap，加着色 pre，输入/滚动同步
 function attachYamlHighlight(id) {
   const ta = document.getElementById(id);
   if (!ta || ta.dataset.yamlHl) return;
-  const wrap = document.createElement('div');
-  wrap.className = 'yaml-wrap';
-  ta.parentNode.insertBefore(wrap, ta);
-  const pre = document.createElement('pre');
-  pre.className = 'yaml-hl';
-  const code = document.createElement('code');
-  pre.appendChild(code);
-  wrap.appendChild(pre);
-  wrap.appendChild(ta);
-  ta.classList.add('yaml-ta');
-  const render = () => { code.innerHTML = hlYAML(ta.value) + '\n'; };
-  const sync = () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; };
-  ta.addEventListener('input', render);
-  ta.addEventListener('scroll', sync);
-  ta._yamlRender = () => { render(); sync(); };
   ta.dataset.yamlHl = '1';
-  render();
+  // CodeMirror 5（真实文本模型：选区/删除精确，自带 YAML 高亮与行号）。
+  // 资源缺失时退化为普通文本域——无高亮但行为绝对精确，不再用叠层假编辑器
+  if (!window.CodeMirror) return;
+  const cm = CodeMirror.fromTextArea(ta, {
+    mode: 'yaml',
+    lineNumbers: true,
+    styleActiveLine: true,
+    lineWrapping: false,
+    tabSize: 2,
+    indentUnit: 2,
+  });
+  cm.setSize('100%', 'auto');
+  // 兼容旧读写端：
+  //   写：el.value = X; el._yamlRender()   → 同步进编辑器
+  //   读：el._yamlSync() 后再读 el.value
+  ta._yamlRender = () => cm.setValue(ta.value);
+  ta._yamlSync = () => cm.save();
 }
 
 // ==================== 日志级别 ====================

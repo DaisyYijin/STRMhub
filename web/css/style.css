@@ -396,36 +396,28 @@ tr:hover td { background: var(--fill-1); }
 /* ==================== YAML 编辑器高亮 ==================== */
 /* 透明文本域叠在着色层上：textarea 接收输入（文字透明、光标可见），
    底层 pre 按词法着色，滚动同步。零依赖，离线可用 */
-.yaml-wrap { position: relative; }
-.yaml-wrap .yaml-ta {
+/* ===================== YAML 编辑器（CodeMirror 5 主题适配） ===================== */
+.CodeMirror {
+  height: auto;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
   font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
-  font-size: 13px; line-height: 1.55; tab-size: 2;
-  padding: 10px 12px; white-space: pre; overflow: auto; word-wrap: normal;
-  background: transparent; color: transparent; caret-color: #7aa2f7;
-  position: relative; z-index: 2; display: block; width: 100%;
-  border: 1px solid var(--border, #d0d5dd); border-radius: 8px;
-  outline: none;
-  resize: vertical; /* 禁止横向拖拽：横向尺寸变化会让高亮层错位 */
+  font-size: 13px;
+  line-height: 1.6;
+  background: #fff;
+  color: var(--text-1, #1d2129);
+  resize: vertical;
 }
-/* 选中高亮带半透明：底层高亮文字在选中时仍清晰可见且与光标对齐 */
-.yaml-wrap .yaml-ta::selection {
-  background: rgba(124, 58, 237, .25);
-  color: transparent;
-}
-.yaml-wrap .yaml-hl {
-  font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
-  font-size: 13px; line-height: 1.55; tab-size: 2;
-  padding: 10px 12px; white-space: pre; overflow: hidden; word-wrap: normal;
-  margin: 0; position: absolute; inset: 0; z-index: 1;
-  pointer-events: none; background: transparent;
-  border: 1px solid transparent;
-}
-.y-k { color: #7aa2f7; }            /* 键名：蓝 */
-.y-p { color: #89ddff; }            /* 冒号/横杠：青 */
-.y-s { color: #9ece6a; }            /* 字符串：绿 */
-.y-n { color: #bb9af7; }            /* 数字/布尔：紫 */
-.y-c { color: #8b93a7; font-style: italic; } /* 注释：灰 */
-.y-d { color: #f7768e; }            /* 列表横杠：红粉 */
+.CodeMirror-gutters { background: #fafbfc; border-right: 1px solid var(--border, #e5e6eb); }
+.CodeMirror-linenumber { color: #b0b7c3; font-size: 12px; }
+.CodeMirror-activeline-background { background: rgba(124, 58, 237, .06); }
+.CodeMirror-cursor { border-left-color: var(--primary, #7c3aed); }
+.CodeMirror-selected { background: rgba(124, 58, 237, .15) !important; }
+.cm-s-default .cm-comment { color: #8b93a7; font-style: italic; }
+.cm-s-default .cm-string { color: #9ece6a; }
+.cm-s-default .cm-number, .cm-s-default .cm-atom { color: #bb9af7; }
+.cm-s-default .cm-meta { color: #7aa2f7; }
+.cm-s-default .cm-property { color: #1d2129; }
 
 /* 移动端：气泡提示改点击触发（无 hover）；控制宽度放宽利用屏幕 */
 @media (max-width: 768px) {
