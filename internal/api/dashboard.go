@@ -56,6 +56,70 @@ func (h *Handler) TestProxyLatency(c *gin.Context) {
 	})
 }
 
+// NetworkCheck 网络连接测试：并发探测关键外部依赖的可达性与延迟
+// GET /network/check
+func (h *Handler) NetworkCheck(c *gin.Context) {
+	type result struct {
+		Name      string `json:"name"`
+		OK        bool   `json:"ok"`
+		LatencyMs int64  `json:"latency_ms"`
+		Error     string `json:"error,omitempty"`
+	}
+	probe := func(name, url string, viaProxy bool) result {
+		client := &http.Client{Timeout: 6 * time.Second}
+		if viaProxy {
+			if pu := getProxyURL(); pu != "" {
+				if p, err := parseProxyURL(pu); err == nil {
+					client.Transport = &http.Transport{Proxy: p}
+				}
+			} else {
+				return result{Name: name + "（经代理）", OK: false, Error: "未配置代理"}
+			}
+		}
+		start := time.Now()
+		resp, err := client.Get(url)
+		lat := time.Since(start).Milliseconds()
+		if err != nil {
+			return result{Name: name, OK: false, LatencyMs: lat, Error: err.Error()}
+		}
+		resp.Body.Close()
+		return result{Name: name, OK: true, LatencyMs: lat}
+	}
+
+	type job struct {
+		name string
+		url  string
+		px   bool
+	}
+	jobs := []job{
+		{"115 网盘", "https://webapi.115.com/", false},
+		{"TMDB API", "https://api.themoviedb.org/3/configuration", true},
+		{"GitHub API", "https://api.github.com/", true},
+	}
+	if getProxyURL() != "" {
+		jobs = append(jobs, job{"代理连通性", "https://www.google.com/generate_204", true})
+	}
+
+	results := make([]result, len(jobs))
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		go func(i int, j job) {
+			defer wg.Done()
+			results[i] = probe(j.name, j.url, j.px)
+		}(i, j)
+	}
+	wg.Wait()
+
+	allOK := true
+	for _, r := range results {
+		if !r.OK {
+			allOK = false
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": allOK, "results": results})
+}
+
 // cpuSample 上一次 /proc/stat 采样（CPU% 用两次调用差值计算）
 var (
 	cpuSampleMu   sync.Mutex

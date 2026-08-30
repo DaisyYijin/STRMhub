@@ -210,6 +210,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 代理测试
 		protected.POST("/proxy/test", h.TestProxyLatency)
+		protected.GET("/network/check", h.NetworkCheck)
 
 		// 存储管理
 		protected.GET("/storage", h.ListStorage)

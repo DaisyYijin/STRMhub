@@ -51,6 +51,7 @@
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
       <div class="menu-item" data-page="logs" style="display:none"><span class="icon">▤</span><span>实时日志</span></div>
     </div>
+    <div class="menu-item" onclick="window.open('https://strmhub.rth1.xyz/','_blank')" title="使用文档"><span class="icon">📖</span><span>使用文档</span></div>
     <div class="footer" id="footer-version">StrmHub</div>
   </aside>
 
@@ -909,7 +910,7 @@ av:
       <div class="tab-panel" data-panel="proxy">
         <div class="card">
           <div class="form-row"><div class="label">代理地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">HTTP(S) 代理，用于访问 TMDB 等外网服务，格式 http://IP:端口，留空不代理。</span></i></div><div class="control"><input type="text" id="proxy-url" placeholder="用于加速访问tmdb、电报，如 http://127.0.0.1:7890"></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button><button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div><span id="proxy-test-result" class="test-result"></span></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-outline" onclick="testProxy()">测试延迟</button><button class="btn btn-outline" onclick="networkCheck(this)">网络连接测试</button><button class="btn btn-primary" onclick="saveConfig('proxy')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('proxy', this)" style="position:relative">重置配置</button></div><span id="proxy-test-result" class="test-result"></span></div></div>
         </div>
       </div>
 

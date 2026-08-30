@@ -113,6 +113,7 @@ window.addEventListener('popstate', () => {
 });
 
 function showPage(id) {
+  if (!id) return;
   if (id === 'logs') {
     startLogPoll();
     // 立即加载一次（不等到 interval）
@@ -988,6 +989,28 @@ async function transfer() {
     appendLog(`✗ ${isShare ? '转存' : '离线下载'} 失败: ${e.message}`);
   }
 }
+// 网络连接测试：并发探测 115 / TMDB / GitHub / 代理连通性
+async function networkCheck(btn) {
+  const el = document.getElementById('proxy-test-result');
+  btn.disabled = true; btn.textContent = '测试中…';
+  if (el) el.innerHTML = '<div class="test-banner pend"><span class="tb-ico">…</span><div class="tb-body"><div class="tb-title">正在探测外部网络…</div></div></div>';
+  try {
+    const d = await api('/network/check');
+    if (el) el.innerHTML = (d.results || []).map(r =>
+      '<div class="test-banner ' + (r.ok ? 'ok' : 'err') + '">'
+      + '<span class="tb-ico">' + (r.ok ? '✓' : '✕') + '</span>'
+      + '<div class="tb-body"><div class="tb-title">' + esc(r.name) + (r.ok ? ' 可达' : ' 不可达')
+      + (r.ok ? '' : '</div><div class="tb-detail">' + esc(r.error || ''))
+      + '</div></div>'
+      + (r.ok ? '<div class="tb-detail" style="margin-left:auto;flex:none">' + r.latency_ms + 'ms</div>' : '')
+      + '</div>').join('');
+  } catch (e) {
+    if (el) showTestResult(el, false, '网络测试失败', e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '网络连接测试';
+  }
+}
+
 async function testProxy() {
   const url = document.getElementById('proxy-url').value.trim();
   if (!url) { toast('请先填写代理地址'); return; }
@@ -2381,9 +2404,18 @@ async function loadVersion() {
 function toggleAccountMenu(ev) {
   if (ev) ev.stopPropagation();
   const m = document.getElementById('account-menu');
-  m.style.display = m.style.display === 'none' ? '' : 'none';
-  if (m.style.display === '') {
+  const show = m.style.display === 'none';
+  m.style.display = show ? '' : 'none';
+  if (show) {
     document.getElementById('account-menu-user').textContent = localStorage.getItem('username') || '-';
+    // 动态定位到触发按钮正下方（不遮挡顶栏按钮文字）；窄屏自动收窄
+    const btn = document.querySelector('[data-account-btn]');
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      m.style.top = Math.round(r.bottom + 6) + 'px';
+      m.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
+      m.style.left = 'auto';
+    }
   }
 }
 document.addEventListener('click', e => {
@@ -2549,7 +2581,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('auth-form').addEventListener('submit', handleAuth);
   // auth-switch 已移除
   document.querySelectorAll('.menu-item').forEach(item => {
-    item.addEventListener('click', () => showPage(item.dataset.page));
+    item.addEventListener('click', () => { if (item.dataset.page) showPage(item.dataset.page); });
   });
   // Tab 切换（通用）
   document.querySelectorAll('.page .tab').forEach(tab => {

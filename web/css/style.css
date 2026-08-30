@@ -232,8 +232,8 @@ tr:hover td { background: var(--fill-1); }
 .alert-success { background: #E8FFEA; color: var(--success); }
 
 /* ===== 顶部栏 ===== */
-.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.topbar .right { display: flex; align-items: center; gap: 8px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.topbar .right { display: flex; align-items: center; gap: 8px; flex: none; }
 
 /* ===== Tab 栏（Arco Tabs 风格） ===== */
 .tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 16px; gap: 24px; }
