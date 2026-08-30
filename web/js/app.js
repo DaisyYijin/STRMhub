@@ -2140,6 +2140,161 @@ async function loadLogLevel() {
   } catch (e) {}
 }
 
+
+async function loadDashboard() {
+  try {
+    const d = await api('/dashboard');
+    /* ---- 存储空间 ---- */
+    const st = d.storage || {};
+    const stTotal = Number(st.total || 0), stUsed = Number(st.used || 0);
+    setTxt('dash-storage-used', st.used_h || humanBytes(stUsed));
+    const stPct = stTotal > 0 ? Math.min(100, stUsed / stTotal * 100) : 0;
+    setTxt('dash-storage-pct', '已使用 ' + stPct.toFixed(1) + '%');
+    setBar('dash-storage-bar', stPct);
+    setTxt('dash-storage-detail', '可用 ' + (st.free_h || humanBytes(stTotal - stUsed)) + ' / 总容量 ' + (st.total_h || humanBytes(stTotal)));
+    /* ---- 媒体统计 ---- */
+    const md = d.media || {};
+    setTxt('dash-movies', fmtN(md.movies));
+    setTxt('dash-tvs', fmtN(md.tvs));
+    setTxt('dash-movies-month', '+' + (md.movies_month || 0) + ' 本月新增');
+    setTxt('dash-tvs-month', '+' + (md.tvs_month || 0) + ' 本月新增');
+    const strm = d.strm || {};
+    setTxt('dash-strm-count', fmtN(strm.total));
+    setTxt('dash-strm-invalid', strm.invalid || 0);
+    setTxt('dash-organized', fmtN(d.organized));
+    setTxt('dash-synced', fmtN(d.synced_files));
+    /* ---- 当前任务 + 快捷操作 ---- */
+    const task = d.task || {};
+    const tb = document.getElementById('dash-task-box');
+    if (task.running) {
+      tb.innerHTML = '<div style="font-size:15px;font-weight:600">⏳ ' + esc(task.name || '任务') + '</div>'
+        + '<div style="font-size:12px;color:var(--text-3);margin-top:6px">已运行 ' + esc(task.elapsed || '-') + (task.progress ? ' · ' + esc(task.progress) : '') + '</div>';
+    } else {
+      tb.innerHTML = '<div style="font-size:15px;font-weight:600;color:var(--text-3)">空闲</div>'
+        + '<div style="font-size:12px;color:var(--text-3);margin-top:6px">无正在执行的任务 · 待处理事件 ' + (d.pending_events || 0) + ' 条</div>';
+    }
+    /* ---- 最近整理（海报行） ---- */
+    const recent = d.recent_media || [];
+    const rb = document.getElementById('dash-recent');
+    if (recent.length) {
+      rb.innerHTML = recent.map(m =>
+        '<div class="dash-recent-item">'
+        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy" onerror="this.style.opacity=0">' : '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">')
+        + '<div class="t">' + esc(m.title) + ' <span style="color:var(--text-3)">' + esc(m.year || '') + '</span><div style="font-size:11.5px;color:var(--text-3)">' + esc(m.category || m.type || '') + '</div></div>'
+        + '<div class="m">' + esc(m.at) + '</div></div>').join('');
+    } else {
+      rb.innerHTML = '<div class="dash-empty">暂无整理记录</div>';
+    }
+    /* ---- 后台任务 ---- */
+    const bg = d.bg_tasks || [];
+    document.getElementById('dash-bg').innerHTML = bg.map(t =>
+      '<div class="dash-bg-item"><span class="dash-bg-dot ' + (t.running ? 'on' : 'off') + '"></span>'
+      + '<span>' + esc(t.name) + '</span><span class="d">' + esc(t.detail || '') + '</span></div>').join('');
+    /* ---- 近 7 天入库（SVG 柱图） ---- */
+    renderWeekly(d.weekly || [], d.week_total || 0);
+    /* ---- 系统状态 ---- */
+    const sys = d.sys || {};
+    if (sys.mem_percent !== undefined) {
+      setTxt('dash-mem-pct', sys.mem_percent.toFixed(1) + '%');
+      setBar('dash-mem-bar', sys.mem_percent);
+      setTxt('dash-mem-detail', humanBytes(sys.mem_used_mb * 1048576) + ' / ' + humanBytes(sys.mem_total_mb * 1048576));
+    } else {
+      setTxt('dash-mem-pct', '-'); setTxt('dash-mem-detail', '不可用');
+    }
+    if (sys.cpu_percent !== undefined) {
+      setTxt('dash-cpu-pct', sys.cpu_percent.toFixed(1) + '%');
+      setBar('dash-cpu-bar', sys.cpu_percent);
+    } else {
+      setTxt('dash-cpu-pct', '-');
+    }
+    /* ---- 我的媒体库分类卡 ---- */
+    const cats = d.categories || [];
+    const cb = document.getElementById('dash-cats');
+    if (cats.length) {
+      cb.innerHTML = cats.map(c => {
+        let inner;
+        if (c.posters && c.posters.length) {
+          inner = '<div class="collage">' + [0,1,2,3].map(i =>
+            c.posters[i] ? '<img src="/poster' + esc(c.posters[i]) + '" loading="lazy">' : '<div style="background:var(--fill-2)"></div>').join('') + '</div>';
+        } else {
+          inner = '<div class="cat-placeholder">' + esc((c.name || '?').slice(0, 4)) + '</div>';
+        }
+        return '<div class="dash-cat" title="' + esc(c.name) + ' · ' + c.count + ' 部">' + inner
+          + '<div class="cat-name">' + esc(c.name) + '</div>'
+          + '<div class="cat-count">' + fmtN(c.count) + '</div></div>';
+      }).join('');
+    } else {
+      cb.innerHTML = '<div class="dash-empty">暂无入库记录 · 整理或同步后这里会显示分类卡片</div>';
+    }
+    /* ---- 最新入库海报墙 ---- */
+    const pb = document.getElementById('dash-posters');
+    if (recent.length) {
+      pb.innerHTML = recent.map(m =>
+        '<div class="dash-poster" title="' + esc(m.title + ' ' + (m.year || '')) + '">'
+        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy">'
+                    : '<div class="p-none">🎬</div>')
+        + '<div class="p-title">' + esc(m.title) + '</div></div>').join('');
+    } else {
+      pb.innerHTML = '<div class="dash-empty">暂无入库</div>';
+    }
+  } catch (e) {}
+}
+
+function setTxt(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+function setBar(id, pct) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.width = Math.max(2, Math.min(100, pct)) + '%';
+  el.className = pct > 85 ? 'danger' : (pct > 65 ? 'warn' : '');
+}
+function fmtN(n) { return Number(n || 0).toLocaleString('en-US'); }
+function humanBytes(b) {
+  b = Number(b || 0);
+  if (b <= 0) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return b.toFixed(i > 1 ? 2 : 0) + ' ' + u[i];
+}
+// 近 7 天入库柱状图（内联 SVG，无外部依赖）
+function renderWeekly(weekly, total) {
+  const box = document.getElementById('dash-weekly');
+  if (!box) return;
+  const max = Math.max(1, ...weekly.map(w => w.count));
+  const W = 320, H = 130, pad = 6, bw = W / weekly.length;
+  let bars = '';
+  weekly.forEach((w, i) => {
+    const h = w.count > 0 ? Math.max(4, (H - 30) * w.count / max) : 2;
+    const x = i * bw + bw * 0.18, y = H - 18 - h;
+    bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + (bw * 0.64).toFixed(1)
+      + '" height="' + h.toFixed(1) + '" rx="3" fill="#7c3aed"'
+      + (w.count ? ' opacity="0.9"' : ' opacity="0.25"') + '></rect>';
+    if (w.count) bars += '<text x="' + (x + bw * 0.32).toFixed(1) + '" y="' + (y - 4).toFixed(1)
+      + '" font-size="10" fill="#4e5969" text-anchor="middle">' + w.count + '</text>';
+    bars += '<text x="' + (x + bw * 0.32).toFixed(1) + '" y="' + (H - 5) + '" font-size="9.5" fill="#86909c" text-anchor="middle">' + esc(w.day.slice(3)) + '</text>';
+  });
+  box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '">' + bars + '</svg>';
+  setTxt('dash-week-total', '最近一周入库 ' + total + ' 部' + (total ? ' 🎉' : ' 😴'));
+}
+// 快捷操作（复用既有确认与执行逻辑）
+async function startFullSyncQuick(btn) { showPage('sync'); }
+async function quickOrganize(btn) {
+  if (!confirm('立即执行自动整理？完成后可在任务状态查看进度')) return;
+  // 整理是长任务（同步接口）：发后不管，进度在上方任务状态卡实时展示
+  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
+  toast('整理任务已开始');
+  api('/organize/pipeline', { method: 'POST', body: JSON.stringify({ sync_after: true }) })
+    .then(() => toast('✓ 整理完成')).catch(e => toast('✗ ' + e.message));
+}
+async function quickIncr(btn) {
+  if (!confirm('立即执行增量同步？完成后可在任务状态查看进度')) return;
+  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
+  toast('增量同步已开始');
+  api('/sync/incremental', { method: 'POST', body: '{}' })
+    .then(() => toast('✓ 增量同步完成')).catch(e => toast('✗ ' + e.message));
+}
+
+
 // 版本号（左下角 footer 显示）+ 刷新时自动检查 GitHub 是否有新版本
 // versionPollTimer 构建中的轮询定时器（构建完成后自动把灰标签换成「有新版本」）
 let versionPollTimer = null;

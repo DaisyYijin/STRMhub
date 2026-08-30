@@ -174,6 +174,7 @@ func main() {
 	})
 	r.Static("/css", "./web/css")
 	r.Static("/js", "./web/js")
+	r.Static("/vendor", "./web/vendor") // CodeMirror 等第三方前端库
 	r.StaticFile("/cms-115.png", "./web/cms-115.png")
 	// index.html 禁用启发式缓存：升级后浏览器总是重新校验，避免页面拿到旧 HTML 搭配新 ?v= 资产
 	serveIndex := func(c *gin.Context) {
