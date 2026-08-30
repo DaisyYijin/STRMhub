@@ -1457,11 +1457,6 @@ function rotateEmbyWebhookToken() {
   saveEmbyNotifyToken(t);
   toast('已生成新 token，请到 Emby 更新回调地址');
 }
-function copyEmbyWebhook(btn) {
-  const addr = location.origin + '/api/emby/webhook?token=' + (embyNotifyToken || '');
-  navigator.clipboard?.writeText(addr).then(() => toast('已复制：' + addr)).catch(() => toast(addr));
-}
-
 // 消息通知
 let msgWecomEnabled = false;
 let msgTgEnabled = false;
