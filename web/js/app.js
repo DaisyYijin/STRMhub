@@ -336,17 +336,17 @@ tv:
 
 # 配置AV的分类策略（按番号前缀或制作商分类）
 av:
-  # AV 分类：按番号前缀分类，分类名即网盘目录名
-  # 判定顺序：自定义 num_prefix → 内置无码库（FC2/HEYZO/Tokyo Hot/
-  # 10Musume/1Pondo/Caribbean 等）→ 内置国产库（MD/MDX/PMC/JD/TZ/91 等）
-  # → 文件名关键词（无码/破解/国产/麻豆/探花）→ 兜底
-  # 兜底 = 最后一个 num_prefix 留空的分类（有码厂牌数千个，无需枚举）
-  无码:
-    num_prefix: ''
-  国产:
-    num_prefix: ''
-  有码:
-    num_prefix: ''
+  # AV 分类：番号前缀由内置厂牌库自动识别，无需手填任何前缀
+  # 分类名 = 网盘目录名，可随意命名；builtin 绑定内置识别库：
+  #   uncensored = 内置无码厂牌库（FC2/HEYZO/Tokyo Hot/1Pondo 等）
+  #   domestic   = 内置国产厂牌库（MD/MDX/PMC/JD/91 等）
+  # 最后一个未绑定库、也未填 num_prefix 的分类 = 兜底
+  # 也可用 num_prefix: '自定义前缀1,前缀2' 精确补充
+  Uncensored:
+    builtin: uncensored
+  Domestic:
+    builtin: domestic
+  Others:
   # 未匹配以上分类
   未分类:`;
 
