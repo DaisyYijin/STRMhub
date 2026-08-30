@@ -1047,7 +1047,13 @@ func (h *Handler) TestTMDBConnection(c *gin.Context) {
 	}
 	// 用 /configuration 接口测试（/3 前缀已在规范化时补齐）
 	endpoint := req.APIURL + "/configuration?api_key=" + req.APIKey
+	// 与真实识别链路一致：走全局代理（否则代理配对、测试却直连失败，误导排障）
 	client := &http.Client{Timeout: 10 * time.Second}
+	if pu := getProxyURL(); pu != "" {
+		if p, err := parseProxyURL(pu); err == nil {
+			client.Transport = &http.Transport{Proxy: p}
+		}
+	}
 	resp, err := client.Get(endpoint)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": "连接失败: " + err.Error()})
