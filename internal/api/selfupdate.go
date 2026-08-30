@@ -86,16 +86,15 @@ func fetchLatestSHA(force bool) (sha, errText string) {
 	return cached, "GitHub 响应异常"
 }
 
-// VersionChanges GET /version/changes —— 当前版本与最新版本之间的提交列表（更新内容）
-func (h *Handler) VersionChanges(c *gin.Context) {
-	current := buildVersion
-	latest, ferr := fetchLatestSHA(true)
-	if current == "dev" || latest == "" || strings.HasPrefix(latest, current[:7]) {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": ferr,
-			"uptodate": current != "dev" && latest != "" && strings.HasPrefix(latest, current[:7])})
-		return
-	}
-	buildState := imageBuildState(latest)
+// commitItem 更新日志条目
+type commitItem struct {
+	Sha     string `json:"sha"`
+	Message string `json:"message"`
+	Date    string `json:"date"`
+}
+
+// fetchCommitsBetween 拉取 current..latest 之间的提交清单（更新日志；最新在最上）
+func fetchCommitsBetween(current, latest string) []commitItem {
 	client := &http.Client{Timeout: 10 * time.Second}
 	if pu := getProxyURL(); pu != "" {
 		if p, err := parseProxyURL(pu); err == nil {
@@ -107,8 +106,7 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": err.Error(), "build": buildState})
-		return
+		return nil
 	}
 	defer resp.Body.Close()
 	var cmp struct {
@@ -123,16 +121,9 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 		} `json:"commits"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&cmp) != nil {
-		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "build": buildState})
-		return
-	}
-	type commitItem struct {
-		Sha     string `json:"sha"`
-		Message string `json:"message"`
-		Date    string `json:"date"`
+		return nil
 	}
 	commits := []commitItem{}
-	// 最新在最上
 	for i := len(cmp.Commits) - 1; i >= 0; i-- {
 		cm := cmp.Commits[i]
 		msg := cm.Commit.Message
@@ -141,7 +132,118 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 		}
 		commits = append(commits, commitItem{Sha: cm.Sha, Message: msg, Date: cm.Commit.Author.Date})
 	}
-	c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": commits, "build": buildState})
+	return commits
+}
+
+// ==================== 更新通知（构建完成 / 更新完成 → 企微/TG） ====================
+//
+// 后台每 5 分钟检查一次 CI 构建状态：
+//   - 新版本镜像「构建完成」→ 按用户配置的通知渠道推送 更新日志（提交清单），
+//     每个提交 SHA 只通知一次（状态持久化，重启不重复）
+//   - 新版本「构建失败」→ 同样只提醒一次，方便去 Actions 查看
+//   - 容器重启后检测到运行版本变化 → 推送「已更新到 vX」确认
+// dev 构建与通知渠道未配置时静默。
+
+type updateNotifyState struct {
+	ReadySHA string `json:"ready_sha"` // 已通知过"可更新"的提交
+	FailSHA  string `json:"fail_sha"`  // 已通知过"构建失败"的提交
+	Applied  string `json:"applied"`   // 上次运行的版本（用于更新完成确认）
+}
+
+func updateNotifyLoad() updateNotifyState {
+	var st updateNotifyState
+	if v := settingValueCompat("update-notify"); v != "" {
+		_ = json.Unmarshal([]byte(v), &st)
+	}
+	return st
+}
+
+func updateNotifySave(st updateNotifyState) {
+	b, _ := json.Marshal(st)
+	if cfgGlobal != nil {
+		_ = cfgGlobal.SaveSetting("update-notify", string(b))
+	}
+}
+
+func shortSha(sha string) string {
+	if len(sha) >= 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// StartUpdateNotifier 启动更新通知监视（SetupRoutes 调用）
+func StartUpdateNotifier() {
+	go func() {
+		time.Sleep(60 * time.Second) // 等网络/通知配置就绪
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(5 * time.Minute):
+			}
+			notifyUpdateOnce()
+		}
+	}()
+}
+
+func notifyUpdateOnce() {
+	if buildVersion == "dev" {
+		return
+	}
+	st := updateNotifyLoad()
+
+	// 1) 更新完成确认：持久化的"上次运行版本"与当前不同 = 刚完成了一次更新
+	if st.Applied != "" && st.Applied != buildVersion {
+		NotifyMessage("✅ StrmHub 更新完成",
+			"v"+shortSha(st.Applied)+" → v"+shortSha(buildVersion)+"\n新版本已生效，如遇异常可在 GitHub 提交反馈")
+	}
+	st.Applied = buildVersion
+
+	// 2) 新版本检测
+	latest, _ := fetchLatestSHA(false)
+	if latest == "" || strings.HasPrefix(latest, buildVersion[:7]) {
+		updateNotifySave(st)
+		return
+	}
+	switch imageBuildState(latest) {
+	case "ready":
+		if st.ReadySHA != latest {
+			st.ReadySHA = latest
+			commits := fetchCommitsBetween(buildVersion, latest)
+			var b strings.Builder
+			fmt.Fprintf(&b, "v%s → v%s，更新内容（%d 个提交）：", shortSha(buildVersion), shortSha(latest), len(commits))
+			for i, cm := range commits {
+				if i >= 10 {
+					fmt.Fprintf(&b, "\n…等共 %d 个提交", len(commits))
+					break
+				}
+				fmt.Fprintf(&b, "\n• %s %s", shortSha(cm.Sha), truncateStr(cm.Message, 60))
+			}
+			b.WriteString("\n\n到管理后台左下角点击「有新版本」即可更新")
+			NotifyMessage("🚀 StrmHub 有新版本", b.String())
+		}
+	case "failed":
+		if st.FailSHA != latest {
+			st.FailSHA = latest
+			NotifyMessage("❌ StrmHub 新版本构建失败",
+				"提交 "+shortSha(latest)+" 的镜像构建失败，暂无法更新。\n可到 GitHub Actions 查看失败原因，修复提交后会再次通知")
+		}
+	}
+	updateNotifySave(st)
+}
+
+// VersionChanges GET /version/changes —— 当前版本与最新版本之间的提交列表（更新内容）
+func (h *Handler) VersionChanges(c *gin.Context) {
+	current := buildVersion
+	latest, ferr := fetchLatestSHA(true)
+	if current == "dev" || latest == "" || strings.HasPrefix(latest, current[:7]) {
+		c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": nil, "error": ferr,
+			"uptodate": current != "dev" && latest != "" && strings.HasPrefix(latest, current[:7])})
+		return
+	}
+	buildState := imageBuildState(latest)
+	c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": fetchCommitsBetween(current, latest), "build": buildState})
 }
 
 // ApplyUpdate POST /update/apply —— 拉取最新镜像并重建当前容器

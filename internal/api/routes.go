@@ -181,6 +181,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动监控上传引擎（Emby 生成图片回传 115）
 	StartMonitorUploader(h)
 
+	// 启动更新通知监视（CI 构建完成/失败、更新完成 → 用户配置的企微/TG）
+	StartUpdateNotifier()
+
 	// 认证（账号由环境变量 AUTH_USER/AUTH_PASSWORD 提供或启动时自动生成，
 	// 网页注册已移除）
 	auth := r.Group("/auth")
