@@ -336,16 +336,17 @@ tv:
 
 # 配置AV的分类策略（按番号前缀或制作商分类）
 av:
-  # AV 分类：按番号前缀匹配；分类名即网盘目录名
-  # 内置常见无码（FC2/HEYZO/Tokyo Hot 等）与国产（MD/PMC/JD 等）前缀库
-  # 自动识别，无需全部手填；num_prefix 留空 = 兜底分类
+  # AV 分类：按番号前缀分类，分类名即网盘目录名
+  # 判定顺序：自定义 num_prefix → 内置无码库（FC2/HEYZO/Tokyo Hot/
+  # 10Musume/1Pondo/Caribbean 等）→ 内置国产库（MD/MDX/PMC/JD/TZ/91 等）
+  # → 文件名关键词（无码/破解/国产/麻豆/探花）→ 兜底
+  # 兜底 = 最后一个 num_prefix 留空的分类（有码厂牌数千个，无需枚举）
   无码:
     num_prefix: ''
   国产:
-    num_prefix: 'MD,MDX,MDT,PMC,JD,TZ'
+    num_prefix: ''
   有码:
     num_prefix: ''
-  # 文件名含 无码/破解/国产/麻豆 等字样时也会辅助归类
   # 未匹配以上分类
   未分类:`;
 

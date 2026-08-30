@@ -2085,11 +2085,11 @@ func loadAVCategories() []avCategoryConfig {
 			return cats
 		}
 	}
-	// 默认分类：内置无码前缀库自动识别；"有码"排第一作兜底
-	//（兜底=第一个空前缀分类，无国产分类时国产内容也会落到有码）
+	// 默认分类：无码走内置前缀库识别；有码排最后作兜底
+	//（兜底=最后一个空前缀分类；未配置国产分类时国产内容也落有码）
 	return []avCategoryConfig{
-		{Name: "有码", Prefixes: nil},
 		{Name: "无码", Prefixes: nil},
+		{Name: "有码", Prefixes: nil},
 	}
 }
 
@@ -2199,11 +2199,16 @@ func classifyAVNumber(avNum, hint string) string {
 		}
 	}
 
-	// 4) 兜底：第一个 num_prefix 为空的分类（如"有码"）
+	// 4) 兜底：最后一个 num_prefix 为空的分类（与 movie/tv「兜底放最后」
+	// 约定一致——无码留空走内置库、有码留空作兜底时顺序无关歧义）
+	fallback := ""
 	for _, cat := range cats {
 		if len(cat.Prefixes) == 0 {
-			return cat.Name
+			fallback = cat.Name
 		}
+	}
+	if fallback != "" {
+		return fallback
 	}
 	return "未分类"
 }
