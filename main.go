@@ -167,8 +167,11 @@ func main() {
 	// 与 /css/style.css 精确段共存（路由树冲突 → 启动 panic）
 	r.Use(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/css/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/js/") {
-			c.Header("Cache-Control", "no-cache")
+			strings.HasPrefix(c.Request.URL.Path, "/js/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/vendor/") {
+			// no-store：浏览器完全不缓存。文件很小（app.js ~120KB），
+			// 换来"更新必定生效"，杜绝旧脚本调用新接口的排障灾难
+			c.Header("Cache-Control", "no-store")
 		}
 		c.Next()
 	})

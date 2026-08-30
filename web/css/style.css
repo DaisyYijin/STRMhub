@@ -240,7 +240,7 @@ tr:hover td { background: var(--fill-1); }
     position: sticky; top: 0; z-index: 500;
     background: var(--white);
     box-shadow: 0 1px 6px rgba(0,0,0,.06);
-    margin: -36px -44px 16px; padding: 14px 44px 12px;
+    margin: 0 -16px 14px; padding: 12px 16px;
     border-bottom: 1px solid var(--border);
   }
 }

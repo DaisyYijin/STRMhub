@@ -2291,6 +2291,20 @@ async function loadDashboard() {
 }
 
 function setTxt(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+// 账号菜单动作：跳到代理 Tab 并自动执行网络连接测试
+function menuNetworkTest() {
+  toggleAccountMenu();
+  showPage('config-system');
+  switchTab('page-config-system', 'proxy');
+  setTimeout(() => {
+    const btn = document.getElementById('network-check-btn');
+    if (btn) networkCheck(btn);
+  }, 400);
+}
+// 账号菜单动作：新标签打开使用文档
+function menuDocs() {
+  window.open('https://strmhub.rth1.xyz/', '_blank');
+}
 // 新标签页打开观影门户（同主机 6688 端口）
 function openPortal() {
   window.open(location.protocol + '//' + location.hostname + ':6688', '_blank');
