@@ -299,6 +299,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/d/:pickcode/*filename", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
 		// TMDB 海报代理（仪表盘媒体库卡片/最新入库海报墙；与门户同款缓存逻辑）
 		r.GET("/poster/*path", func(c *gin.Context) { serveTMDBPoster(c, h.Config.DataDir) })
+		// Emby 图片代理（仪表盘：服务端注入 api_key，避免密钥出现在前端 URL）
+		r.GET("/embyimg", func(c *gin.Context) { h.EmbyImageProxy(c) })
 
 						
 		// 刮削整理

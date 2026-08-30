@@ -153,6 +153,8 @@ function showPage(id) {
   else stopOfflineTasksPoll();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
+  // 隐藏页面里初始化的 CodeMirror 宽度测量为 0（高亮/行号错位），显示后重算
+  (window._cmInstances || []).forEach(cm => { try { cm.refresh(); } catch (e) {} });
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
   const savedTab = localStorage.getItem('current-tab-page-' + id);
   if (savedTab) switchTab('page-' + id, savedTab);
@@ -2114,8 +2116,10 @@ function attachYamlHighlight(id) {
   // 兼容旧读写端：
   //   写：el.value = X; el._yamlRender()   → 同步进编辑器
   //   读：el._yamlSync() 后再读 el.value
-  ta._yamlRender = () => cm.setValue(ta.value);
+  ta._yamlRender = () => { cm.setValue(ta.value); cm.refresh(); };
   ta._yamlSync = () => cm.save();
+  window._cmInstances = window._cmInstances || [];
+  window._cmInstances.push(cm);
 }
 
 // ==================== 日志级别 ====================
@@ -2207,28 +2211,39 @@ async function loadDashboard() {
     } else {
       setTxt('dash-cpu-pct', '-');
     }
-    /* ---- 我的媒体库分类卡 ---- */
-    const cats = d.categories || [];
+    /* ---- 我的媒体库分类卡（点击打开观影门户；Emby 源时 = Emby 媒体库） ---- */
+    let cats = d.categories || [];
+    if (em && em.libraries && em.libraries.length) {
+      cats = em.libraries.map(l => ({
+        name: l.name, count: l.count,
+        posters: (l.collage || []).map(p => '/embyimg?path=' + encodeURIComponent(p) + '&maxWidth=200'),
+      }));
+    }
     const cb = document.getElementById('dash-cats');
     if (cats.length) {
       cb.innerHTML = cats.map(c => {
         let inner;
         if (c.posters && c.posters.length) {
           inner = '<div class="collage">' + [0,1,2,3].map(i =>
-            c.posters[i] ? '<img src="/poster' + esc(c.posters[i]) + '" loading="lazy">' : '<div style="background:var(--fill-2)"></div>').join('') + '</div>';
+            c.posters[i] ? '<img src="' + esc(c.posters[i]) + '" loading="lazy">' : '<div style="background:var(--fill-2)"></div>').join('') + '</div>';
         } else {
           inner = '<div class="cat-placeholder">' + esc((c.name || '?').slice(0, 4)) + '</div>';
         }
-        return '<div class="dash-cat" title="' + esc(c.name) + ' · ' + c.count + ' 部">' + inner
+        return '<div class="dash-cat" title="' + esc(c.name) + ' · ' + c.count + ' 部（点击打开观影门户）" onclick="openPortal()">' + inner
           + '<div class="cat-name">' + esc(c.name) + '</div>'
           + '<div class="cat-count">' + fmtN(c.count) + '</div></div>';
       }).join('');
     } else {
       cb.innerHTML = '<div class="dash-empty">暂无入库记录 · 整理或同步后这里会显示分类卡片</div>';
     }
-    /* ---- 最新入库海报墙 ---- */
+    /* ---- 最新入库海报墙（Emby 源时 = Emby 最新入库，点击打开观影门户） ---- */
     const pb = document.getElementById('dash-posters');
-    if (recent.length) {
+    if (em && em.recent && em.recent.length) {
+      pb.innerHTML = em.recent.map(m =>
+        '<div class="dash-poster" title="' + esc(m.name + ' ' + (m.year || '')) + '（点击打开观影门户）" onclick="openPortal()">'
+        + '<img src="/embyimg?path=' + encodeURIComponent('Items/' + m.id + '/Images/Primary') + '&maxWidth=200" loading="lazy">'
+        + '<div class="p-title">' + esc(m.name) + '</div></div>').join('');
+    } else if (recent.length) {
       pb.innerHTML = recent.map(m =>
         '<div class="dash-poster" title="' + esc(m.title + ' ' + (m.year || '')) + '">'
         + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy">'
@@ -2241,6 +2256,10 @@ async function loadDashboard() {
 }
 
 function setTxt(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+// 新标签页打开观影门户（同主机 6688 端口）
+function openPortal() {
+  window.open(location.protocol + '//' + location.hostname + ':6688', '_blank');
+}
 function setBar(id, pct) {
   const el = document.getElementById(id);
   if (!el) return;

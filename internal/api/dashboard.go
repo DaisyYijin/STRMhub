@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"fmt"
 	"net/http"
+	"io"
 	"net/url"
 	"time"
 
@@ -146,6 +147,170 @@ func memInfo() (totalMB, usedMB uint64, pct float64, ok bool) {
 	return total, used, float64(used) * 100 / float64(total), true
 }
 
+// embyDashCache Emby 仪表盘数据短缓存（60 秒；每次刷新要打 Emby 十来个接口）
+var (
+	embyDashMu   sync.Mutex
+	embyDashData gin.H
+	embyDashAt   time.Time
+)
+
+// fetchEmbyDashboard 从 Emby 拉媒体统计/媒体库/最新入库（含封面路径）。
+// 未配置 Emby 或请求失败返回 nil（前端回退本地台账数据）
+func fetchEmbyDashboard(h *Handler) gin.H {
+	embyDashMu.Lock()
+	cached, cacheAt := embyDashData, embyDashAt
+	embyDashMu.Unlock()
+	if cached != nil && time.Since(cacheAt) < 60*time.Second {
+		return cached
+	}
+	base, apiKey, ok := h.embyServerInfo()
+	if !ok {
+		return nil
+	}
+	client := &http.Client{Timeout: 8 * time.Second}
+	getJSON := func(path string, query url.Values) (map[string]interface{}, error) {
+		if query == nil {
+			query = url.Values{}
+		}
+		query.Set("api_key", apiKey)
+		resp, err := client.Get(strings.TrimRight(base, "/") + path + "?" + query.Encode())
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		var out map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&out)
+		return out, err
+	}
+
+	// 媒体数量
+	var movies, series, episodes float64
+	if counts, err := getJSON("/Items/Counts", nil); err == nil {
+		movies, _ = counts["MovieCount"].(float64)
+		series, _ = counts["SeriesCount"].(float64)
+		episodes, _ = counts["EpisodeCount"].(float64)
+	}
+
+	// 最新入库（电影+剧集，按入库时间倒序 12 条）
+	recent := []gin.H{}
+	if res, err := getJSON("/Items", url.Values{
+		"Recursive":        {"true"},
+		"IncludeItemTypes": {"Movie,Series"},
+		"SortBy":           {"DateCreated"},
+		"SortOrder":        {"Descending"},
+		"Limit":            {"12"},
+		"Fields":           {"ProductionYear"},
+	}); err == nil {
+		if items, _ := res["Items"].([]interface{}); items != nil {
+			for _, it := range items {
+				m, _ := it.(map[string]interface{})
+				id, _ := m["Id"].(string)
+				name, _ := m["Name"].(string)
+				year, _ := m["ProductionYear"].(float64)
+				if id == "" || name == "" {
+					continue
+				}
+				yearStr := ""
+				if year > 0 {
+					yearStr = fmt.Sprintf("%d", int(year))
+				}
+				recent = append(recent, gin.H{"id": id, "name": name, "year": yearStr})
+			}
+		}
+	}
+
+	// 媒体库（分类卡）：每个库的条目数 + 4 张封面拼贴
+	libraries := []gin.H{}
+	if res, err := getJSON("/Library/MediaFolders", nil); err == nil {
+		if items, _ := res["Items"].([]interface{}); items != nil {
+			for _, it := range items {
+				m, _ := it.(map[string]interface{})
+				id, _ := m["Id"].(string)
+				name, _ := m["Name"].(string)
+				if id == "" || name == "" || len(libraries) >= 8 {
+					continue
+				}
+				count := 0
+				collage := []string{}
+				if lr, err := getJSON("/Items", url.Values{
+					"ParentId": {id}, "Recursive": {"true"}, "Limit": {"4"},
+					"SortBy": {"DateCreated"}, "SortOrder": {"Descending"},
+					"Fields": {"ProductionYear"},
+				}); err == nil {
+					if tc, ok := lr["TotalRecordCount"].(float64); ok {
+						count = int(tc)
+					}
+					if citems, _ := lr["Items"].([]interface{}); citems != nil {
+						for _, ci := range citems {
+							if cm, _ := ci.(map[string]interface{}); cm != nil {
+								if cid, _ := cm["Id"].(string); cid != "" {
+									collage = append(collage, "Items/"+cid+"/Images/Primary")
+								}
+							}
+						}
+					}
+				}
+				libraries = append(libraries, gin.H{"name": name, "count": count, "collage": collage})
+			}
+		}
+	}
+
+	out := gin.H{
+		"counts":    gin.H{"movies": int(movies), "series": int(series), "episodes": int(episodes)},
+		"recent":    recent,
+		"libraries": libraries,
+	}
+	embyDashMu.Lock()
+	embyDashData, embyDashAt = out, time.Now()
+	embyDashMu.Unlock()
+	return out
+}
+
+// placeholderGIF 1x1 透明像素（图片代理失败时的占位，避免 <img> 裂图）
+var placeholderGIF = []byte("GIF89aÿÿÿ!ù,D;")
+
+// EmbyImageProxy Emby 图片代理：服务端注入 api_key（封面 URL 带密钥会泄露，
+// 此前已从通知里移除）。仅放行 Items/…/Images 路径，浏览器缓存 1 天
+// GET /embyimg?path=Items/{Id}/Images/Primary&maxWidth=300
+func (h *Handler) EmbyImageProxy(c *gin.Context) {
+	base, apiKey, ok := h.embyServerInfo()
+	if !ok {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	path := strings.Trim(c.Query("path"), "/")
+	if !strings.HasPrefix(path, "Items/") || strings.Contains(path, "..") {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	q := url.Values{}
+	if mw := c.Query("maxWidth"); mw != "" {
+		q.Set("maxWidth", mw)
+	}
+	q.Set("api_key", apiKey)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(strings.TrimRight(base, "/") + "/" + path + "?" + q.Encode())
+	if err == nil {
+		defer resp.Body.Close()
+	}
+	if err != nil || resp.StatusCode != 200 {
+		// 1x1 透明占位，避免 <img> 裂图
+		c.Header("Cache-Control", "no-store")
+		c.Data(http.StatusOK, "image/gif", placeholderGIF)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400")
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "image/jpeg"
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	c.Data(http.StatusOK, ct, data)
+}
+
 // DashboardEnhanced 仪表盘（真实数据版）
 // GET /dashboard
 func (h *Handler) DashboardEnhanced(c *gin.Context) {
@@ -277,7 +442,10 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 	var organizedTotal int64
 	h.DB.Model(&model.MediaLibrary{}).Count(&organizedTotal)
 
+	embyData := fetchEmbyDashboard(h)
+
 	c.JSON(http.StatusOK, gin.H{
+		"emby":     embyData,
 		"storage": h.pan115CapacityCached(),
 		"media": gin.H{
 			"movies": movieCount, "tvs": tvCount,
