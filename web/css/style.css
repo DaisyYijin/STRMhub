@@ -501,7 +501,22 @@ tr:hover td { background: var(--fill-1); }
 
 /* 按钮组：同一行弹性排列；测试结果文字独立成行（长错误信息不再挤断按钮） */
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.test-result { display: block; margin-top: 6px; font-size: 13px; line-height: 1.5; word-break: break-all; }
+.test-result { display: block; margin-top: 8px; }
+/* 统一的「测试结果」状态横幅：图标圆徽 + 标题 + 详情 */
+.test-banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 10px; border: 1px solid transparent; animation: tbIn .25s ease; }
+@keyframes tbIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.test-banner.ok   { background: #f0f9eb; border-color: #c9ecbc; }
+.test-banner.err  { background: #ffece8; border-color: #ffc9c0; }
+.test-banner.pend { background: var(--fill-2); border-color: var(--border); }
+.test-banner .tb-ico { width: 20px; height: 20px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; margin-top: 1px; }
+.test-banner.ok .tb-ico { background: #00b42a; }
+.test-banner.err .tb-ico { background: #f53f3f; }
+.test-banner.pend .tb-ico { background: var(--text-3); }
+.test-banner .tb-title { font-size: 13.5px; font-weight: 600; }
+.test-banner.ok .tb-title { color: #1f7a12; }
+.test-banner.err .tb-title { color: #b3231d; }
+.test-banner.pend .tb-title { color: var(--text-3); font-weight: 500; }
+.test-banner .tb-detail { font-size: 12.5px; margin-top: 2px; word-break: break-all; opacity: .8; }
 /* 表单行内与标签垂直居中：开关统一 32px，相对 36px 控件行偏移 2px */
 .form-row .control .segmented-control { margin-top: 2px; }
 

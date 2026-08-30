@@ -40,6 +40,21 @@ async function api(path, options = {}) {
   return data;
 }
 
+// 统一的「测试结果」渲染：所有配置卡的状态横幅走这里
+// showTestResult(el, ok, '连接成功', 'emby v4.9.5.0 · 2 个媒体库')
+// showTestPending(el, '测试中...') / showTestResult(el, null) = 清空
+function showTestResult(el, ok, title, detail) {
+  if (!el) return;
+  if (ok === null) { el.innerHTML = ''; return; }
+  const cls = ok === 'pend' ? 'pend' : (ok ? 'ok' : 'err');
+  el.innerHTML = '<div class="test-banner ' + cls + '">'
+    + '<span class="tb-ico">' + (ok === 'pend' ? '…' : (ok ? '✓' : '✕')) + '</span>'
+    + '<div class="tb-body"><div class="tb-title">' + esc(title || '') + '</div>'
+    + (detail ? '<div class="tb-detail">' + esc(detail) + '</div>' : '')
+    + '</div></div>';
+}
+function showTestPending(el, text) { showTestResult(el, 'pend', text || '测试中…'); }
+
 function toast(msg) {
   let el = document.getElementById('toast');
   if (!el) {
@@ -950,12 +965,12 @@ async function testProxy() {
   const url = document.getElementById('proxy-url').value.trim();
   if (!url) { toast('请先填写代理地址'); return; }
   const el = document.getElementById('proxy-test-result');
-  if (el) el.textContent = '测试中...';
+  showTestPending(el, '正在通过代理探测 google_204…');
   try {
     const d = await api('/proxy/test', { method: 'POST', body: JSON.stringify({ url }) });
-    if (d.ok) { if (el) { el.textContent = '✓ 延迟 ' + d.latency_ms + 'ms'; el.style.color = 'var(--primary)'; } }
-    else { if (el) { el.textContent = '✗ ' + (d.error || '连接失败'); el.style.color = '#e74c3c'; } }
-  } catch (e) { if (el) { el.textContent = '✗ ' + e.message; el.style.color = '#e74c3c'; } }
+    if (d.ok) showTestResult(el, true, '代理可用', '延迟 ' + d.latency_ms + 'ms');
+    else showTestResult(el, false, '代理不可用', d.error || '连接失败');
+  } catch (e) { showTestResult(el, false, '代理不可用', e.message); }
 }
 
 // ==================== 115 扫码登录 ====================
@@ -1279,20 +1294,13 @@ async function testGPT() {
   if (!url || !model) { toast('请先填写 API 地址和模型名称'); return; }
   btn.disabled = true;
   btn.textContent = '测试中...';
-  result.textContent = '';
-  result.style.color = '';
+  showTestPending(result, '正在连接 GPT 服务…');
   try {
     const data = await api('/config/test-gpt', { method: 'POST', body: JSON.stringify({ url, key, model }) });
-    if (data.success) {
-      result.textContent = '✓ ' + data.message;
-      result.style.color = 'var(--success)';
-    } else {
-      result.textContent = '✗ ' + (data.error || '连接失败');
-      result.style.color = 'var(--danger)';
-    }
+    if (data.success) showTestResult(result, true, 'GPT 连接成功', data.message || (model + ' 可用'));
+    else showTestResult(result, false, 'GPT 连接失败', data.error || '未知错误');
   } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--danger)';
+    showTestResult(result, false, 'GPT 连接失败', e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = '测试连接';
@@ -1304,24 +1312,17 @@ async function testTmdb() {
   const result = document.getElementById('tmdb-test-result');
   btn.disabled = true;
   btn.textContent = '测试中...';
-  result.textContent = '';
-  result.style.color = '';
+  showTestPending(result, '正在请求 TMDB…');
   try {
     const data = await api('/config/test-tmdb', { method: 'POST', body: JSON.stringify({
       api_url: val('tmdb-api-url'),
       api_key: val('tmdb-api-key'),
       language: tmdbLangVal,
     }) });
-    if (data.success) {
-      result.textContent = '✓ 连接成功' + (data.message ? '：' + data.message : '');
-      result.style.color = 'var(--success)';
-    } else {
-      result.textContent = '✗ ' + (data.error || '连接失败');
-      result.style.color = 'var(--danger)';
-    }
+    if (data.success) showTestResult(result, true, 'TMDB 连接成功', data.message || undefined);
+    else showTestResult(result, false, 'TMDB 连接失败', data.error || '请检查 API Key');
   } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--danger)';
+    showTestResult(result, false, 'TMDB 连接失败', e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = '测试连接';
@@ -1363,25 +1364,20 @@ async function testEmbyConnection() {
   const btn = event && event.target ? event.target.closest('button') : null;
   const serverURL = document.getElementById('emby-server-url').value.trim();
   const apiKey = document.getElementById('emby-api-key').value.trim();
-  if (result) { result.textContent = ''; result.style.color = ''; }
+  showTestResult(result, null);
   if (!serverURL) {
-    if (result) { result.textContent = '✗ 请先填写 Emby 服务器地址'; result.style.color = 'var(--danger)'; }
+    showTestResult(result, false, '请先填写 Emby 服务器地址');
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
+  showTestPending(result, '正在连接 Emby 服务器…');
   try {
     const d = await api('/config/test-emby', { method: 'POST', body: JSON.stringify({ server_url: serverURL, api_key: apiKey }) });
-    if (result) {
-      if (d.ok) {
-        result.style.color = 'var(--success)';
-        result.textContent = '✓ 连接成功：' + (d.server_name || 'Emby') + (d.version ? ' v' + d.version : '') + ' · ' + (d.library_count || 0) + ' 个媒体库';
-      } else {
-        result.style.color = 'var(--danger)';
-        result.textContent = '✗ ' + (d.error || '连接失败');
-      }
-    }
+    if (d.ok) showTestResult(result, true, 'Emby 连接成功',
+      (d.server_name || 'Emby') + (d.version ? ' · v' + d.version : '') + ' · ' + (d.library_count || 0) + ' 个媒体库');
+    else showTestResult(result, false, 'Emby 连接失败', d.error || '未知错误');
   } catch (e) {
-    if (result) { result.style.color = 'var(--danger)'; result.textContent = '✗ ' + e.message; }
+    showTestResult(result, false, 'Emby 连接失败', e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
   }
@@ -1456,19 +1452,13 @@ async function testMessage(btn) {
   const result = btn ? btn.closest('.control')?.querySelector('.test-result') : null;
   btn.disabled = true;
   btn.textContent = '发送中...';
-  if (result) { result.textContent = ''; result.style.color = ''; }
+  showTestPending(result, '正在发送测试消息…');
   try {
     const data = await api('/message/test', { method: 'POST' });
-    if (data.success) {
-      result.textContent = '✓ 测试消息已发送';
-      result.style.color = 'var(--success)';
-    } else {
-      result.textContent = '✗ ' + (data.error || '发送失败');
-      result.style.color = 'var(--danger)';
-    }
+    if (data.success) showTestResult(result, true, '测试消息已发送', '请到企业微信 / Telegram 查收');
+    else showTestResult(result, false, '发送失败', data.error || '请检查消息配置');
   } catch (e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--danger)';
+    showTestResult(result, false, '发送失败', e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = '测试通知';
