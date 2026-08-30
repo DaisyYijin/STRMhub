@@ -1357,6 +1357,36 @@ function testEmbyPath() {
   out.textContent = result;
 }
 
+// 测试 Emby 连接：用当前输入框的值（未保存也可测）请求 /System/Info
+async function testEmbyConnection() {
+  const result = document.getElementById('emby-test-result');
+  const btn = event && event.target ? event.target.closest('button') : null;
+  const serverURL = document.getElementById('emby-server-url').value.trim();
+  const apiKey = document.getElementById('emby-api-key').value.trim();
+  if (result) { result.textContent = ''; result.style.color = ''; }
+  if (!serverURL) {
+    if (result) { result.textContent = '✗ 请先填写 Emby 服务器地址'; result.style.color = 'var(--danger)'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
+  try {
+    const d = await api('/config/test-emby', { method: 'POST', body: JSON.stringify({ server_url: serverURL, api_key: apiKey }) });
+    if (result) {
+      if (d.ok) {
+        result.style.color = 'var(--success)';
+        result.textContent = '✓ 连接成功：' + (d.server_name || 'Emby') + (d.version ? ' v' + d.version : '') + ' · ' + (d.library_count || 0) + ' 个媒体库';
+      } else {
+        result.style.color = 'var(--danger)';
+        result.textContent = '✗ ' + (d.error || '连接失败');
+      }
+    }
+  } catch (e) {
+    if (result) { result.style.color = 'var(--danger)'; result.textContent = '✗ ' + e.message; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
+  }
+}
+
 // Emby Webhook 接收地址：token 首次自动生成并落库，直接展示可复制地址（推送什么事件由 Emby 侧决定）
 let embyNotifyToken = '';
 function applyEmbyNotify(v) {
