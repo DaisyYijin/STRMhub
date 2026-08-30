@@ -1375,7 +1375,8 @@ function testEmbyPath() {
   const rule = document.getElementById('emby-path-mapping')?.value || '';
   const out = document.getElementById('emby-path-test-output');
   if (!out) return;
-  if (!input) { out.textContent = ''; return; }
+  if (!input) { out.textContent = ''; out.style.display = 'none'; return; }
+  out.style.display = 'block';
   let result = input;
   if (rule && rule.includes('#')) {
     const [src, dst] = rule.split('#');
