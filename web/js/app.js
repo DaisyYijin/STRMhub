@@ -2404,8 +2404,8 @@ async function loadVersion() {
 function toggleAccountMenu(ev) {
   if (ev) ev.stopPropagation();
   const m = document.getElementById('account-menu');
-  const show = m.style.display === 'none';
-  m.style.display = show ? '' : 'none';
+  const show = m.style.display !== 'block';
+  m.style.display = show ? 'block' : 'none';
   if (show) {
     document.getElementById('account-menu-user').textContent = localStorage.getItem('username') || '-';
     // 动态定位到【可见的】触发按钮正下方（页面上有移动端/桌面端两个按钮，
@@ -2424,7 +2424,7 @@ function toggleAccountMenu(ev) {
 }
 document.addEventListener('click', e => {
   const m = document.getElementById('account-menu');
-  if (m && m.style.display !== 'none' && !e.target.closest('#account-menu') && !e.target.closest('[data-account-btn]')) {
+  if (m && m.style.display === 'block' && !e.target.closest('#account-menu') && !e.target.closest('[data-account-btn]')) {
     m.style.display = 'none';
   }
 });

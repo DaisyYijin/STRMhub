@@ -92,13 +92,20 @@ func (h *Handler) NetworkCheck(c *gin.Context) {
 		px   bool
 	}
 	jobs := []job{
-		{"115 网盘", "https://webapi.115.com/", false},
-		{"TMDB API", "https://api.themoviedb.org/3/configuration", true},
-		{"GitHub API", "https://api.github.com/", true},
+		// 直连组（国内可达）
+		{"百度 www.baidu.com", "https://www.baidu.com", false},
+		{"115 网盘 webapi.115.com", "https://webapi.115.com/", false},
+		{"企业微信 api.weixin.qq.com", "https://qyapi.weixin.qq.com/cgi-bin/gettoken", false},
+		{"TMDB api.tmdb.org（直连）", "https://api.tmdb.org/3/configuration", false},
+		// 代理组（国内通常被墙，经代理测试）
+		{"Google www.google.com", "https://www.google.com/generate_204", true},
+		{"TMDB API（经代理）", "https://api.themoviedb.org/3/configuration", true},
+		{"Telegram api.telegram.org", "https://api.telegram.org/", true},
+		{"GitHub API（经代理）", "https://api.github.com/", true},
+		{"Docker Hub hub.docker.com", "https://hub.docker.com/", true},
 	}
-	if getProxyURL() != "" {
-		jobs = append(jobs, job{"代理连通性", "https://www.google.com/generate_204", true})
-	}
+	// 未配置代理时，代理组退回直连探测（结果能反映真实网络状况）
+	hasProxy := getProxyURL() != ""
 
 	results := make([]result, len(jobs))
 	var wg sync.WaitGroup
@@ -106,6 +113,11 @@ func (h *Handler) NetworkCheck(c *gin.Context) {
 		wg.Add(1)
 		go func(i int, j job) {
 			defer wg.Done()
+			// 未配置代理时，代理组任务改走直连（名称去掉"经代理"标注）
+			if j.px && !hasProxy {
+				j.name = strings.ReplaceAll(j.name, "（经代理）", "（直连）")
+				j.px = false
+			}
 			results[i] = probe(j.name, j.url, j.px)
 		}(i, j)
 	}
@@ -117,7 +129,7 @@ func (h *Handler) NetworkCheck(c *gin.Context) {
 			allOK = false
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": allOK, "results": results})
+	c.JSON(http.StatusOK, gin.H{"ok": allOK, "results": results, "via_proxy": hasProxy})
 }
 
 // cpuSample 上一次 /proc/stat 采样（CPU% 用两次调用差值计算）

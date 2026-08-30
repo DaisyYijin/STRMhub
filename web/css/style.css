@@ -234,6 +234,15 @@ tr:hover td { background: var(--fill-1); }
 /* ===== 顶部栏 ===== */
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .topbar .right { display: flex; align-items: center; gap: 8px; flex: none; }
+/* 桌面端顶栏固定：页面滚动时标题与 系统日志/账号 按钮始终可见 */
+@media (min-width: 901px) {
+  .topbar {
+    position: sticky; top: 0; z-index: 500;
+    background: var(--bg);
+    margin: -36px -44px 16px; padding: 14px 44px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+}
 
 /* ===== Tab 栏（Arco Tabs 风格） ===== */
 .tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 16px; gap: 24px; }
