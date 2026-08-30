@@ -2408,8 +2408,12 @@ function toggleAccountMenu(ev) {
   m.style.display = show ? '' : 'none';
   if (show) {
     document.getElementById('account-menu-user').textContent = localStorage.getItem('username') || '-';
-    // 动态定位到触发按钮正下方（不遮挡顶栏按钮文字）；窄屏自动收窄
-    const btn = document.querySelector('[data-account-btn]');
+    // 动态定位到【可见的】触发按钮正下方（页面上有移动端/桌面端两个按钮，
+    // 取错隐藏的那个会得到全零坐标，菜单叠在顶栏上像"点了没反应"）
+    let btn = null;
+    document.querySelectorAll('[data-account-btn]').forEach(b => {
+      if (!btn && b.offsetParent !== null) btn = b;
+    });
     if (btn) {
       const r = btn.getBoundingClientRect();
       m.style.top = Math.round(r.bottom + 6) + 'px';

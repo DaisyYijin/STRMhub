@@ -1071,7 +1071,6 @@ av:
 <!-- Emby 建库配置弹窗 -->
 <div id="account-menu" style="display:none;position:fixed;top:56px;right:24px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-card);z-index:1200;min-width:170px;padding:4px 0">
   <div style="padding:8px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)">当前登录：<b id="account-menu-user">-</b></div>
-  <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="toggleAccountMenu();openAccountModal()">账号设置</div>
   <div style="padding:9px 14px;font-size:14px;color:var(--danger);cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="logoutNow()">退出登录</div>
 </div>
 <div class="modal-mask" id="account-modal" style="display:none" onclick="if(event.target===this)closeAccountModal()">
