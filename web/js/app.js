@@ -2996,6 +2996,7 @@ async function gySearchSite(title, zy) {
     if (d.zy && Object.keys(d.zy).length) gyLastZy = d.zy;
     const tabEl = document.getElementById('gy-zy-tabs');
     if (tabEl) tabEl.outerHTML = Object.keys(gyLastZy).length ? buildGyTabs(gyLastZy) : '';
+    const list = document.getElementById('gy-torrent-list');
     if (!items.length) {
       let hint = '观影站内没有找到「' + esc(title) + '」的种子';
       const dbg = d.debug || {};

@@ -302,6 +302,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/poster/*path", func(c *gin.Context) { serveTMDBPoster(c, h.Config.DataDir) })
 		// Emby 图片代理（仪表盘：服务端注入 api_key，避免密钥出现在前端 URL）
 		r.GET("/embyimg", func(c *gin.Context) { h.EmbyImageProxy(c) })
+		// TMDB 海报代理（影视转存选片弹窗；<img> 标签带不了登录态，须挂公开路由）
+		r.GET("/tmdb/img", h.TmdbImg)
 		// QQ OneBot 事件回调（NapCat 等推送事件；token 鉴权，私聊管理 QQ 触发指令）
 		r.POST("/onebot/event", h.OneBotEvent)
 		// 影巢 OAuth 回调（授权页跳回浏览器时不带登录态；state 校验防伪造）
@@ -355,7 +357,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// TMDB 搜索（影视转存页：名称 → 条目选择 → 站内种子搜索）
 		protected.GET("/tmdb/search", h.TmdbSearchMulti)
-		protected.GET("/tmdb/img", h.TmdbImg)
 
 		// 影视转存 · 观影（账号密码登录 + PoW 反爬自动过验证；磁力提交 115 离线）
 		protected.GET("/guanying/config", h.GyGetConfig)
