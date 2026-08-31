@@ -15,6 +15,7 @@ package api
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,26 @@ import (
 )
 
 const hdhiveDefaultBase = "https://hdhive.com"
+
+// 内置应用凭据：项目作者在影巢申请的 OpenAPI 应用，构建镜像时经
+// GitHub Actions Secret 注入（仓库源码不落盘），让所有部署开箱即可
+// 跳转授权。HDHIVE_REDIRECT_RELAY 是静态中转页地址——影巢回调白名单
+// 只认这一个固定地址，中转页再把授权码转发到各部署自己的回调。
+func hdhiveBuiltin() (clientID, secret, relay string) {
+	return os.Getenv("HDHIVE_CLIENT_ID"), os.Getenv("HDHIVE_SECRET"), os.Getenv("HDHIVE_REDIRECT_RELAY")
+}
+
+// resolveCreds 返回实际生效的凭据：用户自备优先，回落内置应用。
+// source: custom=用户自备 / builtin=镜像内置 / ""=两者皆无
+func (cfg *hdhiveCfg) resolveCreds() (clientID, secret, source, relay string) {
+	if id, sk, rl := hdhiveBuiltin(); id != "" && sk != "" {
+		clientID, secret, source, relay = id, sk, "builtin", rl
+	}
+	if cfg.ClientID != "" && cfg.APIKey != "" {
+		return cfg.ClientID, cfg.APIKey, "custom", ""
+	}
+	return
+}
 
 // hdhiveCfg 影巢配置（setting key "hdhive"）
 type hdhiveCfg struct {
@@ -93,7 +115,8 @@ func invalidateHdhiveCfg() {
 // hdhiveCall 调用影巢 OpenAPI（应用级：X-API-Key 鉴权）。
 // 响应壳：{success, code, message, data}；withToken 时附带用户 Bearer 令牌。
 func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any, withToken bool) error {
-	if cfg == nil || cfg.APIKey == "" {
+	_, secret, _, _ := cfg.resolveCreds()
+	if secret == "" {
 		return fmt.Errorf("未配置影巢应用 Secret（影视转存 → 影巢 → 接入配置）")
 	}
 	var rd io.Reader
@@ -107,7 +130,7 @@ func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any, withToke
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-API-Key", cfg.APIKey)
+	req.Header.Set("X-API-Key", secret)
 	if withToken {
 		if cfg.AccessToken == "" {
 			return fmt.Errorf("影巢账号未授权，请先在「影视转存 → 影巢」完成授权")
@@ -155,41 +178,62 @@ func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any, withToke
 
 // ==================== OAuth 授权码流程 ====================
 
-// hdhiveOAuthStates 一次性 state（CSRF 防护），10 分钟有效
+// hdhiveOAuthEntry 一次授权会话：换令牌必须用与发起授权相同的应用凭据和
+// redirect_uri，存在 state 里随会话走（中途改配置不影响进行中的授权）
+type hdhiveOAuthEntry struct {
+	Exp        int64  `json:"exp"`        // 过期时间（unix 秒）
+	Redirect   string `json:"redirect"`   // 发起授权时用的 redirect_uri（本地回调或中转页）
+	Callback   string `json:"callback"`   // 本部署的回调地址（中转页转发目标）
+	ClientID   string `json:"client_id"`  // 发起时用的应用
+	Secret     string `json:"secret"`
+}
+
+// hdhiveOAuthStates 一次性 state（CSRF 防护），10 分钟有效。
+// key 是随机 nonce；中转模式下 state 会带上中转页需要的转发目标
+// （nonce + "." + base64url(callback)），nonce 本身不含点号不冲突
 var hdhiveOAuthStates = struct {
 	sync.Mutex
-	m map[string]int64
-}{m: map[string]int64{}}
+	m map[string]hdhiveOAuthEntry
+}{m: map[string]hdhiveOAuthEntry{}}
 
-func hdhiveStatePut() string {
+func hdhiveStatePut(e hdhiveOAuthEntry) string {
 	b := make([]byte, 16)
 	rand.Read(b)
-	s := hex.EncodeToString(b)
+	nonce := hex.EncodeToString(b)
+	e.Exp = time.Now().Add(10 * time.Minute).Unix()
 	hdhiveOAuthStates.Lock()
 	// 顺手清理过期项
-	for k, exp := range hdhiveOAuthStates.m {
-		if time.Now().Unix() > exp {
+	for k, old := range hdhiveOAuthStates.m {
+		if time.Now().Unix() > old.Exp {
 			delete(hdhiveOAuthStates.m, k)
 		}
 	}
-	hdhiveOAuthStates.m[s] = time.Now().Add(10 * time.Minute).Unix()
+	hdhiveOAuthStates.m[nonce] = e
 	hdhiveOAuthStates.Unlock()
-	return s
+	if e.Callback != "" && e.Callback != e.Redirect {
+		// 中转模式：state 附带转发目标，中转页原样带回
+		return nonce + "." + base64.RawURLEncoding.EncodeToString([]byte(e.Callback))
+	}
+	return nonce
 }
 
-func hdhiveStateTake(s string) bool {
-	if s == "" {
-		return false
+func hdhiveStateTake(full string) (hdhiveOAuthEntry, bool) {
+	nonce := full
+	if i := strings.IndexByte(full, '.'); i > 0 {
+		nonce = full[:i] // 中转模式：取点号前的 nonce
+	}
+	if nonce == "" {
+		return hdhiveOAuthEntry{}, false
 	}
 	hdhiveOAuthStates.Lock()
 	defer hdhiveOAuthStates.Unlock()
-	exp, ok := hdhiveOAuthStates.m[s]
-	if !ok || time.Now().Unix() > exp {
-		delete(hdhiveOAuthStates.m, s)
-		return false
+	e, ok := hdhiveOAuthStates.m[nonce]
+	if !ok || time.Now().Unix() > e.Exp {
+		delete(hdhiveOAuthStates.m, nonce)
+		return hdhiveOAuthEntry{}, false
 	}
-	delete(hdhiveOAuthStates.m, s) // 单次有效
-	return true
+	delete(hdhiveOAuthStates.m, nonce) // 单次有效
+	return e, true
 }
 
 // hdhiveRedirectURI 从请求推断回调地址（反代场景读 X-Forwarded-Proto）
@@ -206,18 +250,30 @@ func hdhiveRedirectURI(c *gin.Context) string {
 }
 
 // HdhiveOAuthStart POST /hdhive/oauth/start → 返回影巢授权页跳转地址
+// 凭据：用户自备优先；未配置时回落镜像内置应用（配合中转页实现开箱授权）
 func (h *Handler) HdhiveOAuthStart(c *gin.Context) {
 	cfg := loadHdhiveCfg()
-	if cfg.ClientID == "" || cfg.APIKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先填写并保存 Client ID 与应用 Secret"})
+	clientID, secret, source, relay := cfg.resolveCreds()
+	if clientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置自有 Client ID / Secret，且当前镜像未内置官方应用"})
 		return
 	}
-	redirectURI := hdhiveRedirectURI(c)
-	state := hdhiveStatePut()
+	callback := hdhiveRedirectURI(c)
+	redirect := callback
+	if source == "builtin" && relay != "" {
+		redirect = relay // 内置应用走中转页：影巢白名单只需登记这一个固定地址
+	}
+	state := hdhiveStatePut(hdhiveOAuthEntry{
+		Redirect: redirect, Callback: callback, ClientID: clientID, Secret: secret,
+	})
 	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=%s",
-		cfg.BaseURL, url.QueryEscape(cfg.ClientID), url.QueryEscape(redirectURI), state)
-	log.Printf("[影巢] ▶ 发起授权跳转（回调 %s）", redirectURI)
-	c.JSON(http.StatusOK, gin.H{"url": authURL, "redirect_uri": redirectURI})
+		cfg.BaseURL, url.QueryEscape(clientID), url.QueryEscape(redirect), url.QueryEscape(state))
+	if source == "builtin" {
+		log.Printf("[影巢] ▶ 内置应用发起授权（经中转 %s）", truncateStr(redirect, 70))
+	} else {
+		log.Printf("[影巢] ▶ 自有应用发起授权（回调 %s）", truncateStr(callback, 70))
+	}
+	c.JSON(http.StatusOK, gin.H{"url": authURL, "redirect_uri": redirect, "creds": source})
 }
 
 // HdhiveOAuthCallback GET /hdhive/oauth/callback（公开路由：授权跳回时不带登录态）
@@ -238,7 +294,8 @@ func (h *Handler) HdhiveOAuthCallback(c *gin.Context) {
 		return
 	}
 	code := c.Query("code")
-	if !hdhiveStateTake(c.Query("state")) {
+	entry, ok := hdhiveStateTake(c.Query("state"))
+	if !ok {
 		back(false, "授权状态校验失败（state 已过期，请重新发起授权）")
 		return
 	}
@@ -247,19 +304,18 @@ func (h *Handler) HdhiveOAuthCallback(c *gin.Context) {
 		return
 	}
 	cfg := loadHdhiveCfg()
-	if cfg.ClientID == "" || cfg.APIKey == "" {
-		back(false, "应用配置缺失（Client ID / Secret 未保存）")
-		return
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = hdhiveDefaultBase
 	}
-	redirectURI := hdhiveRedirectURI(c)
 
-	// 换取 access_token（响应壳可能是 {data:{...}} 嵌套或平铺，两种都兼容）
+	// 换取 access_token（凭据与 redirect_uri 必须和发起授权时一致；
+	// 响应壳可能是 {data:{...}} 嵌套或平铺，两种都兼容）
 	tokBody, _ := json.Marshal(map[string]any{
 		"grant_type":    "authorization_code",
-		"client_id":     cfg.ClientID,
-		"client_secret": cfg.APIKey,
+		"client_id":     entry.ClientID,
+		"client_secret": entry.Secret,
 		"code":          code,
-		"redirect_uri":  redirectURI,
+		"redirect_uri":  entry.Redirect,
 	})
 	req, _ := http.NewRequest(http.MethodPost, cfg.BaseURL+"/api/open/oauth/token", bytes.NewReader(tokBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -330,10 +386,14 @@ func hdhiveRefreshToken(cfg *hdhiveCfg) error {
 	if cfg.RefreshToken == "" {
 		return fmt.Errorf("无刷新令牌，请重新授权")
 	}
+	clientID, secret, _, _ := cfg.resolveCreds()
+	if clientID == "" {
+		return fmt.Errorf("应用凭据缺失，请重新授权")
+	}
 	tokBody, _ := json.Marshal(map[string]any{
 		"grant_type":    "refresh_token",
-		"client_id":     cfg.ClientID,
-		"client_secret": cfg.APIKey,
+		"client_id":     clientID,
+		"client_secret": secret,
 		"refresh_token": cfg.RefreshToken,
 	})
 	req, _ := http.NewRequest(http.MethodPost, cfg.BaseURL+"/api/open/oauth/token", bytes.NewReader(tokBody))
@@ -397,7 +457,8 @@ func hdhiveFetchUser(cfg *hdhiveCfg) (map[string]any, error) {
 func (h *Handler) HdhiveUser(c *gin.Context) {
 	cfg := loadHdhiveCfg()
 	if cfg.AccessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"authorized": false, "configured": cfg.ClientID != "" && cfg.APIKey != ""})
+		_, _, source, _ := cfg.resolveCreds()
+		c.JSON(http.StatusOK, gin.H{"authorized": false, "configured": source != "", "creds": source})
 		return
 	}
 	// 令牌将过期且可刷新 → 先续期
@@ -421,7 +482,7 @@ func (h *Handler) HdhiveUser(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"authorized":    true,
-		"configured":    cfg.ClientID != "" && cfg.APIKey != "",
+		"configured":    true,
 		"authorized_at": cfg.AuthorizedAt,
 		"user":          user,
 	})
@@ -445,6 +506,7 @@ func (h *Handler) HdhiveOAuthRevoke(c *gin.Context) {
 // HdhiveGetConfig GET /hdhive/config
 func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 	cfg := loadHdhiveCfg()
+	_, _, source, relay := cfg.resolveCreds()
 	c.JSON(http.StatusOK, gin.H{
 		"client_id":     cfg.ClientID,
 		"api_key":       cfg.APIKey,
@@ -454,6 +516,8 @@ func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 		"configured":    cfg.ClientID != "" && cfg.APIKey != "",
 		"authorized":    cfg.AccessToken != "",
 		"authorized_at": cfg.AuthorizedAt,
+		"creds":         source, // custom=自备 / builtin=镜像内置 / ""=未就绪
+		"has_relay":     relay != "",
 	})
 }
 
@@ -482,8 +546,8 @@ func (h *Handler) HdhiveSaveConfig(c *gin.Context) {
 // HdhiveTest POST /hdhive/test → ping + 配额（应用级，不需要用户授权）
 func (h *Handler) HdhiveTest(c *gin.Context) {
 	cfg := loadHdhiveCfg()
-	if cfg.APIKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先填写应用 Secret 并保存"})
+	if _, secret, _, _ := cfg.resolveCreds(); secret == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置影巢应用凭据（自备或内置镜像均无）"})
 		return
 	}
 	var ping struct {

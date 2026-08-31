@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StrmHub 影巢授权中转</title>
+<style>
+  body { font-family: system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+         background:#111418; color:#e8eaed; display:flex; align-items:center;
+         justify-content:center; min-height:100vh; margin:0; }
+  .box { text-align:center; padding:40px 32px; max-width:420px; }
+  .ico { font-size:34px; margin-bottom:14px; }
+  h1 { font-size:17px; margin:0 0 8px; font-weight:600; }
+  p { font-size:13px; color:#9aa0a6; margin:0; line-height:1.7; word-break:break-all; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="ico" id="ico">⇄</div>
+  <h1 id="title">正在返回 StrmHub…</h1>
+  <p id="msg">请稍候，页面会自动跳转</p>
+</div>
+<script>
+// 影巢 OAuth 中转页（静态，无需服务端）：
+// 影巢授权后回调本页（?code=xx&state=nonce.b64callback），
+// 从 state 解出各部署自己的回调地址，把 code/state 原样转发过去。
+// 只允许转发到路径为 /api/hdhive/oauth/callback 的目标，防开放跳转。
+(function () {
+  var q = new URLSearchParams(location.search);
+  var code = q.get('code');
+  var state = q.get('state') || '';
+  var err = q.get('error');
+  var msg = document.getElementById('msg');
+  var title = document.getElementById('title');
+
+  function fail(text) {
+    document.getElementById('ico').textContent = '✕';
+    title.textContent = '授权中转失败';
+    msg.textContent = text;
+  }
+
+  if (err) { fail('影巢返回授权失败：' + err); return; }
+  if (!code || state.indexOf('.') < 0) { fail('回调参数不完整，请回 StrmHub 重新发起授权'); return; }
+
+  var target;
+  try {
+    // base64url → base64（回调地址为纯 ASCII，atob 即可）
+    var b64 = state.split('.').slice(1).join('.').replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    target = atob(b64);
+  } catch (e) { target = ''; }
+
+  var u;
+  try { u = new URL(target); } catch (e) { u = null; }
+  if (!u || u.pathname !== '/api/hdhive/oauth/callback' || (u.protocol !== 'http:' && u.protocol !== 'https:')) {
+    fail('转发目标不合法，已停止跳转');
+    return;
+  }
+
+  u.searchParams.set('code', code);
+  u.searchParams.set('state', state);
+  msg.textContent = '目标：' + u.origin;
+  location.replace(u.toString());
+})();
+</script>
+</body>
+</html>

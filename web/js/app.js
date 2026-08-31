@@ -2734,12 +2734,14 @@ async function loadHdhivePage() {
   }
   const cb = document.getElementById('hdhive-callback-url');
   if (cb) cb.textContent = location.origin + '/api/hdhive/oauth/callback';
+  let creds = '';
   try {
     const d = await api('/hdhive/config');
     document.getElementById('hdhive-client-id').value = d.client_id || '';
     document.getElementById('hdhive-api-key').value = d.api_key || '';
+    creds = d.creds || '';
   } catch (e) { console.error('[影巢] 配置回填失败:', e.message); }
-  hdhiveLoadUser();
+  hdhiveLoadUser(creds);
 }
 
 async function hdhiveSaveConfig(btn) {
@@ -2755,7 +2757,8 @@ async function hdhiveSaveConfig(btn) {
     });
     toast('保存成功');
     showTestResult(document.getElementById('hdhive-test-banner'), null);
-    hdhiveLoadUser(); // 授权状态随配置显隐（未配置时提示先保存）
+    const d = await api('/hdhive/config');
+    hdhiveLoadUser(d.creds || ''); // 授权状态随凭据来源刷新
   } catch (e) { toast(e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
@@ -2799,7 +2802,7 @@ async function hdhiveAuthorize(btn) {
   }
 }
 
-async function hdhiveLoadUser() {
+async function hdhiveLoadUser(creds) {
   const box = document.getElementById('hdhive-user-box');
   const authBtn = document.getElementById('hdhive-auth-btn');
   const unauthBtn = document.getElementById('hdhive-unauth-btn');
@@ -2807,7 +2810,10 @@ async function hdhiveLoadUser() {
   try {
     const d = await api('/hdhive/user');
     if (!d.authorized) {
-      box.innerHTML = '<span style="color:var(--text-3)">未授权 · 点击下方按钮跳转影巢授权页</span>';
+      let hint = '未授权 · 点击下方按钮跳转影巢授权页';
+      if (creds === 'builtin') hint = '未授权 · 本镜像已内置官方应用，点下方按钮即可跳转授权';
+      else if (!creds) hint = '未授权 · 需先填写并保存自有 Client ID / Secret（官方内置镜像可留空）';
+      box.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
       if (unauthBtn) unauthBtn.style.display = 'none';
       if (authBtn) authBtn.textContent = '授权影巢账号';
       return;
