@@ -362,6 +362,30 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 系统设置
 		protected.GET("/system/logs", h.GetSystemLogs)
+		// 实时日志长轮询：带上次修改时间 since，日志有新内容立即返回，
+		// 25 秒无变化返回 changed=false（前端随即再次挂起，实现"有日志就出现"）
+		protected.GET("/system/logs/wait", func(c *gin.Context) {
+			logPath := "/logs/app.log"
+			var since int64
+			fmt.Sscanf(c.Query("since"), "%d", &since)
+			deadline := time.Now().Add(25 * time.Second)
+			for {
+				st, err := os.Stat(logPath)
+				if err == nil && st.ModTime().Unix() > since {
+					c.JSON(http.StatusOK, gin.H{"changed": true, "mtime": st.ModTime().Unix()})
+					return
+				}
+				if time.Now().After(deadline) {
+					mt := int64(since)
+					if err == nil {
+						mt = st.ModTime().Unix()
+					}
+					c.JSON(http.StatusOK, gin.H{"changed": false, "mtime": mt})
+					return
+				}
+				time.Sleep(400 * time.Millisecond)
+			}
+		})
 		// 清空任务日志：截断 app.log（追加模式写入器继续写同一文件）
 		protected.POST("/system/logs/clear", func(c *gin.Context) {
 			logPath := "/logs/app.log"
