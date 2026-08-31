@@ -246,37 +246,32 @@ func (h *Handler) VersionChanges(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"current": current, "latest": latest, "commits": fetchCommitsBetween(current, latest), "build": buildState})
 }
 
-// ApplyUpdate POST /update/apply —— 拉取最新镜像并重建当前容器
-func (h *Handler) ApplyUpdate(c *gin.Context) {
+// applyUpdateFlow 应用内更新核心流程，返回 HTTP 状态码与响应载荷。
+// HTTP 端点与企微/机器人「执行更新」指令共用
+func (h *Handler) applyUpdateFlow() (int, gin.H) {
 	if buildVersion == "dev" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "本地开发构建（dev）不支持自更新，请用 Docker 镜像部署"})
-		return
+		return http.StatusBadRequest, gin.H{"error": "本地开发构建（dev）不支持自更新，请用 Docker 镜像部署"}
 	}
 	if _, err := os.Stat(dockerSockPath); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未挂载 Docker socket，无法自更新。\n配置方法：在 docker-compose.yml 的 strmhub 服务 volumes 中加一行 /var/run/docker.sock:/var/run/docker.sock，然后 docker compose up -d 重建一次，之后即可在界面内一键更新"})
-		return
+		return http.StatusBadRequest, gin.H{"error": "未挂载 Docker socket，无法自更新。\n配置方法：在 docker-compose.yml 的 strmhub 服务 volumes 中加一行 /var/run/docker.sock:/var/run/docker.sock，然后 docker compose up -d 重建一次，之后即可在界面内一键更新"}
 	}
 	latest, ferr := fetchLatestSHA(true)
 	if ferr != "" {
 		log.Printf("[自更新] ○ 获取最新版本失败: %s", ferr)
 	}
 	if latest == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "无法获取最新版本（GitHub 不可达，可在系统配置代理卡配置代理），稍后再试"})
-		return
+		return http.StatusBadGateway, gin.H{"error": "无法获取最新版本（GitHub 不可达，可在系统配置代理卡配置代理），稍后再试"}
 	}
 	if strings.HasPrefix(latest, buildVersion[:7]) {
-		c.JSON(http.StatusOK, gin.H{"message": "已是最新版本", "latest": latest})
-		return
+		return http.StatusOK, gin.H{"message": "已是最新版本", "latest": latest}
 	}
 	// 镜像就绪检查：只看提交会抢在 Actions 构建完成前更新，拉到的仍是旧镜像
 	// 并白重启一次容器；构建中/失败时直接拒绝，CI 查询失败（unknown）则放行
 	switch imageBuildState(latest) {
 	case "building":
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "新版本镜像还在 GitHub Actions 构建中（通常 3~8 分钟），构建完成后会提示更新，请稍后再试", "latest": latest, "build": "building"})
-		return
+		return http.StatusServiceUnavailable, gin.H{"error": "新版本镜像还在 GitHub Actions 构建中（通常 3~8 分钟），构建完成后会提示更新，请稍后再试", "latest": latest, "build": "building"}
 	case "failed":
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "最新提交的 CI 构建失败，镜像未发布；请到 GitHub Actions 查看失败原因，或等修复提交后重试", "latest": latest, "build": "failed"})
-		return
+		return http.StatusServiceUnavailable, gin.H{"error": "最新提交的 CI 构建失败，镜像未发布；请到 GitHub Actions 查看失败原因，或等修复提交后重试", "latest": latest, "build": "failed"}
 	}
 
 	client := dockerHTTPClient(5 * time.Minute)
@@ -284,8 +279,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	// 1. 定位当前容器（优先 cgroup 里的真实 ID；HOSTNAME 可能被自定义 hostname 覆盖）
 	selfID := selfContainerID()
 	if selfID == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "无法确定当前容器 ID（cgroup 与 HOSTNAME 均不可用）"})
-		return
+		return http.StatusBadGateway, gin.H{"error": "无法确定当前容器 ID（cgroup 与 HOSTNAME 均不可用）"}
 	}
 	insp, err := dockerRequestJSON(client, "GET", "/containers/"+selfID+"/json", nil)
 	if err != nil {
@@ -310,8 +304,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		if hint != "" {
 			errMsg += "\n" + hint
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
-		return
+		return http.StatusBadGateway, gin.H{"error": errMsg}
 	}
 	cfgMap, _ := insp["Config"].(map[string]interface{})
 	hostCfg, _ := insp["HostConfig"].(map[string]interface{})
@@ -349,8 +342,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 
 	// 2. 拉取最新镜像（同步等待，可能需要几十秒）
 	if err := dockerPull(client, ref); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "拉取镜像失败: " + err.Error()})
-		return
+		return http.StatusBadGateway, gin.H{"error": "拉取镜像失败: " + err.Error()}
 	}
 	log.Printf("[自更新] ✓ 镜像已拉取: %s（当前 v%s → v%s）", ref, buildVersion[:7], latest[:7])
 
@@ -371,8 +363,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	createBody, _ := json.Marshal(createCfg)
 	resp, err := dockerDo(client, "POST", "/containers/create?name="+url.QueryEscape(tmpName), createBody)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "创建新容器失败: " + err.Error()})
-		return
+		return http.StatusBadGateway, gin.H{"error": "创建新容器失败: " + err.Error()}
 	}
 	var created struct {
 		ID string `json:"Id"`
@@ -381,8 +372,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 	if createCode >= 400 || created.ID == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("创建新容器失败: HTTP %d", createCode)})
-		return
+		return http.StatusBadGateway, gin.H{"error": fmt.Sprintf("创建新容器失败: HTTP %d", createCode)}
 	}
 	log.Printf("[自更新] ✓ 新容器已创建（%s）", tmpName)
 
@@ -394,8 +384,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		resp.Body.Close()
 	}
 	if resp, err := dockerDo(client, "POST", "/containers/"+selfID+"/rename?name="+url.QueryEscape(oldBak), nil); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "旧容器改名失败（" + oldBak + "）: " + err.Error() + "（未做任何变更，服务未受影响）"})
-		return
+		return http.StatusBadGateway, gin.H{"error": "旧容器改名失败（" + oldBak + "）: " + err.Error() + "（未做任何变更，服务未受影响）"}
 	} else {
 		resp.Body.Close()
 	}
@@ -404,8 +393,7 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		if r2, e2 := dockerDo(client, "POST", "/containers/"+selfID+"/rename?name="+url.QueryEscape(containerName), nil); e2 == nil {
 			r2.Body.Close()
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "新容器改名失败: " + err.Error() + "（已回滚，服务未受影响）"})
-		return
+		return http.StatusBadGateway, gin.H{"error": "新容器改名失败: " + err.Error() + "（已回滚，服务未受影响）"}
 	} else {
 		resp.Body.Close()
 	}
@@ -424,11 +412,15 @@ func (h *Handler) ApplyUpdate(c *gin.Context) {
 		if resp, e := dockerDo(client, "DELETE", "/containers/"+created.ID+"?force=1", nil); e == nil {
 			resp.Body.Close()
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error() + "（已回滚，服务未受影响）"})
-		return
+		return http.StatusBadGateway, gin.H{"error": err.Error() + "（已回滚，服务未受影响）"}
 	}
-	c.JSON(http.StatusAccepted, gin.H{"message": "镜像已拉取，容器切换中（约 10~30 秒），页面将自动刷新",
-		"latest": latest})
+	return http.StatusAccepted, gin.H{"message": "镜像已拉取，容器切换中（约 10~30 秒），页面将自动刷新", "latest": latest}
+}
+
+// ApplyUpdate POST /update/apply —— HTTP 包装
+func (h *Handler) ApplyUpdate(c *gin.Context) {
+	code, payload := h.applyUpdateFlow()
+	c.JSON(code, payload)
 }
 
 // normalizeImageRef 规范镜像引用为 repo:tag（digest 固定或无 tag 时取 latest）
