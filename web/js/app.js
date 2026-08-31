@@ -2670,18 +2670,39 @@ function startLogPoll() {
 function stopLogPoll() {
   if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
 }
-async function loadSystemLogs() {
+async function loadSystemLogs(manual) {
   const viewer = document.getElementById('server-log-viewer');
   if (!viewer) return;
-  if (viewer.textContent === '暂无日志...') viewer.textContent = '加载中...';
+  // 手动点击时给出明确反馈；自动轮询静默刷新（避免每 3 秒闪烁）
+  if (manual === true && viewer.dataset.refreshing !== '1') {
+    viewer.dataset.refreshing = '1';
+    viewer.textContent = '正在刷新日志…';
+    await new Promise(r => setTimeout(r, 150));
+  } else if (viewer.textContent === '暂无日志...') {
+    viewer.textContent = '加载中...';
+  }
   try {
     const data = await api('/system/logs');
-    // 最新在最上面显示
     const lines = String(data.logs || '暂无日志').split('\n').filter(l => l.trim() !== '');
-    viewer.textContent = lines.reverse().join('\n');
+    viewer.textContent = lines.length ? lines.reverse().join('\n') : '暂无日志';
   } catch (e) {
     console.error('[日志] 加载失败:', e);
     viewer.textContent = '加载失败: ' + (e.message || '未知错误');
+  } finally {
+    delete viewer.dataset.refreshing;
+  }
+}
+
+// 清空日志：截断 app.log（写入器为追加模式，截断后新日志继续写入同一文件）
+async function clearSystemLogs(btn) {
+  if (!confirm('确定清空任务日志？清空后不可恢复（新日志会继续正常写入）。')) return;
+  btn.disabled = true; btn.textContent = '清空中…';
+  try {
+    await api('/system/logs/clear', { method: 'POST' });
+    toast('日志已清空');
+    loadSystemLogs();
+  } catch (e) { toast(e.message); } finally {
+    btn.disabled = false; btn.textContent = '清空日志';
   }
 }
 

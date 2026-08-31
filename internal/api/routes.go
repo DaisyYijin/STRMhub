@@ -362,6 +362,20 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 系统设置
 		protected.GET("/system/logs", h.GetSystemLogs)
+		// 清空任务日志：截断 app.log（追加模式写入器继续写同一文件）
+		protected.POST("/system/logs/clear", func(c *gin.Context) {
+			logPath := "/logs/app.log"
+			if err := os.Truncate(logPath, 0); err != nil {
+				if os.IsNotExist(err) {
+					c.JSON(http.StatusOK, gin.H{"message": "日志本来就为空"})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "清空失败: " + err.Error()})
+				return
+			}
+			log.Printf("[系统] 任务日志已清空（界面操作）")
+			c.JSON(http.StatusOK, gin.H{"message": "日志已清空"})
+		})
 		protected.GET("/system/backup", h.SystemBackup)
 		protected.GET("/system/guide", h.SystemGuide)
 		protected.GET("/storage/115/diagnose", h.Diagnose115)

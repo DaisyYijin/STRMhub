@@ -1024,7 +1024,10 @@ av:
             </div>
             <i class="help-tip" tabindex="0">?<span class="tip-bubble">重要：只留关键节点与异常（隐藏目录遍历/TMDB搜索/302请求等过程日志）；详细：全部输出。切换立即保存，30 秒内生效。每 3 秒自动刷新，最新在最上。</span></i>
           </span>
-          <button class="btn btn-outline" onclick="loadSystemLogs()">立即刷新</button>
+          <span style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-outline" onclick="clearSystemLogs(this)">清空日志</button>
+            <button class="btn btn-outline" onclick="loadSystemLogs(true)">立即刷新</button>
+          </span>
         </div>
         <div class="log-viewer" id="server-log-viewer" style="flex:1;height:auto">暂无日志...</div>
       </div>
