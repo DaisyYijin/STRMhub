@@ -35,10 +35,10 @@ type ResourceInfo struct {
 
 var (
 	rePix     = regexp.MustCompile(`(?i)\b(4320p|2160p|1440p|1080[pi]|720p|576p|480p|4k|8k)\b`)
-	reVersion = regexp.MustCompile(`(?i)\b(IMAX|HQ|3D|CC|DC|EXTENDED|EXT|UNRATED|REMASTERED|THEATRICAL|DIRECTOR.?S.?CUT|COMPLETE|HYBRID)\b`)
+	reVersion = regexp.MustCompile(`(?i)\b(IMAX|HQ|3D|CC|DC|EXTENDED|EXT|UNRATED|REMASTERED|THEATRICAL|DIRECTOR.?S.?CUT|COMPLETE|HYBRID|ITUNES)\b`)
 	reSource  = regexp.MustCompile(`(?i)\b(NF|NETFLIX|DSNP|DISNEY|AMZN|AMAZON|ATVP|APPLE.?TV|MAX|HBO|HULU|PMTP|PARAMOUNT|PCOK|PEACOCK|BGLOBAL|B.?GLOBAL|CR|CRUNCHYROLL|IQ|IQIYI|YOUKU|TENCENT|MGTV|BILI|UHD|WEB)\b`)
 	reType    = regexp.MustCompile(`(?i)\b(BLURAY|BLU.?RAY|BLU.?R|WEB.?DL|WEB.?RIP|HDTV|DVDRIP|DVDSCR|CAM|TS|TC|R5|REMUX|PROPER|REPACK)\b`)
-	reEffect  = regexp.MustCompile(`(?i)\b(DV|DOLBY.?VISION|DOVI|HDR10\+?|HDR\+?|HDR|SDR|SL.?HDR|DOLBY)\b`)
+	reEffect  = regexp.MustCompile(`(?i)\b(DV|DOLBY.?VISION|DOVI|HDR10\+?|HDR\+?|HDR|SDR|SL.?HDR|DOLBY)(?:[.\s_+-]|$)`)
 	reVideo   = regexp.MustCompile(`(?i)\b(H\.?26[45]|X26[45]|HEVC|AVC|XVID|DIVX|AV1|VP9)\b`)
 	reBit     = regexp.MustCompile(`(?i)\b(10bit|8bit|12bit)\b`)
 	reAudio   = regexp.MustCompile(`(?i)\b(AAC[\d.]*|AC3|EAC3|DD[P+]?[\d.]*|DD[\d.]*|DTS.?HD.?MA[\d.]*|DTS.?HD[\d.]*|DTS.?X[\d.]*|DTS[\d.]*|TRUEHD[\d.]*|ATMOS|FLAC|PCM|LPCM|LPCM[\d.]*|[\d]\.[\d])\b`)
@@ -77,6 +77,11 @@ func ParseResourceInfo(filename string) ResourceInfo {
 	if m := reType.FindStringSubmatch(filename); m != nil {
 		ri.Type = normalizeType(m[1])
 	}
+	// Source/Type 去重：WEB-DL 会被 source 的 WEB 前缀抢先命中，造成
+	// ".WEB.WEB-DL" 重复——Type 已包含 Source 时丢弃 Source
+	if ri.Source != "" && ri.Type != "" && strings.Contains(strings.ToUpper(ri.Type), strings.ToUpper(ri.Source)) {
+		ri.Source = ""
+	}
 
 	// 特效（可能组合：DV.HDR）
 	var effects []string
@@ -108,13 +113,24 @@ func ParseResourceInfo(filename string) ResourceInfo {
 	// 音频编码（可能组合：TrueHD.7.1 Atmos）
 	audioParts := []string{}
 	for _, m := range reAudio.FindAllStringSubmatch(filename, -1) {
-		a := normalizeAudioEncode(m[1])
+		// [\d.]* 贪婪会把后续分隔符一并吃进（如 "DDP.7.1."），先去掉尾部
+		// 分隔符再归一化，否则 "7.1." 的声道判定失败被丢弃
+		a := normalizeAudioEncode(strings.TrimRight(m[1], "."))
 		if a != "" && !containsStr(audioParts, a) {
 			audioParts = append(audioParts, a)
 		}
 	}
-	if strings.Contains(upper, "ATMOS") && !containsStr(audioParts, "ATMOS") {
-		audioParts = append(audioParts, "ATMOS")
+	if strings.Contains(upper, "ATMOS") {
+		has := false
+		for _, a := range audioParts {
+			if strings.EqualFold(a, "ATMOS") {
+				has = true
+				break
+			}
+		}
+		if !has {
+			audioParts = append(audioParts, "ATMOS")
+		}
 	}
 	ri.AudioEncode = strings.Join(audioParts, ".")
 
@@ -286,8 +302,10 @@ func normalizeAudioEncode(s string) string {
 		return "DTS.X"
 	case strings.HasPrefix(upper, "DTS"):
 		return "DTS" + extractNumSuffix(s, "DTS")
-	case strings.HasPrefix(upper, "DDP"), strings.HasPrefix(upper, "DD+"):
-		return "DDP" + extractNumSuffix(s, "DD")
+	case strings.HasPrefix(upper, "DDP"):
+		return "DDP" + extractNumSuffix(s, "DDP")
+	case strings.HasPrefix(upper, "DD+"):
+		return "DD+" + extractNumSuffix(s, "DD+")
 	case strings.HasPrefix(upper, "DD"):
 		return "DD" + extractNumSuffix(s, "DD")
 	case strings.HasPrefix(upper, "EAC3"):
@@ -297,7 +315,7 @@ func normalizeAudioEncode(s string) string {
 	case strings.HasPrefix(upper, "AC3"):
 		return "DD" + extractNumSuffix(s, "AC3")
 	case upper == "ATMOS":
-		return "Atmos"
+		return "ATMOS"
 	case upper == "FLAC":
 		return "FLAC"
 	case upper == "PCM" || upper == "LPCM":
