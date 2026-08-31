@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -275,17 +276,28 @@ func NotifyMessageRich(title, content, posterURL, linkURL string) {
 	}
 }
 
+// sanitizeWecomErr 企微错误脱敏：URL 里的 access_token / corpsecret 打码后再进日志
+func sanitizeWecomErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	msg = regexp.MustCompile(`access_token=[^&\s]+`).ReplaceAllString(msg, "access_token=***")
+	msg = regexp.MustCompile(`corpsecret=[^&\s]+`).ReplaceAllString(msg, "corpsecret=***")
+	return msg
+}
+
 // wecomAccessToken 获取企业微信 access_token（带缓存）
 func wecomAccessToken(cfg WecomConfig) (string, error) {
 	if t, ok := wecomTokenCached(cfg); ok {
 		return t, nil
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	tokenURL := fmt.Sprintf("%s/cgi-bin/gettoken?corpid=%s&corpsecret=%s",
 		cfg.apiBase(), cfg.CorpID, cfg.Secret)
 	resp, err := client.Get(tokenURL)
 	if err != nil {
-		log.Printf("企业微信获取 token 失败: %v", err)
+		log.Printf("企业微信获取 token 失败: %s", sanitizeWecomErr(err))
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -332,7 +344,7 @@ func sendWecomNews(cfg WecomConfig, title, desc, picurl, linkURL string) error {
 		},
 	}
 	payloadBytes, _ := json.Marshal(payload)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", cfg.apiBase(), token)
 	req, err := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
 	if err != nil {
@@ -341,7 +353,7 @@ func sendWecomNews(cfg WecomConfig, title, desc, picurl, linkURL string) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("企业微信图文发送失败: %v", err)
+		log.Printf("企业微信图文发送失败: %s", sanitizeWecomErr(err))
 		return err
 	}
 	defer resp.Body.Close()
@@ -398,7 +410,7 @@ func sendWecom(cfg WecomConfig, msg string) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 
 	// Step 2: 发送消息
 	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s",
@@ -420,8 +432,13 @@ func sendWecom(cfg WecomConfig, msg string) error {
 
 	resp2, err := client.Do(req)
 	if err != nil {
-		log.Printf("企业微信发送消息失败: %v", err)
-		return err
+		// 传输层错误（超时/连接重置）自动重试一次，避免网络抖动丢消息
+		time.Sleep(2 * time.Second)
+		resp2, err = client.Do(req)
+		if err != nil {
+			log.Printf("企业微信发送消息失败(重试后仍失败): %s", sanitizeWecomErr(err))
+			return err
+		}
 	}
 	defer resp2.Body.Close()
 	body2, _ := io.ReadAll(resp2.Body)
@@ -442,7 +459,7 @@ func sendWecom(cfg WecomConfig, msg string) error {
 
 // sendTelegram 发送 Telegram 消息
 func sendTelegram(cfg TGConfig, msg string) error {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 
 	sendURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", cfg.Token)
 
