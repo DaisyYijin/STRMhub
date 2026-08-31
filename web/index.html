@@ -726,18 +726,14 @@ av:
       </div>
       <div class="tab-panel active" data-panel="mt-hdhive">
         <div class="card">
-          <div class="form-row"><div class="label">API Key<i class="help-tip" tabindex="0">?<span class="tip-bubble">登录 hdhive.com 后在站内申请 OpenAPI 应用，审核通过后获得。按天限额，429 表示当日额度用尽。</span></i></div><div class="control"><input type="text" id="hdhive-api-key" placeholder="hdhive.com OpenAPI 应用密钥" autocomplete="off"></div></div>
-          <div class="form-row"><div class="label">付费资源<i class="help-tip" tabindex="0">?<span class="tip-bubble">「仅免费」只解锁零积分资源，杜绝误扣积分；「允许积分」在免费失败时消耗积分解锁付费资源。</span></i></div><div class="control"><div class="segmented-control" id="hdhive-points-switch"><div class="seg-item active" data-value="false" onclick="hdhiveSetPoints(false)">仅免费</div><div class="seg-item" data-value="true" onclick="hdhiveSetPoints(true)">允许积分</div></div></div></div>
-          <div class="form-row"><div class="label">转存后整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后：解锁转存完成自动「识别→分类→重命名→增量同步」入库并生成 STRM。转存目录与「上传下载 → 转存下载」的接收文件夹共用。</span></i></div><div class="control"><div class="segmented-control" id="hdhive-organize-switch"><div class="seg-item active" data-value="true" onclick="hdhiveSetOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="hdhiveSetOrganize(false)">关闭</div></div></div></div>
+          <div class="form-row"><div class="label">Client ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">登录 hdhive.com 站内申请 OpenAPI 应用，审核通过后获得 Client ID 与应用 Secret。</span></i></div><div class="control"><input type="text" id="hdhive-client-id" placeholder="影巢 OpenAPI 应用的 Client ID" autocomplete="off"></div></div>
+          <div class="form-row"><div class="label">应用 Secret<i class="help-tip" tabindex="0">?<span class="tip-bubble">调用影巢接口的应用密钥（请求头 X-API-Key）。保存后才能发起授权与连接测试。</span></i></div><div class="control"><input type="text" id="hdhive-api-key" placeholder="影巢 OpenAPI 应用的 Secret" autocomplete="off"></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="hdhiveSaveConfig(this)">保存配置</button> <button class="btn btn-outline" onclick="hdhiveTest(this)">测试连接</button></div></div>
           <div id="hdhive-test-banner"></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目，再查影巢资源；输入纯数字 TMDB ID 可直连条目。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')hdhiveSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="hdhiveSearch()">搜索</button></div></div></div>
-          <div class="form-row"><div class="label"></div><div class="control" style="max-width:none"><div id="hdhive-tmdb-results"></div></div></div>
-        </div>
-        <div class="card" id="hdhive-res-card" style="display:none">
-          <div class="form-row"><div class="label">影巢资源</div><div class="control" style="max-width:none"><label style="font-size:13px;color:var(--text-2);display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="hdhive-show-invalid" onchange="hdhiveRenderResources()"> 显示已失效资源</label><div id="hdhive-res-list" style="margin-top:10px"></div></div></div>
+          <div class="form-row"><div class="label">账号授权<i class="help-tip" tabindex="0">?<span class="tip-bubble">点击授权跳转影巢授权页，登录确认后自动返回本页并获取账号基本信息。发起授权前，先把下方回调地址加入影巢应用的回调白名单。</span></i></div><div class="control" style="max-width:none"><div id="hdhive-user-box"><span style="color:var(--text-3)">未授权</span></div><div class="hint">回调地址（加入影巢应用白名单）：<span id="hdhive-callback-url" style="user-select:all;font-family:Consolas,Monaco,monospace"></span></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" id="hdhive-auth-btn" onclick="hdhiveAuthorize(this)">授权影巢账号</button> <button class="btn btn-warning" id="hdhive-unauth-btn" style="display:none" onclick="hdhiveRevoke(this)">取消授权</button></div></div>
         </div>
       </div>
     </div>

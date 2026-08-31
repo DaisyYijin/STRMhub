@@ -2,41 +2,47 @@ package api
 
 // ==================== HDHive（影巢）资源站接入 ====================
 //
-// 能力链：TMDB 搜索条目 → 影巢按 TMDB ID 查资源 → 解锁（X-API-Key 鉴权）
-// → 115 分享链接转存（复用 share.go 的 Cookie 通道四步转存）→ 自动整理入库。
+// 接入模型（影巢 2026-06 起新规）：OpenAPI 应用 + OAuth 用户授权
+//   - 站内申请应用，审核通过后获得 Client ID 与应用 Secret
+//   - 应用 Secret 调用 /api/open/* 时放 X-API-Key 头
+//   - 用户级操作（查资源/解锁）走 OAuth 授权码：浏览器跳转 /oauth/authorize
+//     授权后回调 StrmHub，换取 access_token（可 refresh）
 //
-// 认证：在 hdhive.com 站内申请 OpenAPI 应用（审核通过）获得 API Key，
-// 调用时放 X-API-Key 请求头。接口按天限额，超限返回 429（带 Retry-After）。
-// 转存仅支持 115 分享链接（StrmHub 的媒体库建立在 115 上）。
+// 本页当前提供：应用配置、连接测试、账号授权、授权后拉取账号基本信息。
+// 资源查询/解锁/115 转存的后端链路保留（/hdhive/resources、/hdhive/transfer），
+// 等应用审核通过后按资源站页面逐步放开。
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"strmhub/internal/model"
 )
 
 const hdhiveDefaultBase = "https://hdhive.com"
 
-// regexpPureDigits 纯数字输入视为 TMDB ID 直查
-var regexpPureDigits = regexp.MustCompile(`^\d{1,8}$`)
-
 // hdhiveCfg 影巢配置（setting key "hdhive"）
 type hdhiveCfg struct {
-	APIKey      string `json:"api_key"`      // OpenAPI 应用密钥
-	BaseURL     string `json:"base_url"`     // 默认 https://hdhive.com（站点迁移镜像时可改）
-	AllowPoints bool   `json:"allow_points"` // 免费资源解锁失败时是否允许消耗积分
-	Organize    bool   `json:"organize"`     // 转存后自动整理入库（默认开）
+	ClientID     string `json:"client_id"`      // OpenAPI 应用 Client ID
+	APIKey       string `json:"api_key"`        // 应用 Secret（X-API-Key 头）
+	BaseURL      string `json:"base_url"`       // 默认 https://hdhive.com
+	AllowPoints  bool   `json:"allow_points"`   // 免费资源解锁失败时是否允许消耗积分
+	Organize     bool   `json:"organize"`       // 转存后自动整理入库（默认开）
+	AccessToken  string `json:"access_token"`   // OAuth 用户令牌
+	RefreshToken string `json:"refresh_token"`  // 刷新令牌
+	TokenExp     int64  `json:"token_exp"`      // access_token 过期时间（unix 秒，0=未知）
+	AuthorizedAt string `json:"authorized_at"`  // 授权时间（展示用）
+	UserJSON     string `json:"user_json"`      // 授权时拉到的账号基本信息（原样缓存）
 }
 
 var (
@@ -65,17 +71,30 @@ func loadHdhiveCfg() *hdhiveCfg {
 	return cfg
 }
 
+// saveHdhiveCfg 写回配置并失效缓存（与 settingValueCompat 同源：注入的 Config 写 YAML）
+func saveHdhiveCfg(cfg *hdhiveCfg) error {
+	b, _ := json.Marshal(cfg)
+	if notifyConfigSource == nil {
+		return fmt.Errorf("配置源未就绪")
+	}
+	if err := notifyConfigSource.SaveSetting("hdhive", string(b)); err != nil {
+		return err
+	}
+	invalidateHdhiveCfg()
+	return nil
+}
+
 func invalidateHdhiveCfg() {
 	hdhiveCfgMu.Lock()
 	hdhiveCfgV = nil
 	hdhiveCfgMu.Unlock()
 }
 
-// hdhiveCall 调用影巢 OpenAPI。响应壳：{success, code, message, data}
-// 成功时把 data 写入 out；失败时返回带原因的错误（429 附带重试提示）。
-func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any) error {
+// hdhiveCall 调用影巢 OpenAPI（应用级：X-API-Key 鉴权）。
+// 响应壳：{success, code, message, data}；withToken 时附带用户 Bearer 令牌。
+func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any, withToken bool) error {
 	if cfg == nil || cfg.APIKey == "" {
-		return fmt.Errorf("未配置影巢 API Key（影视转存 → 影巢 → 配置）")
+		return fmt.Errorf("未配置影巢应用 Secret（影视转存 → 影巢 → 接入配置）")
 	}
 	var rd io.Reader
 	if body != nil {
@@ -89,6 +108,12 @@ func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-API-Key", cfg.APIKey)
+	if withToken {
+		if cfg.AccessToken == "" {
+			return fmt.Errorf("影巢账号未授权，请先在「影视转存 → 影巢」完成授权")
+		}
+		req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
+	}
 
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
@@ -128,360 +153,351 @@ func hdhiveCall(cfg *hdhiveCfg, method, path string, body any, out any) error {
 	return nil
 }
 
-// ==================== HTTP 处理器 ====================
+// ==================== OAuth 授权码流程 ====================
+
+// hdhiveOAuthStates 一次性 state（CSRF 防护），10 分钟有效
+var hdhiveOAuthStates = struct {
+	sync.Mutex
+	m map[string]int64
+}{m: map[string]int64{}}
+
+func hdhiveStatePut() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	s := hex.EncodeToString(b)
+	hdhiveOAuthStates.Lock()
+	// 顺手清理过期项
+	for k, exp := range hdhiveOAuthStates.m {
+		if time.Now().Unix() > exp {
+			delete(hdhiveOAuthStates.m, k)
+		}
+	}
+	hdhiveOAuthStates.m[s] = time.Now().Add(10 * time.Minute).Unix()
+	hdhiveOAuthStates.Unlock()
+	return s
+}
+
+func hdhiveStateTake(s string) bool {
+	if s == "" {
+		return false
+	}
+	hdhiveOAuthStates.Lock()
+	defer hdhiveOAuthStates.Unlock()
+	exp, ok := hdhiveOAuthStates.m[s]
+	if !ok || time.Now().Unix() > exp {
+		delete(hdhiveOAuthStates.m, s)
+		return false
+	}
+	delete(hdhiveOAuthStates.m, s) // 单次有效
+	return true
+}
+
+// hdhiveRedirectURI 从请求推断回调地址（反代场景读 X-Forwarded-Proto）
+func hdhiveRedirectURI(c *gin.Context) string {
+	scheme := c.GetHeader("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + c.Request.Host + "/api/hdhive/oauth/callback"
+}
+
+// HdhiveOAuthStart POST /hdhive/oauth/start → 返回影巢授权页跳转地址
+func (h *Handler) HdhiveOAuthStart(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	if cfg.ClientID == "" || cfg.APIKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先填写并保存 Client ID 与应用 Secret"})
+		return
+	}
+	redirectURI := hdhiveRedirectURI(c)
+	state := hdhiveStatePut()
+	authURL := fmt.Sprintf("%s/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=%s",
+		cfg.BaseURL, url.QueryEscape(cfg.ClientID), url.QueryEscape(redirectURI), state)
+	log.Printf("[影巢] ▶ 发起授权跳转（回调 %s）", redirectURI)
+	c.JSON(http.StatusOK, gin.H{"url": authURL, "redirect_uri": redirectURI})
+}
+
+// HdhiveOAuthCallback GET /hdhive/oauth/callback（公开路由：授权跳回时不带登录态）
+// 换取 token → 拉账号信息 → 存库 → 302 回管理页
+func (h *Handler) HdhiveOAuthCallback(c *gin.Context) {
+	back := func(ok bool, msg string) {
+		q := url.Values{}
+		if ok {
+			q.Set("hdhive_auth", "1")
+		} else {
+			q.Set("hdhive_auth", "0")
+			q.Set("hdhive_msg", msg)
+		}
+		c.Redirect(http.StatusFound, "/media-transfer?"+q.Encode())
+	}
+	if c.Query("error") != "" {
+		back(false, "影巢返回授权失败: "+c.Query("error"))
+		return
+	}
+	code := c.Query("code")
+	if !hdhiveStateTake(c.Query("state")) {
+		back(false, "授权状态校验失败（state 已过期，请重新发起授权）")
+		return
+	}
+	if code == "" {
+		back(false, "缺少授权码")
+		return
+	}
+	cfg := loadHdhiveCfg()
+	if cfg.ClientID == "" || cfg.APIKey == "" {
+		back(false, "应用配置缺失（Client ID / Secret 未保存）")
+		return
+	}
+	redirectURI := hdhiveRedirectURI(c)
+
+	// 换取 access_token（响应壳可能是 {data:{...}} 嵌套或平铺，两种都兼容）
+	tokBody, _ := json.Marshal(map[string]any{
+		"grant_type":    "authorization_code",
+		"client_id":     cfg.ClientID,
+		"client_secret": cfg.APIKey,
+		"code":          code,
+		"redirect_uri":  redirectURI,
+	})
+	req, _ := http.NewRequest(http.MethodPost, cfg.BaseURL+"/api/open/oauth/token", bytes.NewReader(tokBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		back(false, "换取令牌失败: "+sanitizeWecomErr(err))
+		return
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var tr struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Data *struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &tr) != nil {
+		back(false, "令牌响应解析失败: "+truncateStr(string(raw), 100))
+		return
+	}
+	if tr.Data != nil {
+		tr.AccessToken = tr.Data.AccessToken
+		tr.RefreshToken = tr.Data.RefreshToken
+		tr.ExpiresIn = tr.Data.ExpiresIn
+	}
+	if tr.AccessToken == "" {
+		msg := tr.Message
+		if msg == "" {
+			msg = truncateStr(string(raw), 100)
+		}
+		back(false, "换取令牌被拒: "+msg)
+		return
+	}
+
+	cfg.AccessToken = tr.AccessToken
+	cfg.RefreshToken = tr.RefreshToken
+	if tr.ExpiresIn > 0 {
+		cfg.TokenExp = time.Now().Add(time.Duration(tr.ExpiresIn-120) * time.Second).Unix()
+	} else {
+		cfg.TokenExp = 0
+	}
+	cfg.AuthorizedAt = time.Now().Format("2006-01-02 15:04")
+
+	// 拉账号基本信息（失败不阻断授权：信息页可手动刷新重拉）
+	if u, err := hdhiveFetchUser(cfg); err != nil {
+		log.Printf("[影巢] ○ 授权成功但拉取账号信息失败: %v", err)
+	} else {
+		b, _ := json.Marshal(u)
+		cfg.UserJSON = string(b)
+	}
+	if err := saveHdhiveCfg(cfg); err != nil {
+		back(false, "授权信息保存失败: "+err.Error())
+		return
+	}
+	log.Printf("[影巢] ✓ 授权成功")
+	back(true, "")
+}
+
+// hdhiveRefreshToken 用 refresh_token 续期（写回配置）
+func hdhiveRefreshToken(cfg *hdhiveCfg) error {
+	if cfg.RefreshToken == "" {
+		return fmt.Errorf("无刷新令牌，请重新授权")
+	}
+	tokBody, _ := json.Marshal(map[string]any{
+		"grant_type":    "refresh_token",
+		"client_id":     cfg.ClientID,
+		"client_secret": cfg.APIKey,
+		"refresh_token": cfg.RefreshToken,
+	})
+	req, _ := http.NewRequest(http.MethodPost, cfg.BaseURL+"/api/open/oauth/token", bytes.NewReader(tokBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("刷新令牌失败: %s", sanitizeWecomErr(err))
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var tr struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Data *struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &tr) != nil {
+		return fmt.Errorf("刷新令牌响应解析失败: %s", truncateStr(string(raw), 100))
+	}
+	if tr.Data != nil {
+		tr.AccessToken = tr.Data.AccessToken
+		tr.RefreshToken = tr.Data.RefreshToken
+		tr.ExpiresIn = tr.Data.ExpiresIn
+	}
+	if tr.AccessToken == "" {
+		return fmt.Errorf("刷新令牌被拒: %s", tr.Message)
+	}
+	cfg.AccessToken = tr.AccessToken
+	if tr.RefreshToken != "" {
+		cfg.RefreshToken = tr.RefreshToken
+	}
+	if tr.ExpiresIn > 0 {
+		cfg.TokenExp = time.Now().Add(time.Duration(tr.ExpiresIn-120) * time.Second).Unix()
+	}
+	return saveHdhiveCfg(cfg)
+}
+
+// hdhiveFetchUser 拉账号基本信息（Bearer 用户令牌；/user 不在时退化 /user/info）
+func hdhiveFetchUser(cfg *hdhiveCfg) (map[string]any, error) {
+	var u map[string]any
+	err := hdhiveCall(cfg, http.MethodGet, "/api/open/user", nil, &u, true)
+	if err != nil {
+		if strings.Contains(err.Error(), "HTTP 404") || strings.Contains(err.Error(), "不存在") {
+			u = map[string]any{}
+			if err2 := hdhiveCall(cfg, http.MethodGet, "/api/open/user/info", nil, &u, true); err2 == nil {
+				return u, nil
+			}
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
+// HdhiveUser GET /hdhive/user → 授权状态 + 账号基本信息（过期自动刷新令牌）
+func (h *Handler) HdhiveUser(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	if cfg.AccessToken == "" {
+		c.JSON(http.StatusOK, gin.H{"authorized": false, "configured": cfg.ClientID != "" && cfg.APIKey != ""})
+		return
+	}
+	// 令牌将过期且可刷新 → 先续期
+	if cfg.TokenExp > 0 && time.Now().Add(60*time.Second).Unix() > cfg.TokenExp {
+		if err := hdhiveRefreshToken(cfg); err != nil {
+			log.Printf("[影巢] ○ 令牌续期失败: %v", err)
+		}
+	}
+	user := map[string]any{}
+	if cfg.UserJSON != "" {
+		json.Unmarshal([]byte(cfg.UserJSON), &user)
+	}
+	// 缓存为空（授权时拉取失败）→ 现场重拉一次
+	if len(user) == 0 {
+		if u, err := hdhiveFetchUser(cfg); err == nil {
+			user = u
+			b, _ := json.Marshal(u)
+			cfg.UserJSON = string(b)
+			_ = saveHdhiveCfg(cfg)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"authorized":    true,
+		"configured":    cfg.ClientID != "" && cfg.APIKey != "",
+		"authorized_at": cfg.AuthorizedAt,
+		"user":          user,
+	})
+}
+
+// HdhiveOAuthRevoke POST /hdhive/oauth/revoke → 清除授权
+func (h *Handler) HdhiveOAuthRevoke(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	cfg.AccessToken, cfg.RefreshToken, cfg.TokenExp = "", "", 0
+	cfg.AuthorizedAt, cfg.UserJSON = "", ""
+	if err := saveHdhiveCfg(cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "清除失败: " + err.Error()})
+		return
+	}
+	log.Printf("[影巢] ○ 已取消授权")
+	c.JSON(http.StatusOK, gin.H{"message": "已取消授权"})
+}
+
+// ==================== 配置与连接测试 ====================
 
 // HdhiveGetConfig GET /hdhive/config
 func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 	cfg := loadHdhiveCfg()
 	c.JSON(http.StatusOK, gin.H{
-		"api_key":      cfg.APIKey,
-		"base_url":     cfg.BaseURL,
-		"allow_points": cfg.AllowPoints,
-		"organize":     cfg.Organize,
-		"configured":   cfg.APIKey != "",
+		"client_id":     cfg.ClientID,
+		"api_key":       cfg.APIKey,
+		"base_url":      cfg.BaseURL,
+		"allow_points":  cfg.AllowPoints,
+		"organize":      cfg.Organize,
+		"configured":    cfg.ClientID != "" && cfg.APIKey != "",
+		"authorized":    cfg.AccessToken != "",
+		"authorized_at": cfg.AuthorizedAt,
 	})
 }
 
-// HdhiveSaveConfig POST /hdhive/config {api_key, base_url, allow_points, organize}
+// HdhiveSaveConfig POST /hdhive/config {client_id, api_key}
+// （allow_points/organize 暂无 UI 控制，保留存量值；资源链路放开时一并恢复）
 func (h *Handler) HdhiveSaveConfig(c *gin.Context) {
-	var req hdhiveCfg
+	var req struct {
+		ClientID string `json:"client_id"`
+		APIKey   string `json:"api_key"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	req.APIKey = strings.TrimSpace(req.APIKey)
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
-	if req.BaseURL == "" {
-		req.BaseURL = hdhiveDefaultBase
-	}
-	b, _ := json.Marshal(req)
-	if err := h.Config.SaveSetting("hdhive", string(b)); err != nil {
+	cfg := loadHdhiveCfg()
+	cfg.ClientID = strings.TrimSpace(req.ClientID)
+	cfg.APIKey = strings.TrimSpace(req.APIKey)
+	if err := saveHdhiveCfg(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
 		return
 	}
-	invalidateHdhiveCfg()
-	log.Printf("[影巢] ✓ 配置已保存")
+	log.Printf("[影巢] ✓ 接入配置已保存")
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }
 
-// HdhiveTest POST /hdhive/test → ping + 配额
+// HdhiveTest POST /hdhive/test → ping + 配额（应用级，不需要用户授权）
 func (h *Handler) HdhiveTest(c *gin.Context) {
 	cfg := loadHdhiveCfg()
 	if cfg.APIKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先填写 API Key 并保存"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先填写应用 Secret 并保存"})
 		return
 	}
 	var ping struct {
 		Version   string `json:"version"`
 		Timestamp string `json:"timestamp"`
 	}
-	if err := hdhiveCall(cfg, http.MethodGet, "/api/open/ping", nil, &ping); err != nil {
+	if err := hdhiveCall(cfg, http.MethodGet, "/api/open/ping", nil, &ping, false); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	var quota any
-	if err := hdhiveCall(cfg, http.MethodGet, "/api/open/quota", nil, &quota); err != nil {
+	if err := hdhiveCall(cfg, http.MethodGet, "/api/open/quota", nil, &quota, false); err != nil {
 		// ping 通过但配额接口失败不阻断（老版本可能没有该接口）
 		log.Printf("[影巢] ○ 配额查询失败（忽略）: %v", err)
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "连接成功", "ping": ping, "quota": quota})
-}
-
-// HdhiveTmdbSearch GET /hdhive/tmdb/search?query=xxx
-// 借 TMDB multi-search 把影视名称转成条目（movie/tv），供选片后查影巢资源
-func (h *Handler) HdhiveTmdbSearch(c *gin.Context) {
-	q := strings.TrimSpace(c.Query("query"))
-	if q == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入影视名称"})
-		return
-	}
-	tc, err := loadTmdbClient()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error() + "（先在系统配置完成 TMDB 设置）"})
-		return
-	}
-	// 纯数字输入 → 按 TMDB ID 直查详情（先电影后剧集，不消耗影巢配额）
-	if regexpPureDigits.MatchString(q) {
-		for _, kind := range []string{"movie", "tv"} {
-			body, err := tc.get("/"+kind+"/"+q, nil)
-			if err != nil {
-				continue
-			}
-			var d struct {
-				ID          int     `json:"id"`
-				Title       string  `json:"title"`
-				Name        string  `json:"name"`
-				ReleaseDate string  `json:"release_date"`
-				FirstAir    string  `json:"first_air_date"`
-				PosterPath  string  `json:"poster_path"`
-				VoteAverage float64 `json:"vote_average"`
-			}
-			if json.Unmarshal(body, &d) != nil || d.ID == 0 {
-				continue
-			}
-			title := d.Title
-			date := d.ReleaseDate
-			if title == "" {
-				title = d.Name
-			}
-			if date == "" {
-				date = d.FirstAir
-			}
-			year := ""
-			if len(date) >= 4 {
-				year = date[:4]
-			}
-			c.JSON(http.StatusOK, gin.H{"data": []gin.H{{
-				"id": d.ID, "media_type": kind, "title": title,
-				"year": year, "poster": d.PosterPath, "vote": d.VoteAverage,
-			}}})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"data": []gin.H{}, "hint": "未找到该 TMDB ID 对应的影视条目"})
-		return
-	}
-	body, err := tc.get("/search/multi", map[string]string{"query": q, "include_adult": "false"})
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "TMDB 搜索失败: " + err.Error()})
-		return
-	}
-	var result struct {
-		Results []struct {
-			ID           int     `json:"id"`
-			MediaType    string  `json:"media_type"`
-			Title        string  `json:"title"`
-			Name         string  `json:"name"`
-			OriginalName string  `json:"original_name"`
-			ReleaseDate  string  `json:"release_date"`
-			FirstAirDate string  `json:"first_air_date"`
-			PosterPath   string  `json:"poster_path"`
-			VoteAverage  float64 `json:"vote_average"`
-		} `json:"results"`
-	}
-	if json.Unmarshal(body, &result) != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "TMDB 响应解析失败"})
-		return
-	}
-	items := make([]gin.H, 0, len(result.Results))
-	for _, r := range result.Results {
-		if r.MediaType != "movie" && r.MediaType != "tv" {
-			continue // multi-search 会混入 person
-		}
-		title := r.Title
-		date := r.ReleaseDate
-		if title == "" {
-			title = r.Name
-		}
-		if date == "" {
-			date = r.FirstAirDate
-		}
-		year := ""
-		if len(date) >= 4 {
-			year = date[:4]
-		}
-		items = append(items, gin.H{
-			"id":         r.ID,
-			"media_type": r.MediaType,
-			"title":      title,
-			"year":       year,
-			"poster":     r.PosterPath,
-			"vote":       r.VoteAverage,
-		})
-		if len(items) >= 12 {
-			break
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"data": items})
-}
-
-// HdhiveTmdbImg GET /hdhive/tmdbimg?path=/xx.jpg&size=w92
-// 海报代理：走 TMDB 配置里的代理设置拉图（国内直连 image.tmdb.org 常不通）
-func (h *Handler) HdhiveTmdbImg(c *gin.Context) {
-	p := c.Query("path")
-	if !strings.HasPrefix(p, "/") {
-		c.Status(http.StatusBadRequest)
-		return
-	}
-	size := c.Query("size")
-	if size == "" {
-		size = "w92"
-	}
-	var cfg model.TmdbConfig
-	if err := model.DB.First(&cfg).Error; err != nil || cfg.ImageApiUrl == "" {
-		c.Status(http.StatusNotFound)
-		return
-	}
-	base := strings.TrimRight(cfg.ImageApiUrl, "/")
-	if !strings.HasSuffix(base, "/t/p") {
-		base += "/t/p" // 配置里一般只填到域名，海报尺寸挂在 /t/p 下
-	}
-	u := base + "/" + size + p
-	req, _ := http.NewRequest(http.MethodGet, u, nil)
-	client := &http.Client{Timeout: 15 * time.Second}
-	// 优先 TMDB 配置的代理，其次全局代理（与海报抓取同策略）
-	proxyURL := getProxyURL()
-	if cfg.EnableProxy && cfg.ProxyUrl != "" {
-		proxyURL = cfg.ProxyUrl
-	}
-	if proxyURL != "" {
-		if pu, perr := parseProxyURL(proxyURL); perr == nil {
-			client.Transport = &http.Transport{Proxy: pu}
-		}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.Status(http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		c.Status(http.StatusNotFound)
-		return
-	}
-	c.Header("Cache-Control", "public, max-age=86400")
-	c.DataFromReader(http.StatusOK, resp.ContentLength, resp.Header.Get("Content-Type"), resp.Body, nil)
-}
-
-// hdhiveResource 影巢资源条目（字段宽松解析：缺省不报错）
-type hdhiveResource struct {	Slug           string `json:"slug"`
-	Title          string `json:"title"`
-	Size           int64  `json:"size"`
-	Resolution     string `json:"resolution"`
-	Source         string `json:"source"`
-	Quality        string `json:"quality"`
-	Subtitle       string `json:"subtitle"`
-	SubtitleTeam   string `json:"subtitle_team"`
-	Remark         string `json:"remark"`
-	Official       bool   `json:"official"`
-	ValidateStatus string `json:"validate_status"`
-	PanType        string `json:"pan_type"`
-	UnlockPoints   int    `json:"unlock_points"`
-	IsFree         bool   `json:"is_free"`
-	IsUnlocked     bool   `json:"is_unlocked"`
-	CreatedAt      string `json:"created_at"`
-	Author         string `json:"author_username"`
-}
-
-// HdhiveResources GET /hdhive/resources?media_type=movie&tmdb_id=550
-func (h *Handler) HdhiveResources(c *gin.Context) {
-	cfg := loadHdhiveCfg()
-	if cfg.APIKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置影巢 API Key"})
-		return
-	}
-	mt := c.Query("media_type")
-	if mt != "movie" && mt != "tv" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "media_type 须为 movie 或 tv"})
-		return
-	}
-	id := strings.TrimSpace(c.Query("tmdb_id"))
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 tmdb_id"})
-		return
-	}
-	var raw json.RawMessage
-	if err := hdhiveCall(cfg, http.MethodGet, "/api/open/resources/"+mt+"/"+url.PathEscape(id), nil, &raw); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	// 上游 data 可能是 {list:[...], total} 也可能直接是数组，两种都兼容
-	var data struct {
-		List  []hdhiveResource `json:"list"`
-		Total int              `json:"total"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil || data.List == nil {
-		var arr []hdhiveResource
-		if err2 := json.Unmarshal(raw, &arr); err2 == nil {
-			data.List = arr
-			data.Total = len(arr)
-		}
-	}
-	if data.List == nil {
-		data.List = []hdhiveResource{}
-	}
-	c.JSON(http.StatusOK, gin.H{"data": data.List, "total": data.Total})
-}
-
-// hdhiveUnlock 解锁资源，返回分享链接与访问码
-func hdhiveUnlock(cfg *hdhiveCfg, slug string, allowPoints bool) (panType, link, accessCode string, alreadyOwned bool, err error) {
-	var data struct {
-		URL          string `json:"url"`
-		AccessCode   string `json:"access_code"`
-		FullURL      string `json:"full_url"`
-		PanType      string `json:"pan_type"`
-		AlreadyOwned bool   `json:"already_owned"`
-	}
-	body := map[string]any{"slug": slug}
-	if allowPoints {
-		body["allow_points"] = true
-	}
-	if err = hdhiveCall(cfg, http.MethodPost, "/api/open/resources/unlock", body, &data); err != nil {
-		return
-	}
-	link = data.FullURL
-	if link == "" {
-		link = data.URL
-	}
-	if link == "" {
-		err = fmt.Errorf("解锁响应缺少分享链接（上游数据异常，可稍后重试）")
-		return
-	}
-	if data.AccessCode != "" {
-		accessCode = data.AccessCode
-	} else {
-		// 访问码可能内嵌在链接里（?password=xxxx / #xxxx）
-		if m := reSharePass.FindStringSubmatch(link); m != nil {
-			accessCode = m[1]
-		}
-	}
-	return data.PanType, link, accessCode, data.AlreadyOwned, nil
-}
-
-// HdhiveTransfer POST /hdhive/transfer {slug, organize?, target_cid?}
-// 解锁 → 校验是 115 分享 → 复用 Cookie 通道转存（含可选自动整理）
-func (h *Handler) HdhiveTransfer(c *gin.Context) {
-	var req struct {
-		Slug      string `json:"slug"`
-		Organize  *bool  `json:"organize"`
-		TargetCID string `json:"target_cid"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少资源标识（slug）"})
-		return
-	}
-	cfg := loadHdhiveCfg()
-	organize := cfg.Organize
-	if req.Organize != nil {
-		organize = *req.Organize
-	}
-	panType, link, code, _, err := hdhiveUnlock(cfg, strings.TrimSpace(req.Slug), cfg.AllowPoints)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	log.Printf("[影巢] ▣ 解锁成功（%s）: %s", panType, truncateStr(link, 90))
-	if !is115ShareLink(link) {
-		c.JSON(http.StatusOK, gin.H{
-			"transferred": false,
-			"url":         link,
-			"access_code": code,
-			"pan_type":    panType,
-			"message":     "该资源是 " + strings.ToUpper(panType) + " 分享，暂不支持自动转存，链接已给出可手动保存",
-		})
-		return
-	}
-	msg, ok, fail, err := h.shareReceiveCore(link, code, req.TargetCID, organize)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error(), "url": link, "access_code": code})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"transferred": true,
-		"success":     ok,
-		"failed":      fail,
-		"message":     msg,
-		"url":         link,
-		"access_code": code,
-		"note":        "转存完成，增量同步将自动生成 STRM（开启整理时）",
-	})
 }
