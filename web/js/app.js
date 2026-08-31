@@ -521,9 +521,8 @@ async function pollTaskStatus() {
     const st = await api('/sync/status');
     if (st.running) {
       bar.style.display = 'block';
-      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '，开始于 ' + esc(st.since || '-') + '）'
-        + (st.progress ? '<br><span style="color:var(--text-2)">▸ ' + esc(st.progress) + '</span>' : '')
-        + '<br><span style="font-size:12px;color:var(--text-3)">其他同步/整理操作已暂不可用</span>';
+      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '）'
+        + (st.progress ? '<br><span style="color:var(--text-2)">▸ ' + esc(st.progress) + '</span>' : '');
       btns.forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
     } else {
       // 空闲时展示最近任务（简易任务中心：成败/耗时/开始时间）
