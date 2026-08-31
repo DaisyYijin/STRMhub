@@ -1944,7 +1944,7 @@ func modelSettingValue(key string) string {
 // executeOrganizeWithConfig 用指定的 OrgConfig 执行整理（转存目录等场景）
 func (h *Handler) executeOrganizeWithConfig(cfg *OrgConfig, syncAfter bool) ([]gin.H, []OrganizeResult, error) {
 	orgStart := time.Now()
-	log.Printf("[整理] ▶ 开始整理（待整理目录 cid=%s）", cfg.Pending)
+	log.Printf("[整理] 开始整理：扫描待整理目录…")
 	ops, err := h.newPan115Ops()
 	if err != nil {
 		return nil, nil, err

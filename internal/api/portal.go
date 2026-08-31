@@ -62,7 +62,7 @@ func StartPortal(cfg *config.Config) {
 	go portalBackfillWorker()
 	go hlsCleaner()
 	addr := ":" + fmt.Sprint(cfg.PortalPort)
-	log.Printf("观影门户启动: http://localhost:%d", cfg.PortalPort)
+	log.Printf("观影门户已启动（端口 %d）", cfg.PortalPort)
 	if err := r.Run(addr); err != nil {
 		log.Printf("门户启动失败（端口 %d 被占用？）: %v", cfg.PortalPort, err)
 	}

@@ -821,11 +821,11 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 	}
 	full := filepath.Join(localRoot, filepath.FromSlash(sf.RelPath))
 	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
-		log.Printf("[同步] 删除本地文件失败 %s: %v", full, err)
+		vlog("[同步] 清理失败 %s: %v", full, err)
 		return false
 	}
 	h.DB.Delete(&sf)
-	log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
+	vlog("[同步] 已清理: %s", sf.RelPath)
 	return true
 }
 
@@ -875,7 +875,7 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 						return false
 					}
 					h.DB.Where("rel_path = ?", cand.rel+cand.suffix).Delete(&model.SyncedFile{})
-					log.Printf("[同步] ✓ 本地文件已清理: %s", cand.rel+cand.suffix)
+					vlog("[同步] 已清理: %s", cand.rel+cand.suffix)
 					return true
 				}
 			}
@@ -893,7 +893,7 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 					continue
 				}
 				h.DB.Delete(&sf)
-				log.Printf("[同步] ✓ 本地文件已清理: %s", sf.RelPath)
+				vlog("[同步] 已清理: %s", sf.RelPath)
 				return true
 			}
 		}

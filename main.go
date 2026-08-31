@@ -210,7 +210,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("StrmHub 管理后台: http://localhost:%d", cfg.Port)
+	log.Printf("管理后台已启动（端口 %d）", cfg.Port)
 	if err := r.Run(":" + cfg.PortStr()); err != nil {
 		log.Fatalf("启动失败: %v", err)
 	}
