@@ -359,7 +359,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/guanying/logout", h.GyLogout)
 		protected.GET("/guanying/search", h.GySearch)
 		protected.GET("/guanying/resources", h.GyResources)
-		protected.POST("/guanying/transfer", h.GyTransfer)
+		protected.POST("/guanying/offline", h.GyOffline)
 
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)

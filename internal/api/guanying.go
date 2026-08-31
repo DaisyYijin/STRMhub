@@ -225,20 +225,6 @@ func gyPow(client *http.Client, base string) error {
 	return nil
 }
 
-// gyDoNav 导航形态的内容页 GET。
-// 站点按 Sec-Fetch 头区分服务：导航请求返回完整 SSR 内容，XHR/裸请求只给
-// Vue 空壳（约 2KB 的 Loading 页）——搜索结果只存在于导航形态的 HTML 里
-func gyDoNav(client *http.Client, base, path string) (string, error) {
-	return gyDoReq(client, base, http.MethodGet, path, nil, map[string]string{
-		"Accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-		"Sec-Fetch-Dest":             "document",
-		"Sec-Fetch-Mode":             "navigate",
-		"Sec-Fetch-Site":             "same-origin",
-		"Sec-Fetch-User":             "?1",
-		"Upgrade-Insecure-Requests":  "1",
-	})
-}
-
 // gyDo 带自动过 PoW 的页面请求：返回响应正文（字符串）
 func gyDo(client *http.Client, base, method, path string, form url.Values) (string, error) {
 	return gyDoReq(client, base, method, path, form, nil)
@@ -374,103 +360,122 @@ func gyHTMLUnescape(s string) string {
 }
 
 var (
-	reGyCode  = regexp.MustCompile(`(?:提取码|访问码|密码|pwd|pass(?:word)?|code)[=:：\s]*([A-Za-z0-9]{4})`)
-	reScript  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
-	reAnchor  = regexp.MustCompile(`(?is)<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>`)
-	reTitle   = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
-	reTagNFmt = regexp.MustCompile(`\s+`)
-	reGyItem  = regexp.MustCompile(`^/([a-z]{2,6})/([A-Za-z0-9]+)$`) // 条目链接形如 /mv/VxBB
-	reGyYearT = regexp.MustCompile(`^(.*?)\s*\((\d{4})\)$`)          // 标题尾部年份：xxx (2018)
-	// 站点标题在汉字间插了空格（无 名 之 辈）
-	reGyCJK = regexp.MustCompile(`([\x{4e00}-\x{9fff}])[ ]+([\x{4e00}-\x{9fff}])`)
+	reScript   = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+	reTitle    = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+	reGyMagnet = regexp.MustCompile(`magnet:\?xt=urn:btih:[A-Za-z0-9]{16,}`)
 )
 
-// gyNavExcludes 站内导航路径（非条目），整条排除
-var gyNavExcludes = map[string]bool{
-	"/mv": true, "/tv": true, "/ac": true, "/gbook": true,
-	"/zjx": true, "/bads": true, "/hits": true,
+// gyObjJSON 从页面内嵌脚本提取 _obj.KEY 的 JSON 串（站点是 CSR 架构，
+// 所有数据以内嵌 JS 对象形式挂在 _obj.* 下；花括号配平扫描取整段）
+func gyObjJSON(body, key string) (string, bool) {
+	i := strings.Index(body, "_obj."+key+"=")
+	if i < 0 {
+		return "", false
+	}
+	start := strings.IndexByte(body[i:], '{')
+	if start < 0 {
+		return "", false
+	}
+	start += i
+	depth, inStr, esc := 0, false, false
+	for j := start; j < len(body); j++ {
+		c := body[j]
+		if inStr {
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return body[start : j+1], true
+			}
+		}
+	}
+	return "", false
 }
 
-// gyExtractAnchors 从搜索/列表页提取条目（href, 标题, 年份），过滤导航与外链
-func gyExtractAnchors(body string) []gin.H {
-	clean := reScript.ReplaceAllString(body, "")
+// gyAnyStr JSON 值宽松转字符串（数字/字符串都可能）
+func gyAnyStr(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return fmt.Sprintf("%.0f", t)
+	default:
+		return ""
+	}
+}
+
+// gyExtractTorrents 解析搜索页内嵌的 _obj.search：l 为并行数组
+// （d=分类 bt/mv/tv，i=ID，title=名称，size/time/seeds 种子页专有）
+func gyExtractTorrents(body string) []gin.H {
+	objStr, ok := gyObjJSON(body, "search")
+	if !ok {
+		return []gin.H{}
+	}
+	var obj struct {
+		L struct {
+			D     []any `json:"d"`
+			I     []any `json:"i"`
+			Title []any `json:"title"`
+			Size  []any `json:"size"`
+			Time  []any `json:"time"`
+			Seeds []any `json:"seeds"`
+		} `json:"l"`
+	}
+	if json.Unmarshal([]byte(objStr), &obj) != nil {
+		return []gin.H{}
+	}
 	out := []gin.H{}
-	seen := map[string]bool{}
-	for _, m := range reAnchor.FindAllStringSubmatch(clean, -1) {
-		href := strings.TrimSpace(m[1])
-		if href == "" || href[0] != '/' || strings.HasPrefix(href, "//") {
-			continue
-		}
-		for _, bad := range []string{"/user", "/search", "/res/", "/help", "/about", "favicon"} {
-			if strings.HasPrefix(href, bad) {
-				href = ""
-				break
+	l := obj.L
+	for i, idv := range l.I {
+		id := gyAnyStr(idv)
+		dir := "bt"
+		if i < len(l.D) {
+			if d := gyAnyStr(l.D[i]); d != "" {
+				dir = d
 			}
 		}
-		if href == "" || seen[href] || gyNavExcludes[href] {
+		title := ""
+		if i < len(l.Title) {
+			title = gyAnyStr(l.Title[i])
+		}
+		if id == "" || title == "" {
 			continue
 		}
-		// 条目链接必须是「/分类/ID」形态，纯导航路径（/mv 等）跳过
-		if !reGyItem.MatchString(href) {
-			continue
-		}
-		text := reTagNFmt.ReplaceAllString(strings.TrimSpace(gyHTMLUnescape(reHTMLText.ReplaceAllString(m[2], " "))), " ")
-		for { // 折叠汉字间空格（重叠匹配需循环到稳定）
-			next := reGyCJK.ReplaceAllString(text, "$1$2")
-			if next == text {
-				break
+		item := gin.H{"path": "/" + dir + "/" + id, "title": title}
+		if i < len(l.Size) {
+			if v := gyAnyStr(l.Size[i]); v != "" {
+				item["size"] = v
 			}
-			text = next
 		}
-		title, year := text, ""
-		if ym := reGyYearT.FindStringSubmatch(text); ym != nil {
-			title, year = strings.TrimSpace(ym[1]), ym[2]
+		if i < len(l.Time) {
+			if v := gyAnyStr(l.Time[i]); v != "" {
+				item["time"] = v
+			}
 		}
-		if len([]rune(title)) < 2 || len([]rune(title)) > 80 {
-			continue
+		if i < len(l.Seeds) {
+			if v := gyAnyStr(l.Seeds[i]); v != "" {
+				item["seeds"] = v
+			}
 		}
-		seen[href] = true
-		out = append(out, gin.H{"path": href, "title": title, "year": year})
-		if len(out) >= 30 {
+		out = append(out, item)
+		if len(out) >= 25 {
 			break
 		}
 	}
 	return out
-}
-
-// gyExtractLinks 从 HTML 里提取全部网盘链接（href + 正文），带邻近提取码
-func gyExtractLinks(body string) []gyLink {
-	clean := reScript.ReplaceAllString(body, "")
-	clean = gyHTMLUnescape(clean)
-	links := []gyLink{}
-	seen := map[string]bool{}
-	for _, r := range gyPanRules {
-		for _, loc := range r.pattern.FindAllStringIndex(clean, -1) {
-			u := clean[loc[0]:loc[1]]
-			// 站点文本里常省略协议头，归一化成完整链接（磁力本身无协议头）
-			if r.pan != "magnet" && !strings.HasPrefix(u, "http") {
-				u = "https://" + u
-			}
-			if seen[u] {
-				continue
-			}
-			seen[u] = true
-			link := gyLink{URL: u, Pan: r.pan}
-			// 提取码通常跟在链接附近
-			window := clean[loc[1]:]
-			if len(window) > 200 {
-				window = window[:200]
-			}
-			if m := reGyCode.FindStringSubmatch(window); m != nil {
-				link.Code = m[1]
-			}
-			links = append(links, link)
-			if len(links) >= 40 {
-				return links
-			}
-		}
-	}
-	return links
 }
 
 // ==================== HTTP 处理器 ====================
@@ -553,7 +558,9 @@ func gyAutoLogin(cfg *gyCfg) error {
 	return saveGyCfg(cfg)
 }
 
-// GySearch GET /guanying/search?query=xxx → 解析搜索结果页条目
+// GySearch GET /guanying/search?query=xxx → 解析种子搜索结果（type=4）。
+// 注意用裸请求（不带导航头）：站点对导航请求回完整渲染页，对 XHR/裸请求
+// 回「Loading...」壳——壳里内嵌的 _obj.search 就是本页全部数据（JSON）
 func (h *Handler) GySearch(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("query"))
 	if q == "" {
@@ -562,7 +569,10 @@ func (h *Handler) GySearch(c *gin.Context) {
 	}
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
-	body, err := gyDoNav(client, cfg.BaseURL, "/search?q="+url.QueryEscape(q))
+	fetchSearch := func() (string, error) {
+		return gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q)+"&type=4", nil)
+	}
+	body, err := fetchSearch()
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error() + "（站点换域名时请更新站点地址）"})
 		return
@@ -574,7 +584,7 @@ func (h *Handler) GySearch(c *gin.Context) {
 			return
 		}
 		client = gyEnsureClient(cfg)
-		body, err = gyDoNav(client, cfg.BaseURL, "/search?q="+url.QueryEscape(q))
+		body, err = fetchSearch()
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
 			return
@@ -584,7 +594,7 @@ func (h *Handler) GySearch(c *gin.Context) {
 			return
 		}
 	}
-	items := gyExtractAnchors(body)
+	items := gyExtractTorrents(body)
 	// 0 条时附带页面特征：前端显示出来，方便远程定位（空壳/受限/正常页一眼区分）
 	debug := gin.H{}
 	if len(items) == 0 {
@@ -599,12 +609,12 @@ func (h *Handler) GySearch(c *gin.Context) {
 		}
 		log.Printf("[观影] ○ 搜索未解析出条目（q=%s）: len=%d title=%q noLogin=%v", q, len(body), title, gyIsNoLogin(body))
 	} else {
-		log.Printf("[观影] ▣ 搜索「%s」: %d 条", q, len(items))
+		log.Printf("[观影] ▣ 搜索「%s」: %d 条种子", q, len(items))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "debug": debug})
 }
 
-// GyResources GET /guanying/resources?path=/xxx → 详情页提取网盘链接
+// GyResources GET /guanying/resources?path=/bt/XXXX → 种子详情页提取磁力链接
 func (h *Handler) GyResources(c *gin.Context) {
 	p := strings.TrimSpace(c.Query("path"))
 	if p == "" || !strings.HasPrefix(p, "/") {
@@ -613,7 +623,7 @@ func (h *Handler) GyResources(c *gin.Context) {
 	}
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
-	body, err := gyDoNav(client, cfg.BaseURL, p)
+	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error()})
 		return
@@ -624,43 +634,49 @@ func (h *Handler) GyResources(c *gin.Context) {
 			return
 		}
 		client = gyEnsureClient(cfg)
-		body, err = gyDoNav(client, cfg.BaseURL, p)
+		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
 			return
 		}
 	}
-	links := gyExtractLinks(body)
-	title := ""
-	if m := reTitle.FindStringSubmatch(body); m != nil {
-		title = gyHTMLUnescape(strings.TrimSpace(m[1]))
+	magnet := ""
+	if m := reGyMagnet.FindStringSubmatch(body); m != nil {
+		magnet = m[0]
 	}
-	c.JSON(http.StatusOK, gin.H{"data": links, "title": title})
+	title := ""
+	if objStr, ok := gyObjJSON(body, "d"); ok {
+		var d struct {
+			Title string `json:"title"`
+		}
+		if json.Unmarshal([]byte(objStr), &d) == nil {
+			title = d.Title
+		}
+	}
+	if magnet == "" {
+		log.Printf("[观影] ✗ 详情页未找到磁力链接（path=%s, len=%d）", p, len(body))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "详情页未找到磁力链接（站点可能已改版，请把这条日志发给开发者）"})
+		return
+	}
+	log.Printf("[观影] ▣ 提取到磁力链接（%s）", truncateStr(title, 40))
+	c.JSON(http.StatusOK, gin.H{"magnet": magnet, "title": title})
 }
 
-// GyTransfer POST /guanying/transfer {url, code} → 115 分享自动转存
-func (h *Handler) GyTransfer(c *gin.Context) {
+// GyOffline POST /guanying/offline {magnet} → 提交 115 离线下载
+// （完成后由离线监视器自动整理入库）
+func (h *Handler) GyOffline(c *gin.Context) {
 	var req struct {
-		URL  string `json:"url"`
-		Code string `json:"code"`
+		Magnet string `json:"magnet"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少链接"})
+	if err := c.ShouldBindJSON(&req); err != nil || !strings.HasPrefix(req.Magnet, "magnet:?") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少有效的磁力链接"})
 		return
 	}
-	if !is115ShareLink(req.URL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持 115 分享链接的自动转存，其他网盘请复制链接手动转存"})
+	if err := h.submitOfflineLink(req.Magnet); err != nil {
+		log.Printf("[观影] ✗ 离线提交失败: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "离线提交失败: " + err.Error()})
 		return
 	}
-	msg, ok, fail, err := h.shareReceiveCore(req.URL, req.Code, "", true)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	if ok == 0 && fail == 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "分享为空", "count": 0})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": msg, "count": ok, "failed": fail,
-		"note": "转存完成，增量同步将自动生成 STRM"})
+	log.Printf("[观影] ✓ 已提交 115 离线下载")
+	c.JSON(http.StatusOK, gin.H{"message": "已提交 115 离线下载", "note": "下载完成后自动整理入库"})
 }

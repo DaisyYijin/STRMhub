@@ -744,11 +744,11 @@ av:
           <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">观影常更换域名（gying.in 已失效），默认观影.com。搜索失败时到站点首页看最新地址，改这里后重新登录。</span></i></div><div class="control"><input type="text" id="gy-base" placeholder="观影站点地址"></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">先登录站内账号再搜索。链接按网盘类型标注：115 可一键转存入库，其他网盘复制链接手动保存。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="gy-query" placeholder="影视名称（中英文均可）" onkeydown="if(event.key==='Enter')gySearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="gySearch()">搜索</button></div></div></div>
+          <div class="form-row"><div class="label">搜索种子<i class="help-tip" tabindex="0">?<span class="tip-bubble">搜索观影站内的种子资源（磁力链接）。选择条目提取磁力后，一键提交 115 离线下载，完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="gy-query" placeholder="影视名称（中英文均可）" onkeydown="if(event.key==='Enter')gySearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="gySearch()">搜索</button></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control" style="max-width:none"><div id="gy-results"></div></div></div>
         </div>
         <div class="card" id="gy-res-card" style="display:none">
-          <div class="form-row"><div class="label">网盘链接</div><div class="control" style="max-width:none"><div id="gy-res-list"></div></div></div>
+          <div class="form-row"><div class="label">磁力链接</div><div class="control" style="max-width:none"><div id="gy-res-list"></div></div></div>
         </div>
       </div>
     </div>

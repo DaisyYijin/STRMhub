@@ -75,7 +75,7 @@ const PAGE_TITLES = {
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
-  'media-transfer': ['影视转存', '影巢授权 / 观影资源 / 更多资源站'],
+  'media-transfer': ['影视转存', '影巢授权 / 观影种子 / 115 离线'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
   'dashboard': ['仪表盘', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
@@ -2854,22 +2854,10 @@ async function hdhiveRevoke(btn) {
 }
 
 // ==================== 影视转存 · 观影 ====================
-// 站点为 SSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
-// 会话 Cookie 持久化（失效自动重登）。115 链接一键转存，其他网盘复制。
-let gyCurrentLinks = [];
-let gyCurrentHrefs = [];
-
-const GY_PAN_LABEL = {
-  '115': ['115 网盘', '#eafaf0', '#00874a'],
-  'quark': ['夸克', '#eef0ff', '#5b5fc7'],
-  'baidu': ['百度', '#e8f1ff', '#1664d9'],
-  'xunlei': ['迅雷', '#e9f6ff', '#0e7ac4'],
-  'uc': ['UC', '#f3ecff', '#7a3fd4'],
-  'ali': ['阿里', '#fff8e1', '#a66c00'],
-  '123': ['123 盘', '#eafaf0', '#1d8a4e'],
-  'tianyi': ['天翼', '#eaf6ff', '#1272b8'],
-  'magnet': ['磁力', 'var(--fill-2)', 'var(--text-2)'],
-};
+// 站点为 CSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
+// 会话 Cookie 持久化（失效自动重登）。种子搜索 → 磁力提交 115 离线下载，
+// 完成后自动整理入库。
+let gyCurrentMagnet = '';
 let gyStatusLoaded = false;
 
 async function gyLoadPage() {
@@ -2952,11 +2940,13 @@ async function gySearch() {
     }
     box.innerHTML = '<div class="otk">' + items.map((it, i) => {
       const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const meta = [it.size, it.time, it.seeds !== undefined && it.seeds !== '' ? '做种 ' + it.seeds : '']
+        .filter(Boolean).map(esc).join('</span><span class="otk-dot">·</span><span>');
       return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safePath + '\',this)">'
-      + '<span class="otag" style="background:#eef0ff;color:#5b5fc7">条目</span>'
-      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div>'
-      + '<div class="otk-sub"><span>' + esc(it.year || '') + '</span></div></div>'
-      + '<div class="otk-side" style="color:var(--primary)">查看链接 ›</div>'
+      + '<span class="otag" style="background:#eafaf0;color:#00874a">种子</span>'
+      + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
+      + '<div class="otk-sub"><span>' + meta + '</span></div></div>'
+      + '<div class="otk-side" style="color:var(--primary)">磁力链接 ›</div>'
       + '</div>';
     }).join('') + '</div>';
   } catch (e) {
@@ -2972,61 +2962,53 @@ async function gyPick(path, el) {
   const card = document.getElementById('gy-res-card');
   const list = document.getElementById('gy-res-list');
   card.style.display = '';
-  list.innerHTML = '<span style="color:var(--text-3)">提取网盘链接中…</span>';
+  list.innerHTML = '<span style="color:var(--text-3)">提取磁力链接中…</span>';
   try {
     const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
-    gyRenderLinks(d.data || [], d.title || '');
+    gyRenderMagnet(d);
   } catch (e) {
     list.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
   }
 }
 
-function gyRenderLinks(links, title) {
+function gyRenderMagnet(d) {
   const list = document.getElementById('gy-res-list');
-  gyCurrentLinks = links || [];
-  if (!links.length) {
-    list.innerHTML = '<span style="color:var(--text-3)">该条目暂无网盘链接</span>';
+  gyCurrentMagnet = d.magnet || '';
+  if (!gyCurrentMagnet) {
+    list.innerHTML = '<span style="color:var(--text-3)">该条目没有磁力链接</span>';
     return;
   }
-  list.innerHTML = (title ? '<div style="font-weight:600;margin-bottom:8px">' + esc(title) + '（' + links.length + ' 条链接）</div>' : '')
-    + '<div class="otk">' + links.map((l, i) => {
-      const [label, bg, fg] = GY_PAN_LABEL[l.pan] || [l.pan, 'var(--fill-2)', 'var(--text-2)'];
-      const is115 = l.pan === '115';
-      const shown = l.url.length > 64 ? l.url.slice(0, 64) + '…' : l.url;
-      return '<div class="otk-row" id="gy-link-' + i + '">'
-        + '<span class="otag" style="background:' + bg + ';color:' + fg + '">' + esc(label) + '</span>'
-        + '<div class="otk-main"><div class="otk-name" style="font-family:Consolas,Monaco,monospace;font-size:12.5px" title="' + esc(l.url) + '">' + esc(shown) + '</div>'
-        + '<div class="otk-sub"><span>' + (l.code ? '提取码 ' + esc(l.code) : '无提取码') + '</span></div>'
-        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-        + '<div class="otk-side">'
-        + (is115
-          ? '<button class="btn btn-primary btn-sm" onclick="gyTransfer(' + i + ',this)">转存到 115</button> '
-          : '')
-        + '<button class="btn btn-outline btn-sm" onclick="gyCopyLink(' + i + ')">复制</button>'
-        + '</div></div>';
-    }).join('') + '</div>';
+  const shown = gyCurrentMagnet.length > 56 ? gyCurrentMagnet.slice(0, 56) + '…' : gyCurrentMagnet;
+  list.innerHTML = (d.title ? '<div style="font-weight:600;margin-bottom:8px">' + esc(d.title) + '</div>' : '')
+    + '<div class="otk"><div class="otk-row" id="gy-magnet-row">'
+    + '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">磁力</span>'
+    + '<div class="otk-main"><div class="otk-name" style="font-family:Consolas,Monaco,monospace;font-size:12.5px" title="' + esc(gyCurrentMagnet) + '">' + esc(shown) + '</div>'
+    + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+    + '<div class="otk-side">'
+    + '<button class="btn btn-primary btn-sm" id="gy-offline-btn" onclick="gyOffline(this)">提交 115 离线</button> '
+    + '<button class="btn btn-outline btn-sm" onclick="gyCopyText(gyCurrentMagnet)">复制磁力</button>'
+    + '</div></div></div>';
 }
 
-async function gyTransfer(i, btn) {
-  const link = gyCurrentLinks[i];
-  if (!link) return;
-  const row = document.getElementById('gy-link-' + i);
+async function gyOffline(btn) {
+  if (!gyCurrentMagnet) return;
+  const row = document.getElementById('gy-magnet-row');
   const st = row ? row.querySelector('.gy-st') : null;
   btn.disabled = true;
-  btn.textContent = '转存中…';
-  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '转存中…'; }
+  btn.textContent = '提交中…';
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提交中…'; }
   try {
-    const d = await api('/guanying/transfer', {
+    const d = await api('/guanying/offline', {
       method: 'POST',
-      body: JSON.stringify({ url: link.url, code: link.code || '' }),
+      body: JSON.stringify({ magnet: gyCurrentMagnet }),
     });
-    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '转存完成'); }
-    btn.textContent = '已转存';
-    toast('转存完成，整理入库已触发');
+    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '已提交'); }
+    btn.textContent = '已提交';
+    toast('已提交 115 离线下载，完成后自动整理入库');
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
     btn.disabled = false;
-    btn.textContent = '转存到 115';
+    btn.textContent = '提交 115 离线';
   }
 }
 
@@ -3046,9 +3028,4 @@ function gyCopyFallback(text) {
   ta.select();
   try { document.execCommand('copy'); toast('已复制'); } catch (e) { toast('复制失败，请手动复制'); }
   document.body.removeChild(ta);
-}
-function gyCopyLink(i) {
-  const link = gyCurrentLinks[i];
-  if (!link) return;
-  gyCopyText(link.url + (link.code ? ' 提取码: ' + link.code : ''));
 }
