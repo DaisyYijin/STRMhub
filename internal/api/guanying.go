@@ -243,8 +243,9 @@ func gyDoReq(client *http.Client, base, method, path string, form url.Values, hd
 			return "", err
 		}
 		req.Header.Set("User-Agent", gyUA)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+		// 注意：不要加 Accept/Accept-Language 等导航形态的请求头——站点的
+		// 反爬把放行凭证绑定到请求头形态，验证时是 XHR 形态，带了浏览器
+		// 导航头反而会被判「浏览器验证已过期」（实测确认）
 		if form != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
