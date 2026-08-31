@@ -422,7 +422,7 @@ func (h *Handler) wecomHandleLink(link string, reply func(lines ...string)) {
 		reply("✗ 提交失败: " + err.Error())
 		return
 	}
-	reply("✓ 已提交离线下载：", truncateStr(link, 80), "下载完成后自动整理入库并通知。")
+	reply("✓ 已提交离线下载", "下载完成后自动整理入库并通知。")
 }
 
 // splitShareLink 从消息中拆出分享链接与提取码。

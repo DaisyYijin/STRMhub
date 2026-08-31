@@ -1319,7 +1319,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	if len(replaceRules) > 0 {
 		name = applyReplaceRules(name, replaceRules)
 	}
-	onLog(fmt.Sprintf("▶ 开始识别: %s/（样本: %s）", dir.Name, mainVideo.Name))
+	onLog(fmt.Sprintf("▶ 开始识别: %s/（样本: %s）", shortLogName(dir.Name), shortLogName(mainVideo.Name)))
 
 	// AV 番号检测：文件名或目录名含番号格式（如 START-622、MIDV-001）时
 	// 跳过 TMDB 识别，直接用番号作为标题归入 AV 分类
@@ -1402,7 +1402,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 		}
 	}
 
-	onLog(fmt.Sprintf("✦ 识别成功: %s/ → %s (%s) [%s/tmdb=%d]", dir.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
+	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s)", shortLogName(dir.Name), media.Title, media.Year))
 
 	// 直接查网盘去重（不依赖本地缓存表，不会过期）
 	// 检查网盘目标目录里是否有相同 SHA1 的文件
@@ -1817,7 +1817,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 		name = applyReplaceRules(name, replaceRules)
 	}
 	// SHA1 去重移到 TMDB 识别后（需要 media 信息来计算目标目录）
-	onLog(fmt.Sprintf("▶ 开始识别: %s", f.Name))
+	onLog(fmt.Sprintf("▶ 开始识别: %s", shortLogName(f.Name)))
 	parsed := parseFileName(name)
 	oldBase := baseName(f.Name)
 	if parsed.Title == "" {
@@ -1853,7 +1853,7 @@ func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRu
 	result.Year = media.Year
 	result.MediaType = media.MediaType
 
-	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s) [%s/tmdb=%d]", f.Name, media.Title, media.Year, media.MediaType, media.TmdbID))
+	onLog(fmt.Sprintf("✦ 识别成功: %s → %s (%s)", shortLogName(f.Name), media.Title, media.Year))
 
 	// 直接查网盘去重（不依赖本地缓存表）
 	if checkByCloudSHA1(ops, media, cfg, libAbs, f.Sha1, parsed, f.Name) {
@@ -2218,6 +2218,18 @@ func classifyAVNumber(avNum, hint string) string {
 		return fallback
 	}
 	return "未分类"
+}
+
+// shortLogName 日志用短名：剥掉发布站广告前缀（【…】块/域名@），超长截断。
+// 纯粹为了日志可读——原始名在网盘里保持不变
+func shortLogName(s string) string {
+	s = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(s, "")
+	s = regexp.MustCompile(`(?i)[a-z0-9.-]+\.[a-z]{2,}@`).ReplaceAllString(s, "")
+	s = strings.Trim(s, " .@")
+	if r := []rune(s); len(r) > 46 {
+		s = string(r[:46]) + "…"
+	}
+	return s
 }
 
 // sanitizeAVFilename 清洗 AV 文件名中的广告前缀

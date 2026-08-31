@@ -256,7 +256,6 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 			if orgCfg.Pending != shareFolder {
 				orgCfg.Pending = shareFolder
 			}
-			log.Printf("[上传] ▶ 直接扫描转存目录...")
 			_, _, orgErr := h.executeOrganizeWithConfig(orgCfg, false)
 			if orgErr != nil {
 				log.Printf("[上传] ○ 转存目录整理失败: %v", orgErr)
