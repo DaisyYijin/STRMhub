@@ -1524,6 +1524,11 @@ function rotateEmbyWebhookToken() {
 // 消息通知
 let msgWecomEnabled = false;
 let msgTgEnabled = false;
+let msgFeishuEnabled = false;
+let msgOnebotEnabled = false;
+let msgQqoffEnabled = false;
+let onebotTargetType = 'group';
+let onebotEventToken = '';
 function switchMsgTab(tab) {
   document.querySelectorAll('#page-config-message .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelectorAll('#page-config-message .tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === tab));
@@ -1531,7 +1536,27 @@ function switchMsgTab(tab) {
 function setMsgEnabled(type, val) {
   if (type === 'wecom') msgWecomEnabled = val;
   if (type === 'tg') msgTgEnabled = val;
+  if (type === 'feishu') msgFeishuEnabled = val;
+  if (type === 'onebot') msgOnebotEnabled = val;
+  if (type === 'qqoff') msgQqoffEnabled = val;
   document.querySelectorAll('#msg-' + type + '-enabled-switch .seg-item').forEach(i => i.classList.toggle('active', i.dataset.value === String(val)));
+}
+
+// OneBot：目标类型切换 + 事件回调地址展示 + token 自动生成
+function setMsgOnebotTargetType(v) {
+  onebotTargetType = v;
+  document.querySelectorAll('#msg-onebot-target-type-switch .seg-item').forEach(i => i.classList.toggle('active', i.dataset.value === v));
+}
+function renderOnebotCallback() {
+  const el = document.getElementById('onebot-callback-url');
+  if (el) el.textContent = location.origin + '/onebot/event?token=' + (onebotEventToken || '<保存后生成>');
+}
+function ensureOnebotEventToken() {
+  if (!onebotEventToken) {
+    const cs = 'abcdef0123456789';
+    onebotEventToken = Array.from({ length: 16 }, () => cs[Math.floor(Math.random() * cs.length)]).join('');
+  }
+  return onebotEventToken;
 }
 
 async function testMessage(btn) {
@@ -1647,9 +1672,14 @@ function collectConfig(key) {
     return { token: embyNotifyToken };
   }
   if (key === 'message') {
+    if (!onebotEventToken) ensureOnebotEventToken();
+    renderOnebotCallback();
     return {
       wecom: { corp_id: val('msg-wecom-corp-id'), secret: val('msg-wecom-secret'), agent_id: val('msg-wecom-agent-id'), api_url: val('msg-wecom-api-url'), token: val('msg-wecom-token'), encoding_aes_key: val('msg-wecom-aes-key'), enabled: msgWecomEnabled },
       tg: { token: val('msg-tg-token'), chat_id: val('msg-tg-chat-id'), enabled: msgTgEnabled },
+      feishu: { webhook: val('msg-feishu-webhook'), secret: val('msg-feishu-secret'), enabled: msgFeishuEnabled },
+      qq_onebot: { url: val('msg-onebot-url'), token: val('msg-onebot-token'), target_type: onebotTargetType, target: val('msg-onebot-target'), admin: val('msg-onebot-admin'), event_token: onebotEventToken, enabled: msgOnebotEnabled },
+      qq_official: { app_id: val('msg-qqoff-appid'), secret: val('msg-qqoff-secret'), group_id: val('msg-qqoff-group'), enabled: msgQqoffEnabled },
     };
   }
   if (key === 'org-basic') {
@@ -1744,6 +1774,27 @@ function applyConfig(key, v) {
       setVal('msg-wecom-token', v.wecom.token);
       setVal('msg-wecom-aes-key', v.wecom.encoding_aes_key);
       setMsgEnabled('wecom', v.wecom.enabled === true || v.wecom.enabled === 'true');
+    }
+    if (v.feishu) {
+      setVal('msg-feishu-webhook', v.feishu.webhook);
+      setVal('msg-feishu-secret', v.feishu.secret);
+      setMsgEnabled('feishu', v.feishu.enabled === true || v.feishu.enabled === 'true');
+    }
+    if (v.qq_onebot) {
+      setVal('msg-onebot-url', v.qq_onebot.url);
+      setVal('msg-onebot-token', v.qq_onebot.token);
+      setMsgOnebotTargetType(v.qq_onebot.target_type || 'group');
+      setVal('msg-onebot-target', v.qq_onebot.target);
+      setVal('msg-onebot-admin', v.qq_onebot.admin);
+      if (v.qq_onebot.event_token) { onebotEventToken = v.qq_onebot.event_token; }
+      renderOnebotCallback();
+      setMsgEnabled('onebot', v.qq_onebot.enabled === true || v.qq_onebot.enabled === 'true');
+    }
+    if (v.qq_official) {
+      setVal('msg-qqoff-appid', v.qq_official.app_id);
+      setVal('msg-qqoff-secret', v.qq_official.secret);
+      setVal('msg-qqoff-group', v.qq_official.group_id);
+      setMsgEnabled('qqoff', v.qq_official.enabled === true || v.qq_official.enabled === 'true');
     }
     if (v.tg) {
       setVal('msg-tg-token', v.tg.token);
@@ -1949,7 +2000,7 @@ const DEFAULT_CONFIGS = {
     av_file: '{title}{ext}',
   },
   'monitor': { dir: '', target: '' },
-  'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', token: '', encoding_aes_key: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false } },
+  'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', token: '', encoding_aes_key: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false }, feishu: { webhook: '', secret: '', enabled: false }, qq_onebot: { url: '', token: '', target_type: 'group', target: '', admin: '', event_token: '', enabled: false }, qq_official: { app_id: '', secret: '', group_id: '', enabled: false } },
   'full': { cid: '', local_path: '/media', video_ext: ['mp4','mkv','ts','avi','mov','rmvb','webm','flv','m2ts','wmv','mpg','iso'], image_ext: ['jpg','png','jpeg','webp'], data_ext: ['ass','srt','ssa','sub'] },
   'incr': { cron: '*/10 8-23 * * *' },
   'share': { folder: '' },

@@ -302,6 +302,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/poster/*path", func(c *gin.Context) { serveTMDBPoster(c, h.Config.DataDir) })
 		// Emby 图片代理（仪表盘：服务端注入 api_key，避免密钥出现在前端 URL）
 		r.GET("/embyimg", func(c *gin.Context) { h.EmbyImageProxy(c) })
+		// QQ OneBot 事件回调（NapCat 等推送事件；token 鉴权，私聊管理 QQ 触发指令）
+		r.POST("/onebot/event", h.OneBotEvent)
 
 						
 		// 刮削整理

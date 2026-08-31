@@ -116,6 +116,8 @@ func sendMediaNotifSingle(cfg *MessageConfig, e mediaNotifEntry) {
 			go sendTelegram(cfg.TG, caption)
 		}
 	}
+	// 飞书 / QQ OneBot / QQ 官方：文本推送（标题+详情）
+	sendExtraChannels(cfg, title, e.Line)
 	log.Printf("[通知] 入库通知已发送: %s", title)
 }
 
@@ -154,6 +156,8 @@ func sendMediaNotifBatch(cfg *MessageConfig, items []mediaNotifEntry) {
 			go sendTelegram(cfg.TG, caption)
 		}
 	}
+	// 飞书 / QQ OneBot / QQ 官方：文本汇总
+	sendExtraChannels(cfg, title, strings.Join(lines, "\n"))
 	log.Printf("[通知] 聚合入库通知已发送: %d 部", len(items))
 }
 

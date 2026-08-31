@@ -950,7 +950,7 @@ av:
     <div class="page" id="page-config-message">
       <div class="tabs">
         <div class="tab active" data-tab="msg-wecom" onclick="switchMsgTab('msg-wecom')">企业微信</div>
-        <div class="tab" data-tab="msg-tg" onclick="switchMsgTab('msg-tg')">TG 机器人</div>
+        <div class="tab" data-tab="msg-tg" onclick="switchMsgTab('msg-tg')">TG 机器人</div><div class="tab" data-tab="msg-feishu" onclick="switchMsgTab('msg-feishu')">飞书</div><div class="tab" data-tab="msg-onebot" onclick="switchMsgTab('msg-onebot')">QQ·OneBot</div><div class="tab" data-tab="msg-qqofficial" onclick="switchMsgTab('msg-qqofficial')">QQ 官方机器人</div>
       </div>
       <div class="tab-panel active" data-panel="msg-wecom">
         <div class="card">
@@ -970,6 +970,44 @@ av:
           <div class="form-row"><div class="label">Bot Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram BotFather 创建机器人后的 Token。</span></i></div><div class="control"><input type="password" id="msg-tg-token" autocomplete="off" title="双击显示/隐藏明文" placeholder="123456:ABC..."></div></div>
           <div class="form-row"><div class="label">Chat ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">Telegram 目标会话 ID，向 @userinfobot 发消息可查到。</span></i></div><div class="control"><input type="text" id="msg-tg-chat-id" placeholder="接收消息的 chat id"></div></div>
           <div class="form-row"><div class="label">状态<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后任务完成推送 Telegram 通知。</span></i></div><div class="control"><div class="segmented-control" id="msg-tg-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('tg', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('tg', false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
+        </div>
+      </div>
+
+      <!-- 飞书 -->
+      <div class="tab-panel" data-panel="msg-feishu">
+        <div class="card">
+          <div class="alert alert-info">飞书群「自定义机器人」：群设置 → 群机器人 → 添加自定义机器人，拿到 Webhook 地址（可加签名校验）。仅支持接收通知，不支持指令。</div>
+          <div class="form-row"><div class="label">Webhook 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">形如 https://open.feishu.cn/open-apis/bot/v2/hook/xxxx。</span></i></div><div class="control"><input type="text" id="msg-feishu-webhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"></div></div>
+          <div class="form-row"><div class="label">签名密钥<i class="help-tip" tabindex="0">?<span class="tip-bubble">添加机器人时若开启了「签名校验」才需要填，否则留空。</span></i></div><div class="control"><input type="password" id="msg-feishu-secret" autocomplete="off" title="双击显示/隐藏明文" placeholder="未开启签名校验则留空"></div></div>
+          <div class="form-row"><div class="label">状态</div><div class="control"><div class="segmented-control" id="msg-feishu-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('feishu', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('feishu', false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
+        </div>
+      </div>
+
+      <!-- QQ OneBot -->
+      <div class="tab-panel" data-panel="msg-onebot">
+        <div class="card">
+          <div class="alert alert-info">对接 NapCat / Lagrange / LLOneBot 等OneBot 实现：需要你自己运行一个 QQ 客户端容器并登录。支持通知推送 + 私聊指令（整理/同步/状态等，与管理后台互斥）。</div>
+          <div class="form-row"><div class="label">HTTP 地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">OneBot 实现的 HTTP 服务地址，如 http://127.0.0.1:3000（与 StrmHub 同一 compose 网络时用容器名）。</span></i></div><div class="control"><input type="text" id="msg-onebot-url" placeholder="http://127.0.0.1:3000"></div></div>
+          <div class="form-row"><div class="label">Access Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">OneBot 服务端配置的 access_token，未设置则留空。</span></i></div><div class="control"><input type="password" id="msg-onebot-token" autocomplete="off" title="双击显示/隐藏明文" placeholder="与服务端 access_token 一致，可留空"></div></div>
+          <div class="form-row"><div class="label">消息目标类型</div><div class="control"><div class="segmented-control" id="msg-onebot-target-type-switch"><div class="seg-item active" data-value="group" onclick="setMsgOnebotTargetType('group')">群聊</div><div class="seg-item" data-value="private" onclick="setMsgOnebotTargetType('private')">私聊</div></div></div></div>
+          <div class="form-row"><div class="label">目标群号 / QQ 号</div><div class="control"><input type="text" id="msg-onebot-target" placeholder="接收通知的群号或 QQ 号"></div></div>
+          <div class="form-row"><div class="label">管理 QQ（指令用）<i class="help-tip" tabindex="0">?<span class="tip-bubble">填你的 QQ 号。该 QQ 私聊机器人发送 整理/同步/状态 等指令会触发任务；留空则不启用双向指令。</span></i></div><div class="control"><input type="text" id="msg-onebot-admin" placeholder="你的 QQ 号（私聊指令）"></div></div>
+          <div class="form-row"><div class="label">事件回调 Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">OneBot「HTTP POST 上报」推事件到本服务时携带的鉴权 token。在本页保存后自动生成，把下方回调地址填到 OneBot 的 HTTP POST 配置里。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="msg-onebot-event-token" class="inline-input" placeholder="保存后自动生成"><span style="font-size:12px;color:var(--text-3)">回调地址：<code id="onebot-callback-url" style="font-size:12px"></code></span></div></div>
+          <div class="form-row"><div class="label">状态</div><div class="control"><div class="segmented-control" id="msg-onebot-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('onebot', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('onebot', false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
+        </div>
+      </div>
+
+      <!-- QQ 官方机器人 -->
+      <div class="tab-panel" data-panel="msg-qqofficial">
+        <div class="card">
+          <div class="alert alert-info">q.qq.com 注册的官方机器人：创建沙箱/正式群并获取群 ID（group_openid，可从官方回调事件里查看）。注意：官方群消息有审核与 @限制，适合通知推送；发送可能被平台拒绝。</div>
+          <div class="form-row"><div class="label">AppID<i class="help-tip" tabindex="0">?<span class="tip-bubble">q.qq.com 机器人管理页的 AppID。</span></i></div><div class="control"><input type="text" id="msg-qqoff-appid" placeholder="机器人 AppID"></div></div>
+          <div class="form-row"><div class="label">AppSecret<i class="help-tip" tabindex="0">?<span class="tip-bubble">机器人管理页的密钥，用于换取 access_token。</span></i></div><div class="control"><input type="password" id="msg-qqoff-secret" autocomplete="off" title="双击显示/隐藏明文" placeholder="机器人密钥"></div></div>
+          <div class="form-row"><div class="label">群 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">接收通知的群 ID（group_openid）。把机器人拉进群后，从官方事件推送里可以查到。</span></i></div><div class="control"><input type="text" id="msg-qqoff-group" placeholder="group_openid"></div></div>
+          <div class="form-row"><div class="label">状态</div><div class="control"><div class="segmented-control" id="msg-qqoff-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMsgEnabled('qqoff', true)">启用</div><div class="seg-item" data-value="false" onclick="setMsgEnabled('qqoff', false)">禁用</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('message')">保存配置</button><button class="btn btn-warning" onclick="resetConfig('message', this)" style="position:relative">重置配置</button><button class="btn btn-outline" onclick="testMessage(this)">测试通知</button></div><span class="test-result"></span></div></div>
         </div>
       </div>

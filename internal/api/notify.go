@@ -43,8 +43,68 @@ func settingValueCompat(key string) string {
 
 // MessageConfig 消息通知配置
 type MessageConfig struct {
-	Wecom WecomConfig `json:"wecom"`
-	TG    TGConfig    `json:"tg"`
+	Wecom      WecomConfig      `json:"wecom"`
+	TG         TGConfig         `json:"tg"`
+	Feishu     FeishuConfig     `json:"feishu"`
+	QQOneBot   QQOneBotConfig   `json:"qq_onebot"`
+	QQOfficial QQOfficialConfig `json:"qq_official"`
+}
+
+// FeishuConfig 飞书群自定义机器人（webhook 推送，可选签名）
+type FeishuConfig struct {
+	Enabled any    `json:"enabled"`
+	Webhook string `json:"webhook"`
+	Secret  string `json:"secret"`
+}
+
+func (c *FeishuConfig) isEnabled() bool {
+	switch v := c.Enabled.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
+}
+
+// QQOneBotConfig QQ OneBot HTTP 适配（NapCat / Lagrange / LLOneBot 等）
+type QQOneBotConfig struct {
+	Enabled    any    `json:"enabled"`
+	URL        string `json:"url"`         // OneBot HTTP 服务地址，如 http://127.0.0.1:3000
+	Token      string `json:"token"`       // access_token（与服务端 access_token 配置一致）
+	TargetType string `json:"target_type"` // group / private
+	Target     string `json:"target"`      // 群号或 QQ 号
+	Admin      string `json:"admin"`       // 管理 QQ（私聊指令触发任务用）
+	EventToken string `json:"event_token"` // 事件回调地址的鉴权 token
+}
+
+func (c *QQOneBotConfig) isEnabled() bool {
+	switch v := c.Enabled.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
+}
+
+// QQOfficialConfig QQ 官方机器人（q.qq.com，appid+secret）
+type QQOfficialConfig struct {
+	Enabled   any    `json:"enabled"`
+	AppID     string `json:"app_id"`
+	Secret    string `json:"secret"`
+	GroupID   string `json:"group_id"`  // 群 ID（group_openid）
+	LastMsgID string `json:"last_msg_id"` // 最近收到的消息 id（被动回复用，可选）
+}
+
+func (c *QQOfficialConfig) isEnabled() bool {
+	switch v := c.Enabled.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
 }
 
 // WecomConfig 企业微信配置（Token/EncodingAESKey 为机器人回调验签解密用）
@@ -189,6 +249,9 @@ func NotifyMessage(title, content string) {
 	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
 		go sendTelegram(cfg.TG, fullMsg)
 	}
+
+	// 飞书 / QQ OneBot / QQ 官方机器人
+	sendExtraChannels(cfg, title, content)
 }
 
 // NotifyMessageRich 富媒体通知：带封面图与链接。
@@ -431,8 +494,8 @@ func (h *Handler) TestMessage(c *gin.Context) {
 	errorMsg := ""
 
 	// 渠道状态预检：给出比"发送失败"更明确的指引
-	if !cfg.Wecom.isEnabled() && !cfg.TG.isEnabled() {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error": "企业微信和 TG 渠道都是禁用状态：请启用对应渠道的「状态」开关后再保存并测试"})
+	if !cfg.Wecom.isEnabled() && !cfg.TG.isEnabled() && !extraChannelsEnabled(cfg) {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "所有通知渠道都是禁用状态：请启用对应渠道的「状态」开关后再保存并测试"})
 		return
 	}
 	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID == "" {
@@ -458,6 +521,13 @@ func (h *Handler) TestMessage(c *gin.Context) {
 		} else {
 			successCount++
 		}
+	}
+
+	// 飞书 / QQ OneBot / QQ 官方（同步测试，错误逐渠道汇报）
+	if em, n := testExtraChannels(cfg, testMsg); em != "" {
+		errorMsg += em
+	} else {
+		successCount += n
 	}
 
 	if successCount > 0 {
