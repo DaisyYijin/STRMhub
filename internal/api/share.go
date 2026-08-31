@@ -60,9 +60,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	if shareCode == "" {
 		return "", 0, 0, fmt.Errorf("无法从链接解析分享码")
 	}
-	if code == "" {
-		return "", 0, 0, fmt.Errorf("请填写提取码")
-	}
+	// 提取码允许为空：无提取码分享直接转存（影巢解锁的资源可能不带访问码）
 	// 目标目录：参数优先，否则取分享同步配置的接收文件夹
 	if target == "" {
 		var cfg struct {
@@ -219,11 +217,21 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	return msg, success, fail, nil
 }
 
+// re115Share 115 分享链接（含 115cdn / anxia 新域名）；分享码可能带 - _
+var re115Share = regexp.MustCompile(`(?:115\.com|115cdn\.com|anxia\.com)/s/([a-zA-Z0-9_-]+)`)
+
+// reSharePass 分享链接内嵌提取码：?password=xxxx 或 #xxxx
+var reSharePass = regexp.MustCompile(`(?:[?&]password=|#)([A-Za-z0-9]+)`)
+
 // extractShareCode 从分享链接提取 share_code
 func extractShareCode(raw string) string {
-	m := regexp.MustCompile(`115\.com/s/([a-zA-Z0-9]+)`).FindStringSubmatch(raw)
-	if m != nil {
+	if m := re115Share.FindStringSubmatch(raw); m != nil {
 		return m[1]
 	}
 	return strings.TrimSpace(raw)
+}
+
+// is115ShareLink 判断链接是否为 115 分享（可自动转存的域）
+func is115ShareLink(raw string) bool {
+	return re115Share.MatchString(raw)
 }

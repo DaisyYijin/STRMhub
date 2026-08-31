@@ -46,6 +46,7 @@
       <div class="menu-item" data-page="sync"><span class="icon">⇄</span><span>账号同步</span></div>
       <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
       <div class="menu-item" data-page="upload-download"><span class="icon">⇅</span><span>上传下载</span></div>
+      <div class="menu-item" data-page="media-transfer"><span class="icon">⇣</span><span>影视转存</span></div>
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
       <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
@@ -713,6 +714,30 @@ av:
           <div class="alert alert-info">监控上传：把 Emby 刮削生成的标准元数据回传 115 —— 监控目录填本地媒体库根目录（如 /media），自动检测新产生的标准图片（poster/fanart/banner/seasonXX-poster 等）与 NFO（tvshow/movie/season/每集同名 .nfo），按相对路径上传到 115 对应目录。</div>
           <div class="form-row"><div class="label">监控目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地媒体库根目录（如 /media）。扫描 Emby 刮削生成的标准元数据（poster/fanart/seasonXX-poster 等 + NFO），自动回传 115 对应目录。目标固定为全量同步的媒体库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="monitor-dir" placeholder="本地媒体库根目录（如 /media）" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('monitor-dir')">选择目录</button></div></div></div>
                     <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('monitor')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('monitor', this)" style="position:relative">重置配置</button></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 影视转存（资源站搜索 → 解锁 → 115 转存 → 自动整理） -->
+    <div class="page" id="page-media-transfer">
+      <div class="tabs">
+        <div class="tab active" data-tab="mt-hdhive">影巢</div>
+        <div class="tab" style="opacity:.45;pointer-events:none">更多资源站（待开发）</div>
+      </div>
+      <div class="tab-panel active" data-panel="mt-hdhive">
+        <div class="card">
+          <div class="form-row"><div class="label">API Key<i class="help-tip" tabindex="0">?<span class="tip-bubble">登录 hdhive.com 后在站内申请 OpenAPI 应用，审核通过后获得。按天限额，429 表示当日额度用尽。</span></i></div><div class="control"><input type="text" id="hdhive-api-key" placeholder="hdhive.com OpenAPI 应用密钥" autocomplete="off"></div></div>
+          <div class="form-row"><div class="label">付费资源<i class="help-tip" tabindex="0">?<span class="tip-bubble">「仅免费」只解锁零积分资源，杜绝误扣积分；「允许积分」在免费失败时消耗积分解锁付费资源。</span></i></div><div class="control"><div class="segmented-control" id="hdhive-points-switch"><div class="seg-item active" data-value="false" onclick="hdhiveSetPoints(false)">仅免费</div><div class="seg-item" data-value="true" onclick="hdhiveSetPoints(true)">允许积分</div></div></div></div>
+          <div class="form-row"><div class="label">转存后整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后：解锁转存完成自动「识别→分类→重命名→增量同步」入库并生成 STRM。转存目录与「上传下载 → 转存下载」的接收文件夹共用。</span></i></div><div class="control"><div class="segmented-control" id="hdhive-organize-switch"><div class="seg-item active" data-value="true" onclick="hdhiveSetOrganize(true)">开启</div><div class="seg-item" data-value="false" onclick="hdhiveSetOrganize(false)">关闭</div></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="hdhiveSaveConfig(this)">保存配置</button> <button class="btn btn-outline" onclick="hdhiveTest(this)">测试连接</button></div></div>
+          <div id="hdhive-test-banner"></div>
+        </div>
+        <div class="card">
+          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目，再查影巢资源；输入纯数字 TMDB ID 可直连条目。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')hdhiveSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="hdhiveSearch()">搜索</button></div></div></div>
+          <div class="form-row"><div class="label"></div><div class="control" style="max-width:none"><div id="hdhive-tmdb-results"></div></div></div>
+        </div>
+        <div class="card" id="hdhive-res-card" style="display:none">
+          <div class="form-row"><div class="label">影巢资源</div><div class="control" style="max-width:none"><label style="font-size:13px;color:var(--text-2);display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="hdhive-show-invalid" onchange="hdhiveRenderResources()"> 显示已失效资源</label><div id="hdhive-res-list" style="margin-top:10px"></div></div></div>
         </div>
       </div>
     </div>

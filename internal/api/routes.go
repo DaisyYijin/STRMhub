@@ -354,6 +354,15 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
 
+		// 影视转存 · 影巢（TMDB 搜索 → 资源查询 → 解锁 → 115 转存）
+		protected.GET("/hdhive/config", h.HdhiveGetConfig)
+		protected.POST("/hdhive/config", h.HdhiveSaveConfig)
+		protected.POST("/hdhive/test", h.HdhiveTest)
+		protected.GET("/hdhive/tmdb/search", h.HdhiveTmdbSearch)
+		protected.GET("/hdhive/tmdbimg", h.HdhiveTmdbImg)
+		protected.GET("/hdhive/resources", h.HdhiveResources)
+		protected.POST("/hdhive/transfer", h.HdhiveTransfer)
+
 		// 离线下载（磁力/ed2k/HTTP）
 		protected.POST("/offline/add", h.offlineAddTask)
 		protected.GET("/offline/tasks", h.offlineTaskList)
