@@ -39,6 +39,7 @@ import (
 
 // RenameContext 重命名上下文（包含模板引擎需要的全部数据）
 type RenameContext struct {
+	Num         string // AV 番号（{num} 变量；AV 流程由 detectAVNumber 填充）
 	OriginalName string
 	Ext          string
 	Media        *TmdbMedia
@@ -52,13 +53,18 @@ type RenameContext struct {
 
 // buildRenameContext 构建重命名上下文
 func buildRenameContext(media *TmdbMedia, parsed *ParsedName, originalName string) *RenameContext {
-	return &RenameContext{
+	ctx := &RenameContext{
 		OriginalName: originalName,
 		Ext:          pathExt(originalName),
 		Media:        media,
 		Parsed:       parsed,
 		Resource:     ParseResourceInfo(originalName),
 	}
+	// AV 流程：番号就是 media.Title（detectAVNumber 的产出），供 {num} 使用
+	if media.MediaType == "av" {
+		ctx.Num = media.Title
+	}
+	return ctx
 }
 
 // ApplyTemplate 应用重命名模板，替换所有变量
@@ -170,6 +176,7 @@ func (ctx *RenameContext) allReplacements() map[string]string {
 		"{original_name}":     ctx.OriginalName,
 		"{ext}":              ctx.Ext,
 		"{custom_regex_match}": ctx.CustomRegex,
+		"{num}":              ctx.Num,
 
 		// TMDB 信息
 		"{title}":       ctx.Media.Title,

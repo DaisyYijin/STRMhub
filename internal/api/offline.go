@@ -221,7 +221,11 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 	time.Sleep(3 * time.Second)
 
 	if !fullSyncMu.TryLock() {
-		log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中）")
+		if running, tname, _, _ := TaskStatus(); running && tname != "" {
+			log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中：%s）", tname)
+		} else {
+			log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中）")
+		}
 		return false
 	}
 	defer fullSyncMu.Unlock()

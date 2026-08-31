@@ -628,6 +628,12 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	for cid := range dirSet {
 		base, ok, err := get115RelPath(cookie, cid, p.Cid, memo)
 		if err != nil {
+			// 目录已不存在（800001）：目录被删除后残留的定位请求是永久性失败，
+			// 重试永远不会成功、还会让水位永远不推进。按"已解决"跳过
+			if strings.Contains(err.Error(), "目录不存在") || strings.Contains(err.Error(), "800001") {
+				log.Printf("[同步] ○ 目录已不存在（事件残留），跳过: cid=%s", cid)
+				continue
+			}
 			log.Printf("[同步] 定位目录路径失败 cid=%s: %v", cid, err)
 			sum.DirsSkipped++
 			continue
