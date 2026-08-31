@@ -2,21 +2,25 @@ package api
 
 // ==================== 观影（GuanYing）资源站接入 ====================
 //
-// 观影是公开的网盘影视资源索引站（电影/剧集/动漫，条目挂网盘分享链接）。
-// 无需任何凭据：后端代理搜索与详情接口，从响应里提取网盘链接并按域名
-// 分类；115 链接可一键转存（复用 share.go 的 Cookie 通道），其他网盘
-// 复制链接手动转存。
+// 观影是服务端渲染的网盘资源索引站，全站两层门槛：
+//  1. PoW 反爬：未携带通行 Cookie 的请求会拿到「Loading...」中间页，
+//     需 GET /res/pow 取挑战 {N,x,t}，计算 y = x^(2^t) mod N（t 次平方），
+//     POST 回 /res/pow 换取放行 Cookie（RSW 工作量证明，Go big.Int 可解）
+//  2. 站内登录：搜索/详情仅登录用户可见，表单 POST /user/login
+//     （username/password/cookietime；服务端可能校验验证码，失败时
+//     请改用浏览器 Cookie 导入）
 //
-// 站点常换域名（gying.in 已失效，现行 观影.com），所以 base_url 做成
-// 可配置（影视转存 → 观影 → 站点设置）。接口无官方文档，实现按
-// 「多候选端点探测 + 字段无关提取」设计：不管上游字段叫什么，只要
-// 响应 JSON 里有网盘链接就能拿到。
+// 集成方式：账号密码登录（Cookie 持久化，站点会话过期自动重登）→
+// 搜索页/详情页 HTML 里按网盘域名提取链接 → 115 链接一键转存入库。
+// 站点常换域名（gying.in 已失效），base_url 可配置。
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -29,9 +33,14 @@ import (
 
 const gyDefaultBase = "https://www.xn--wcv59z.com"
 
+var gyUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
 // gyCfg 观影配置（setting key "guanying"）
 type gyCfg struct {
-	BaseURL string `json:"base_url"`
+	BaseURL  string            `json:"base_url"`
+	Username string            `json:"username"`
+	Password string            `json:"password"`
+	Cookies  map[string]string `json:"cookies"` // 站点会话 + PoW 放行 Cookie
 }
 
 var (
@@ -54,6 +63,9 @@ func loadGyCfg() *gyCfg {
 	if cfg.BaseURL == "" || !strings.HasPrefix(cfg.BaseURL, "http") {
 		cfg.BaseURL = gyDefaultBase
 	}
+	if cfg.Cookies == nil {
+		cfg.Cookies = map[string]string{}
+	}
 	gyCfgV = cfg
 	gyCfgAt = time.Now()
 	return cfg
@@ -73,55 +85,69 @@ func saveGyCfg(cfg *gyCfg) error {
 	return nil
 }
 
-// gyGet 带浏览器头的 GET（站点拦截非浏览器 UA）
-func gyGet(base, pathWithQuery string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, base+pathWithQuery, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return raw, nil
+// ==================== HTTP 客户端（Cookie Jar + PoW 自动过验证） ====================
+
+// gyJar 极简 CookieJar：单站点，名字→值
+type gyJar struct {
+	mu sync.Mutex
+	m  map[string]string
 }
 
-// ==================== 链接提取（字段无关） ====================
+func (j *gyJar) SetCookies(u *url.URL, cs []*http.Cookie) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, c := range cs {
+		j.m[c.Name] = c.Value
+	}
+}
 
-// gyLink 一条网盘链接
-type gyLink struct {
-	URL  string `json:"url"`
-	Code string `json:"code"` // 提取码/访问码（可能为空）
-	Pan  string `json:"pan"`  // 115/quark/baidu/xunlei/uc/ali/123/tianyi/magnet
+func (j *gyJar) Cookies(u *url.URL) []*http.Cookie {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	out := make([]*http.Cookie, 0, len(j.m))
+	for k, v := range j.m {
+		out = append(out, &http.Cookie{Name: k, Value: v})
+	}
+	return out
+}
+
+// gyClient 带 Jar 的 HTTP 客户端
+func gyClient(jar *gyJar) *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		Jar:     jar,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("重定向过多")
+			}
+			return nil
+		},
+	}
 }
 
 var (
-	gyPanRules = []struct {
-		pattern *regexp.Regexp
-		pan     string
-	}{
-		{regexp.MustCompile(`(?:115\.com|115cdn\.com|anxia\.com)/s/`), "115"},
-		{regexp.MustCompile(`pan\.quark\.cn/s/`), "quark"},
-		{regexp.MustCompile(`pan\.baidu\.com/s/`), "baidu"},
-		{regexp.MustCompile(`pan\.xunlei\.com/s/`), "xunlei"},
-		{regexp.MustCompile(`drive\.uc\.cn/s/`), "uc"},
-		{regexp.MustCompile(`(?:alipan|aliyundrive)\.com/s/`), "ali"},
-		{regexp.MustCompile(`123(?:pan|684|865|912)\.(?:com|cn)/s/`), "123"},
-		{regexp.MustCompile(`cloud\.189\.cn/[tw]/`), "tianyi"},
-		{regexp.MustCompile(`^magnet:\?xt=urn:btih:`), "magnet"},
-	}
-	reGyCode   = regexp.MustCompile(`(?:提取码|访问码|密码|pwd|pass(?:word)?|code)[=:：\s]*([A-Za-z0-9]{4})`)
 	reGyYear   = regexp.MustCompile(`(19|20)\d{2}`)
 	reHTMLText = regexp.MustCompile(`<[^>]+>`)
 )
+
+// gyPanRules 网盘链接识别（域名分类）
+var gyPanRules = []struct {
+	pattern *regexp.Regexp
+	pan     string
+}{
+	{regexp.MustCompile(`(?:115\.com|115cdn\.com|anxia\.com)/s/[a-zA-Z0-9_-]+`), "115"},
+	{regexp.MustCompile(`pan\.quark\.cn/s/[a-zA-Z0-9]+`), "quark"},
+	{regexp.MustCompile(`pan\.baidu\.com/s/[a-zA-Z0-9_-]+`), "baidu"},
+	{regexp.MustCompile(`pan\.xunlei\.com/s/[a-zA-Z0-9]+`), "xunlei"},
+	{regexp.MustCompile(`drive\.uc\.cn/s/[a-zA-Z0-9]+`), "uc"},
+	{regexp.MustCompile(`(?:alipan|aliyundrive)\.com/s/[a-zA-Z0-9]+`), "ali"},
+	{regexp.MustCompile(`123(?:pan|684|865|912)\.(?:com|cn)/s/[a-zA-Z0-9_-]+`), "123"},
+	{regexp.MustCompile(`cloud\.189\.cn/[tw]/[a-zA-Z0-9]+`), "tianyi"},
+	{regexp.MustCompile(`magnet:\?xt=urn:btih:[a-zA-Z0-9]{8,}`), "magnet"},
+}
 
 // gyDetectPan 按域名识别网盘类型，非网盘链接返回空
 func gyDetectPan(s string) string {
@@ -133,105 +159,318 @@ func gyDetectPan(s string) string {
 	return ""
 }
 
-// gyWalkJSON 递归遍历 JSON 树：收集所有网盘链接（同一字符串里的提取码一并带上）
-func gyWalkJSON(v any, links *[]gyLink, seen map[string]bool) {
-	switch t := v.(type) {
-	case string:
-		text := reHTMLText.ReplaceAllString(t, " ") // 剥掉混入的 HTML 标签后再匹配
-		// 一个字符串可能包含多条链接（空格/换行分隔），逐条找
-		for _, seg := range strings.FieldsFunc(text, func(r rune) bool {
-			return r == ' ' || r == '\n' || r == '\t' || r == '"' || r == '\'' || r == '<' || r == '>'
-		}) {
-			if pan := gyDetectPan(seg); pan != "" {
-				u := strings.TrimRight(seg, ",.;，。；）)")
-				if u != "" && !seen[u] {
-					seen[u] = true
-					link := gyLink{URL: u, Pan: pan}
-					if m := reGyCode.FindStringSubmatch(text); m != nil {
-						link.Code = m[1]
-					}
-					*links = append(*links, link)
-				}
-			}
-		}
-	case []any:
-		for _, e := range t {
-			gyWalkJSON(e, links, seen)
-		}
-	case map[string]any:
-		for _, e := range t {
-			gyWalkJSON(e, links, seen)
-		}
-	}
+// gyIsPow 判断响应是否为 PoW 验证中间页
+func gyIsPow(body string) bool {
+	return strings.Contains(body, "powSolve") || strings.Contains(body, "pow.core")
 }
 
-// gyPickString 从对象里按候选键名取第一个非空字符串
-func gyPickString(m map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
+// gyIsNoLogin 判断页面是否提示需要登录
+func gyIsNoLogin(body string) bool {
+	return strings.Contains(body, "nologin") || strings.Contains(body, "请登录后继续")
 }
 
-// gyFindArray 在响应里找条目数组：data 是数组就用，否则找 data.list / data.items
-func gyFindArray(raw []byte) []any {
-	var root map[string]any
-	if json.Unmarshal(raw, &root) != nil {
-		return nil
+// gyPow 过 PoW 验证：取挑战→反复平算→提交换 Cookie
+func gyPow(client *http.Client, base string) error {
+	resp, err := client.Get(base + "/res/pow")
+	if err != nil {
+		return fmt.Errorf("获取 PoW 挑战失败: %s", sanitizeWecomErr(err))
 	}
-	if arr, ok := root["data"].([]any); ok {
-		// data 直接是数组（空数组也原样返回）
-		if len(arr) == 0 {
-			return arr
-		}
-		if _, isObj := arr[0].(map[string]any); isObj {
-			return arr
-		}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	resp.Body.Close()
+	var ch struct {
+		N string `json:"N"`
+		X string `json:"x"`
+		T int    `json:"t"`
 	}
-	if data, ok := root["data"].(map[string]any); ok {
-		for _, k := range []string{"list", "items", "rows", "records"} {
-			if arr, ok := data[k].([]any); ok {
-				return arr
-			}
-		}
+	if json.Unmarshal(raw, &ch) != nil || ch.N == "" || ch.X == "" || ch.T <= 0 {
+		return fmt.Errorf("PoW 挑战解析失败: %s", truncateStr(string(raw), 100))
+	}
+	n, ok1 := new(big.Int).SetString(ch.N, 16)
+	y, ok2 := new(big.Int).SetString(ch.X, 16)
+	if !ok1 || !ok2 {
+		return fmt.Errorf("PoW 挑战数值非法")
+	}
+	// y = x^(2^t) mod N：等价于连续 t 次平方取模（RSW 谜题，无法并行加速）
+	for i := 0; i < ch.T; i++ {
+		y.Mul(y, y)
+		y.Mod(y, n)
+	}
+
+	form := url.Values{"y": {y.Text(16)}}
+	resp2, err := client.PostForm(base+"/res/pow", form)
+	if err != nil {
+		return fmt.Errorf("提交 PoW 结果失败: %s", sanitizeWecomErr(err))
+	}
+	raw2, _ := io.ReadAll(io.LimitReader(resp2.Body, 16<<10))
+	resp2.Body.Close()
+	var vr struct {
+		Success bool `json:"success"`
+	}
+	if json.Unmarshal(raw2, &vr) != nil || !vr.Success {
+		return fmt.Errorf("PoW 验证被拒: %s", truncateStr(string(raw2), 100))
 	}
 	return nil
 }
 
-// ==================== HTTP 处理器 ====================
-
-// GyGetConfig GET /guanying/config
-func (h *Handler) GyGetConfig(c *gin.Context) {
-	cfg := loadGyCfg()
-	c.JSON(http.StatusOK, gin.H{"base_url": cfg.BaseURL, "default_base": gyDefaultBase})
+// gyDo 带自动过 PoW 的页面请求：返回响应正文（字符串）
+func gyDo(client *http.Client, base, method, path string, form url.Values) (string, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var bodyReader io.Reader
+		if form != nil {
+			bodyReader = strings.NewReader(form.Encode())
+		}
+		req, err := http.NewRequest(method, base+path, bodyReader)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", gyUA)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+		if form != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		body := string(raw)
+		if gyIsPow(body) && attempt == 0 {
+			if err := gyPow(client, base); err != nil {
+				return "", err
+			}
+			continue // 过完验证重放原请求
+		}
+		return body, nil
+	}
+	return "", fmt.Errorf("PoW 验证后请求仍未通过")
 }
 
-// GySaveConfig POST /guanying/config {base_url}
-func (h *Handler) GySaveConfig(c *gin.Context) {
-	var req gyCfg
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+// gyLoggedIn 探测当前会话是否已登录（首页是否出现退出入口）
+func gyLoggedIn(client *http.Client, base string) (bool, error) {
+	body, err := gyDo(client, base, http.MethodGet, "/", nil)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(body, "/user/logout"), nil
+}
+
+// gyLoginOnce 账号密码登录（返回站点层错误原因）
+func gyLoginOnce(client *http.Client, base, username, password string) error {
+	form := url.Values{
+		"username":          {username},
+		"password":          {password},
+		"cookietime":        {"1"},
+		"captcha-submit-info": {""},
+		"button":            {""},
+	}
+	body, err := gyDo(client, base, http.MethodPost, "/user/login", form)
+	if err != nil {
+		return err
+	}
+	// 登录响应可能是中间跳转页，探测一次会话状态确认
+	ok, err := gyLoggedIn(client, base)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// 提示语提取（宽容匹配常见文案）
+		hint := ""
+		for _, kw := range []string{"验证码", "密码错误", "不存在", "封禁", "失败"} {
+			if strings.Contains(body, kw) {
+				hint = kw
+				break
+			}
+		}
+		if hint != "" {
+			return fmt.Errorf("登录未通过（%s）", hint)
+		}
+		return fmt.Errorf("登录未通过（账号密码不对，或站点要求验证码——可改用浏览器 Cookie 导入）")
+	}
+	return nil
+}
+
+// gyEnsureClient 载入 Cookie 构建客户端
+func gyEnsureClient(cfg *gyCfg) *http.Client {
+	jar := &gyJar{m: map[string]string{}}
+	for k, v := range cfg.Cookies {
+		jar.m[k] = v
+	}
+	return gyClient(jar)
+}
+
+// ==================== 链接提取 ====================
+
+// gyLink 一条网盘链接
+type gyLink struct {
+	URL  string `json:"url"`
+	Code string `json:"code"`
+	Pan  string `json:"pan"`
+}
+
+var (
+	reGyCode  = regexp.MustCompile(`(?:提取码|访问码|密码|pwd|pass(?:word)?|code)[=:：\s]*([A-Za-z0-9]{4})`)
+	reScript  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+	reAnchor  = regexp.MustCompile(`(?is)<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>`)
+	reTitle   = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+	reTagNFmt = regexp.MustCompile(`\s+`)
+)
+
+// gyHTMLUnescape 基本实体反转义
+func gyHTMLUnescape(s string) string {
+	r := strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&#39;", "'", "&apos;", "'")
+	return r.Replace(s)
+}
+
+// gyExtractAnchors 从页面提取内链条目（href, 文本），过滤导航
+func gyExtractAnchors(body string) []gin.H {
+	clean := reScript.ReplaceAllString(body, "")
+	out := []gin.H{}
+	seen := map[string]bool{}
+	for _, m := range reAnchor.FindAllStringSubmatch(clean, -1) {
+		href := strings.TrimSpace(m[1])
+		if href == "" || href[0] != '/' {
+			continue
+		}
+		for _, bad := range []string{"/user", "/search", "/res/", "/help", "/about", "favicon"} {
+			if strings.HasPrefix(href, bad) {
+				href = ""
+				break
+			}
+		}
+		if href == "" || seen[href] {
+			continue
+		}
+		text := reTagNFmt.ReplaceAllString(strings.TrimSpace(gyHTMLUnescape(reHTMLText.ReplaceAllString(m[2], " "))), " ")
+		if len([]rune(text)) < 2 || len([]rune(text)) > 80 {
+			continue
+		}
+		seen[href] = true
+		out = append(out, gin.H{"href": href, "title": text})
+		if len(out) >= 30 {
+			break
+		}
+	}
+	return out
+}
+
+// gyExtractLinks 从 HTML 里提取全部网盘链接（href + 正文），带邻近提取码
+func gyExtractLinks(body string) []gyLink {
+	clean := reScript.ReplaceAllString(body, "")
+	clean = gyHTMLUnescape(clean)
+	links := []gyLink{}
+	seen := map[string]bool{}
+	for _, r := range gyPanRules {
+		for _, loc := range r.pattern.FindAllStringIndex(clean, -1) {
+			u := clean[loc[0]:loc[1]]
+			// 站点文本里常省略协议头，归一化成完整链接（磁力本身无协议头）
+			if r.pan != "magnet" && !strings.HasPrefix(u, "http") {
+				u = "https://" + u
+			}
+			if seen[u] {
+				continue
+			}
+			seen[u] = true
+			link := gyLink{URL: u, Pan: r.pan}
+			// 提取码通常跟在链接附近
+			window := clean[loc[1]:]
+			if len(window) > 200 {
+				window = window[:200]
+			}
+			if m := reGyCode.FindStringSubmatch(window); m != nil {
+				link.Code = m[1]
+			}
+			links = append(links, link)
+			if len(links) >= 40 {
+				return links
+			}
+		}
+	}
+	return links
+}
+
+// ==================== HTTP 处理器 ====================
+
+// GyGetConfig GET /guanying/config（回填用；密码原样回传便于编辑，站点凭据非高敏）
+func (h *Handler) GyGetConfig(c *gin.Context) {
+	cfg := loadGyCfg()
+	loggedIn := false
+	if len(cfg.Cookies) > 0 {
+		client := gyEnsureClient(cfg)
+		loggedIn, _ = gyLoggedIn(client, cfg.BaseURL)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"base_url":  cfg.BaseURL,
+		"username":  cfg.Username,
+		"password":  cfg.Password,
+		"logged_in": loggedIn,
+		"has_cookies": len(cfg.Cookies) > 0,
+	})
+}
+
+// GyLogin POST /guanying/login {base_url?, username, password}
+// 保存凭据 → 过 PoW → 表单登录 → 会话 Cookie 持久化
+func (h *Handler) GyLogin(c *gin.Context) {
+	var req struct {
+		BaseURL  string `json:"base_url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写账号和密码"})
 		return
 	}
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
-	if req.BaseURL == "" {
-		req.BaseURL = gyDefaultBase
+	cfg := loadGyCfg()
+	if strings.TrimSpace(req.BaseURL) != "" {
+		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
 	}
-	if !strings.HasPrefix(req.BaseURL, "http://") && !strings.HasPrefix(req.BaseURL, "https://") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "站点地址需以 http(s):// 开头"})
+	cfg.Username = strings.TrimSpace(req.Username)
+	cfg.Password = req.Password
+
+	jar := &gyJar{m: map[string]string{}}
+	client := gyClient(jar)
+	if err := gyLoginOnce(client, cfg.BaseURL, cfg.Username, cfg.Password); err != nil {
+		log.Printf("[观影] ✗ 登录失败: %v", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	if err := saveGyCfg(&req); err != nil {
+	cfg.Cookies = jar.m
+	if err := saveGyCfg(cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存会话失败: " + err.Error()})
+		return
+	}
+	log.Printf("[观影] ✓ 登录成功（%s）", cfg.Username)
+	c.JSON(http.StatusOK, gin.H{"message": "登录成功"})
+}
+
+// GyLogout POST /guanying/logout → 清空会话
+func (h *Handler) GyLogout(c *gin.Context) {
+	cfg := loadGyCfg()
+	cfg.Cookies = map[string]string{}
+	if err := saveGyCfg(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
 		return
 	}
-	log.Printf("[观影] ✓ 站点地址已保存: %s", req.BaseURL)
-	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
+	log.Printf("[观影] ○ 已退出登录")
+	c.JSON(http.StatusOK, gin.H{"message": "已退出登录"})
 }
 
-// GySearch GET /guanying/search?query=xxx
+// gyAutoLogin Cookie 失效时用存储的凭据自动重登
+func gyAutoLogin(cfg *gyCfg) error {
+	if cfg.Username == "" || cfg.Password == "" {
+		return fmt.Errorf("未保存观影账号，请先登录")
+	}
+	jar := &gyJar{m: map[string]string{}}
+	client := gyClient(jar)
+	if err := gyLoginOnce(client, cfg.BaseURL, cfg.Username, cfg.Password); err != nil {
+		return err
+	}
+	cfg.Cookies = jar.m
+	return saveGyCfg(cfg)
+}
+
+// GySearch GET /guanying/search?query=xxx → 解析搜索结果页条目
 func (h *Handler) GySearch(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("query"))
 	if q == "" {
@@ -239,123 +478,72 @@ func (h *Handler) GySearch(c *gin.Context) {
 		return
 	}
 	cfg := loadGyCfg()
-	raw, err := gyGet(cfg.BaseURL, "/api/v1/search?keyword="+url.QueryEscape(q)+"&page=1")
+	client := gyEnsureClient(cfg)
+	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q), nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error() + "（站点换域名时请在站点设置里更新地址）"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error() + "（站点换域名时请更新站点地址）"})
 		return
 	}
-	arr := gyFindArray(raw)
-	items := make([]gin.H, 0, len(arr))
-	for _, e := range arr {
-		m, ok := e.(map[string]any)
-		if !ok {
-			continue
+	// 会话失效 → 自动重登一次
+	if gyIsNoLogin(body) {
+		if err := gyAutoLogin(cfg); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "观影需要登录（站点设置里填写账号密码，或登录已失效）: " + err.Error()})
+			return
 		}
-		title := gyPickString(m, "title", "name", "vod_name", "video_name")
-		if title == "" {
-			continue
+		client = gyEnsureClient(cfg)
+		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q), nil)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
+			return
 		}
-		year := gyPickString(m, "year", "date", "release_date", "year_title")
-		if ym := reGyYear.FindString(year); ym != "" {
-			year = ym
-		} else {
-			year = ""
-		}
-		id := ""
-		switch v := m["id"].(type) {
-		case string:
-			id = v
-		case float64:
-			id = fmt.Sprintf("%.0f", v)
-		}
-		if id == "" {
-			id = gyPickString(m, "uuid", "slug", "vod_id", "_id")
-		}
-		if id == "" {
-			continue
-		}
-		items = append(items, gin.H{
-			"id":     id,
-			"title":  title,
-			"year":   year,
-			"poster": gyPickString(m, "poster", "pic", "cover", "image", "img"),
-			"type":   gyPickString(m, "type", "category", "channel", "type_name"),
-		})
-		if len(items) >= 24 {
-			break
+		if gyIsNoLogin(body) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "重登后仍未通过（账号可能被封或需要验证码），请检查账号"})
+			return
 		}
 	}
+	items := gyExtractAnchors(body)
 	c.JSON(http.StatusOK, gin.H{"data": items})
 }
 
-// gyDetailPaths 详情接口候选（无官方文档，按常见命名探测，命中即用）
-var gyDetailPaths = []string{"/api/v1/detail", "/api/v1/resource", "/api/v1/video", "/api/v1/item", "/api/v1/info"}
-
-// GyResources GET /guanying/resources?id=xxx
+// GyResources GET /guanying/resources?path=/xxx → 详情页提取网盘链接
 func (h *Handler) GyResources(c *gin.Context) {
-	id := strings.TrimSpace(c.Query("id"))
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少条目 ID"})
+	p := strings.TrimSpace(c.Query("path"))
+	if p == "" || !strings.HasPrefix(p, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少条目路径"})
 		return
 	}
 	cfg := loadGyCfg()
-	var lastErr string
-	for _, p := range gyDetailPaths {
-		raw, err := gyGet(cfg.BaseURL, p+"?id="+url.QueryEscape(id))
-		if err != nil {
-			lastErr = p + ": " + err.Error()
-			continue
-		}
-		var links []gyLink
-		seen := map[string]bool{}
-		gyWalkJSON(raw, &links, seen)
-		if len(links) > 0 {
-			// 标题：顺手从响应里挑一个像标题的字段
-			var obj map[string]any
-			_ = json.Unmarshal(raw, &obj)
-			title := gyFindTitle(obj, 0)
-			log.Printf("[观影] ▣ 详情命中 %s：提取到 %d 条链接（%s）", p, len(links), truncateStr(title, 40))
-			c.JSON(http.StatusOK, gin.H{"data": links, "title": title, "endpoint": p})
+	client := gyEnsureClient(cfg)
+	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error()})
+		return
+	}
+	if gyIsNoLogin(body) {
+		if err := gyAutoLogin(cfg); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已失效: " + err.Error()})
 			return
 		}
-		lastErr = p + ": 响应中无网盘链接"
+		client = gyEnsureClient(cfg)
+		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
+			return
+		}
 	}
-	log.Printf("[观影] ✗ 详情接口未命中（id=%s）：%s", id, lastErr)
-	c.JSON(http.StatusBadGateway, gin.H{"error": "详情接口未命中（站点可能已改版，请把这条日志发给开发者）: " + lastErr})
+	links := gyExtractLinks(body)
+	title := ""
+	if m := reTitle.FindStringSubmatch(body); m != nil {
+		title = gyHTMLUnescape(strings.TrimSpace(m[1]))
+	}
+	c.JSON(http.StatusOK, gin.H{"data": links, "title": title})
 }
 
-// gyFindTitle 递归找第一个像标题的字符串值（限制深度防爆栈）
-func gyFindTitle(v any, depth int) string {
-	if depth > 4 {
-		return ""
-	}
-	switch t := v.(type) {
-	case map[string]any:
-		if s := gyPickString(t, "title", "name", "vod_name", "video_name"); s != "" {
-			return s
-		}
-		for _, e := range t {
-			if s := gyFindTitle(e, depth+1); s != "" {
-				return s
-			}
-		}
-	case []any:
-		for _, e := range t {
-			if s := gyFindTitle(e, depth+1); s != "" {
-				return s
-			}
-		}
-	}
-	return ""
-}
-
-// GyTransfer POST /guanying/transfer {url, code, target_cid?}
-// 仅 115 分享可自动转存（复用 Cookie 通道 + 自动整理闭环）
+// GyTransfer POST /guanying/transfer {url, code} → 115 分享自动转存
 func (h *Handler) GyTransfer(c *gin.Context) {
 	var req struct {
-		URL       string `json:"url"`
-		Code      string `json:"code"`
-		TargetCID string `json:"target_cid"`
+		URL  string `json:"url"`
+		Code string `json:"code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少链接"})
@@ -365,7 +553,7 @@ func (h *Handler) GyTransfer(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持 115 分享链接的自动转存，其他网盘请复制链接手动转存"})
 		return
 	}
-	msg, ok, fail, err := h.shareReceiveCore(req.URL, req.Code, req.TargetCID, true)
+	msg, ok, fail, err := h.shareReceiveCore(req.URL, req.Code, "", true)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

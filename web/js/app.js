@@ -2854,9 +2854,10 @@ async function hdhiveRevoke(btn) {
 }
 
 // ==================== 影视转存 · 观影 ====================
-// 公开网盘资源索引站：搜索 → 条目 → 网盘链接；115 链接一键转存入库，
-// 其他网盘复制链接手动保存。站点常换域名，地址在站点设置里可改。
+// 站点为 SSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
+// 会话 Cookie 持久化（失效自动重登）。115 链接一键转存，其他网盘复制。
 let gyCurrentLinks = [];
+let gyCurrentHrefs = [];
 
 const GY_PAN_LABEL = {
   '115': ['115 网盘', '#eafaf0', '#00874a'],
@@ -2869,26 +2870,66 @@ const GY_PAN_LABEL = {
   'tianyi': ['天翼', '#eaf6ff', '#1272b8'],
   'magnet': ['磁力', 'var(--fill-2)', 'var(--text-2)'],
 };
+let gyStatusLoaded = false;
 
 async function gyLoadPage() {
-  if (document.getElementById('gy-base').value) return; // 已回填过（切 Tab 不重拉）
   try {
     const d = await api('/guanying/config');
     document.getElementById('gy-base').value = d.base_url || '';
+    document.getElementById('gy-username').value = d.username || '';
+    document.getElementById('gy-password').value = d.password || '';
+    gyRenderStatus(d.logged_in, d.has_cookies);
   } catch (e) { console.error('[观影] 配置回填失败:', e.message); }
 }
 
-async function gySaveBase(btn) {
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+function gyRenderStatus(loggedIn, hasCookies) {
+  const el = document.getElementById('gy-login-status');
+  const outBtn = document.getElementById('gy-logout-btn');
+  if (!el) return;
+  if (loggedIn) {
+    el.textContent = '● 已登录';
+    el.style.color = 'var(--success)';
+    if (outBtn) outBtn.style.display = '';
+  } else if (hasCookies) {
+    el.textContent = '○ 会话失效，请重新登录';
+    el.style.color = '#b26a00';
+    if (outBtn) outBtn.style.display = 'none';
+  } else {
+    el.textContent = '● 未登录';
+    el.style.color = 'var(--text-3)';
+    if (outBtn) outBtn.style.display = 'none';
+  }
+}
+
+async function gyLogin(btn) {
+  const username = document.getElementById('gy-username').value.trim();
+  const password = document.getElementById('gy-password').value;
+  if (!username || !password) { toast('请填写观影账号和密码'); return; }
+  const orig = btn.textContent;
+  btn.disabled = true;
+  // PoW 反爬验证需要几秒计算，提示延长等待
+  btn.textContent = '登录中（站点反爬验证约需数秒）…';
   try {
-    await api('/guanying/config', {
+    const d = await api('/guanying/login', {
       method: 'POST',
-      body: JSON.stringify({ base_url: document.getElementById('gy-base').value.trim() }),
+      body: JSON.stringify({ base_url: document.getElementById('gy-base').value.trim(), username, password }),
     });
-    toast('站点地址已保存');
+    toast(d.message || '登录成功');
+    gyRenderStatus(true, true);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function gyLogout(btn) {
+  try {
+    await api('/guanying/logout', { method: 'POST' });
+    toast('已退出登录');
+    gyRenderStatus(false, false);
   } catch (e) { toast(e.message); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
 
 async function gySearch() {
@@ -2904,11 +2945,10 @@ async function gySearch() {
       return;
     }
     box.innerHTML = '<div class="otk">' + items.map((it, i) => {
-      const safeId = String(it.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safeId + '\',this)">'
-      + '<span class="otag" style="background:#eef0ff;color:#5b5fc7">' + esc(it.type || '条目') + '</span>'
-      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div>'
-      + '<div class="otk-sub"><span>' + esc(it.year || '') + '</span></div></div>'
+      const safePath = String(it.href).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safePath + '\',this)">'
+      + '<span class="otag" style="background:#eef0ff;color:#5b5fc7">条目</span>'
+      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div></div>'
       + '<div class="otk-side" style="color:var(--primary)">查看链接 ›</div>'
       + '</div>';
     }).join('') + '</div>';
@@ -2917,7 +2957,7 @@ async function gySearch() {
   }
 }
 
-async function gyPick(id, el) {
+async function gyPick(path, el) {
   if (el) {
     el.parentElement.querySelectorAll(':scope > .otk-row').forEach(n => n.style.background = '');
     el.style.background = 'var(--fill-1, #f7f8fa)';
@@ -2927,7 +2967,7 @@ async function gyPick(id, el) {
   card.style.display = '';
   list.innerHTML = '<span style="color:var(--text-3)">提取网盘链接中…</span>';
   try {
-    const d = await api('/guanying/resources?id=' + encodeURIComponent(id));
+    const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
     gyRenderLinks(d.data || [], d.title || '');
   } catch (e) {
     list.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
