@@ -353,6 +353,13 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 整理→同步闭环
 		protected.POST("/organize/pipeline", h.RunOrganizePipeline)
 
+		// 影视转存 · 观影（公开网盘资源索引，无需凭据；115 链接可自动转存）
+		protected.GET("/guanying/config", h.GyGetConfig)
+		protected.POST("/guanying/config", h.GySaveConfig)
+		protected.GET("/guanying/search", h.GySearch)
+		protected.GET("/guanying/resources", h.GyResources)
+		protected.POST("/guanying/transfer", h.GyTransfer)
+
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
 

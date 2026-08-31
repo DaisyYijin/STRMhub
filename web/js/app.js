@@ -75,7 +75,7 @@ const PAGE_TITLES = {
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
-  'media-transfer': ['影视转存', '影巢账号授权 / 资源站接入'],
+  'media-transfer': ['影视转存', '影巢授权 / 观影资源 / 更多资源站'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
   'dashboard': ['仪表盘', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
@@ -154,7 +154,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') loadHdhivePage();
+  if (id === 'media-transfer') { loadHdhivePage(); gyLoadPage(); }
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
@@ -2851,4 +2851,157 @@ async function hdhiveRevoke(btn) {
     document.getElementById('hdhive-auth-btn').textContent = '授权影巢账号';
     hdhiveLoadUser();
   } catch (e) { toast(e.message); }
+}
+
+// ==================== 影视转存 · 观影 ====================
+// 公开网盘资源索引站：搜索 → 条目 → 网盘链接；115 链接一键转存入库，
+// 其他网盘复制链接手动保存。站点常换域名，地址在站点设置里可改。
+let gyCurrentLinks = [];
+
+const GY_PAN_LABEL = {
+  '115': ['115 网盘', '#eafaf0', '#00874a'],
+  'quark': ['夸克', '#eef0ff', '#5b5fc7'],
+  'baidu': ['百度', '#e8f1ff', '#1664d9'],
+  'xunlei': ['迅雷', '#e9f6ff', '#0e7ac4'],
+  'uc': ['UC', '#f3ecff', '#7a3fd4'],
+  'ali': ['阿里', '#fff8e1', '#a66c00'],
+  '123': ['123 盘', '#eafaf0', '#1d8a4e'],
+  'tianyi': ['天翼', '#eaf6ff', '#1272b8'],
+  'magnet': ['磁力', 'var(--fill-2)', 'var(--text-2)'],
+};
+
+async function gyLoadPage() {
+  if (document.getElementById('gy-base').value) return; // 已回填过（切 Tab 不重拉）
+  try {
+    const d = await api('/guanying/config');
+    document.getElementById('gy-base').value = d.base_url || '';
+  } catch (e) { console.error('[观影] 配置回填失败:', e.message); }
+}
+
+async function gySaveBase(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    await api('/guanying/config', {
+      method: 'POST',
+      body: JSON.stringify({ base_url: document.getElementById('gy-base').value.trim() }),
+    });
+    toast('站点地址已保存');
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function gySearch() {
+  const q = document.getElementById('gy-query').value.trim();
+  if (!q) { toast('请输入影视名称'); return; }
+  const box = document.getElementById('gy-results');
+  box.innerHTML = '<span style="color:var(--text-3)">搜索观影资源中…</span>';
+  try {
+    const d = await api('/guanying/search?query=' + encodeURIComponent(q));
+    const items = d.data || [];
+    if (!items.length) {
+      box.innerHTML = '<span style="color:var(--text-3)">观影站内没有找到「' + esc(q) + '」的资源</span>';
+      return;
+    }
+    box.innerHTML = '<div class="otk">' + items.map((it, i) => {
+      const safeId = String(it.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safeId + '\',this)">'
+      + '<span class="otag" style="background:#eef0ff;color:#5b5fc7">' + esc(it.type || '条目') + '</span>'
+      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div>'
+      + '<div class="otk-sub"><span>' + esc(it.year || '') + '</span></div></div>'
+      + '<div class="otk-side" style="color:var(--primary)">查看链接 ›</div>'
+      + '</div>';
+    }).join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+  }
+}
+
+async function gyPick(id, el) {
+  if (el) {
+    el.parentElement.querySelectorAll(':scope > .otk-row').forEach(n => n.style.background = '');
+    el.style.background = 'var(--fill-1, #f7f8fa)';
+  }
+  const card = document.getElementById('gy-res-card');
+  const list = document.getElementById('gy-res-list');
+  card.style.display = '';
+  list.innerHTML = '<span style="color:var(--text-3)">提取网盘链接中…</span>';
+  try {
+    const d = await api('/guanying/resources?id=' + encodeURIComponent(id));
+    gyRenderLinks(d.data || [], d.title || '');
+  } catch (e) {
+    list.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+  }
+}
+
+function gyRenderLinks(links, title) {
+  const list = document.getElementById('gy-res-list');
+  gyCurrentLinks = links || [];
+  if (!links.length) {
+    list.innerHTML = '<span style="color:var(--text-3)">该条目暂无网盘链接</span>';
+    return;
+  }
+  list.innerHTML = (title ? '<div style="font-weight:600;margin-bottom:8px">' + esc(title) + '（' + links.length + ' 条链接）</div>' : '')
+    + '<div class="otk">' + links.map((l, i) => {
+      const [label, bg, fg] = GY_PAN_LABEL[l.pan] || [l.pan, 'var(--fill-2)', 'var(--text-2)'];
+      const is115 = l.pan === '115';
+      const shown = l.url.length > 64 ? l.url.slice(0, 64) + '…' : l.url;
+      return '<div class="otk-row" id="gy-link-' + i + '">'
+        + '<span class="otag" style="background:' + bg + ';color:' + fg + '">' + esc(label) + '</span>'
+        + '<div class="otk-main"><div class="otk-name" style="font-family:Consolas,Monaco,monospace;font-size:12.5px" title="' + esc(l.url) + '">' + esc(shown) + '</div>'
+        + '<div class="otk-sub"><span>' + (l.code ? '提取码 ' + esc(l.code) : '无提取码') + '</span></div>'
+        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+        + '<div class="otk-side">'
+        + (is115
+          ? '<button class="btn btn-primary btn-sm" onclick="gyTransfer(' + i + ',this)">转存到 115</button> '
+          : '')
+        + '<button class="btn btn-outline btn-sm" onclick="gyCopyLink(' + i + ')">复制</button>'
+        + '</div></div>';
+    }).join('') + '</div>';
+}
+
+async function gyTransfer(i, btn) {
+  const link = gyCurrentLinks[i];
+  if (!link) return;
+  const row = document.getElementById('gy-link-' + i);
+  const st = row ? row.querySelector('.gy-st') : null;
+  btn.disabled = true;
+  btn.textContent = '转存中…';
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '转存中…'; }
+  try {
+    const d = await api('/guanying/transfer', {
+      method: 'POST',
+      body: JSON.stringify({ url: link.url, code: link.code || '' }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '转存完成'); }
+    btn.textContent = '已转存';
+    toast('转存完成，整理入库已触发');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+    btn.disabled = false;
+    btn.textContent = '转存到 115';
+  }
+}
+
+// 复制（http 环境无 clipboard API 时退回 execCommand）
+function gyCopyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => toast('已复制'), () => gyCopyFallback(text));
+  } else {
+    gyCopyFallback(text);
+  }
+}
+function gyCopyFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); toast('已复制'); } catch (e) { toast('复制失败，请手动复制'); }
+  document.body.removeChild(ta);
+}
+function gyCopyLink(i) {
+  const link = gyCurrentLinks[i];
+  if (!link) return;
+  gyCopyText(link.url + (link.code ? ' 提取码: ' + link.code : ''));
 }
