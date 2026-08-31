@@ -887,21 +887,33 @@ function offlineTaskRow(t) {
     if (typeof p === 'string' && p && !isNaN(parseFloat(p))) return parseFloat(p);
     return -1;
   })();
-  let badge = '', progress = '<span style="color:var(--text-3)">—</span>';
-  if (st === -1) badge = '<span style="color:var(--danger)">⚠ 失败</span>';
-  else if (st === 2) badge = '<span style="color:var(--success)">✓ 完成</span>';
+  let badge;
+  if (st === -1)      badge = '<span class="otag" style="background:#ffece8;color:#b3231d">失败</span>';
+  else if (st === 2)  badge = '<span class="otag" style="background:#eafaf0;color:#00874a">完成</span>';
+  else if (st === 1 || (pct >= 0 && pct < 100))
+                      badge = '<span class="otag" style="background:#e8f1ff;color:#1664d9">下载中</span>';
+  else                badge = '<span class="otag" style="background:var(--fill-2);color:var(--text-3)">等待</span>';
+  let progress = '<span style="color:var(--text-4)">—</span>';
+  if (st === 2) progress = '<span style="color:var(--success)">100%</span>';
   else if (st === 1 || (pct >= 0 && pct < 100)) {
-    badge = '<span style="color:var(--primary)">⬇ 下载中</span>';
     const w = Math.max(0, Math.min(100, pct < 0 ? 0 : pct)).toFixed(1);
-    progress = '<div style="display:flex;align-items:center;gap:6px">' +
-      '<div style="background:var(--fill-2);border-radius:4px;height:8px;width:90px;flex:none"><div style="background:var(--primary);height:100%;border-radius:4px;width:' + w + '%"></div></div>' +
-      '<span style="font-size:12px;color:var(--text-3);min-width:44px">' + w + '%</span></div>';
-  } else badge = '<span style="color:var(--text-3)">⏳ 等待</span>';
+    progress = '<div style="display:flex;align-items:center;gap:8px">' +
+      '<div style="background:var(--fill-2);border-radius:99px;height:6px;width:110px;flex:none"><div style="background:var(--primary);height:100%;border-radius:99px;width:' + w + '%"></div></div>' +
+      '<span style="font-size:12px;color:var(--text-3);min-width:42px">' + w + '%</span></div>';
+  }
   const size = t.size && Number(t.size) > 0 ? fmtSize(Number(t.size)) : '—';
-  return '<tr><td style="white-space:nowrap">' + badge + '</td>' +
-    '<td style="max-width:0;width:100%"><span style="word-break:break-all">' + name + '</span></td>' +
-    '<td style="white-space:nowrap;color:var(--text-3)">' + size + '</td>' +
-    '<td style="white-space:nowrap">' + progress + '</td></tr>';
+  let doneAt = '<span style="color:var(--text-4)">—</span>';
+  if (t.del_time && Number(t.del_time) > 0) {
+    const d = new Date(Number(t.del_time) * 1000);
+    doneAt = ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2)
+      + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+  return '<tr onmouseover="this.style.background=\'var(--fill-1)\'" onmouseout="this.style.background=\'\'">' +
+    '<td style="white-space:nowrap;width:76px">' + badge + '</td>' +
+    '<td style="max-width:0;width:100%;padding-right:16px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + name + '">' + name + '</div></td>' +
+    '<td style="white-space:nowrap;text-align:right;color:var(--text-2);font-family:Consolas,Monaco,monospace">' + size + '</td>' +
+    '<td style="white-space:nowrap">' + progress + '</td>' +
+    '<td style="white-space:nowrap;text-align:right;color:var(--text-3);font-family:Consolas,Monaco,monospace">' + doneAt + '</td></tr>';
 }
 
 function renderOfflineTasks() {
@@ -913,10 +925,29 @@ function renderOfflineTasks() {
   if (offlineTasksPage < 1) offlineTasksPage = 1;
   const start = (offlineTasksPage - 1) * OFFLINE_PAGE_SIZE;
   const slice = offlineTasksCache.slice(start, start + OFFLINE_PAGE_SIZE);
-  box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
-    '<thead><tr style="text-align:left;color:var(--text-3);font-size:12px">' +
-    '<th style="padding:6px 8px;width:80px">状态</th><th style="padding:6px 8px">名称</th>' +
-    '<th style="padding:6px 8px;width:80px">大小</th><th style="padding:6px 8px;width:150px">进度</th></tr></thead>' +
+  // 状态统计（全量，非当前页）
+  let nDone = 0, nDown = 0, nFail = 0, nWait = 0;
+  offlineTasksCache.forEach(t => {
+    const p = typeof t.percent === 'number' ? t.percent : -1;
+    if (t.status === 2) nDone++;
+    else if (t.status === -1) nFail++;
+    else if (t.status === 1 || (p >= 0 && p < 100)) nDown++;
+    else nWait++;
+  });
+  const stat = (color, label, n) => '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12.5px;color:var(--text-2)">' +
+    '<i style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex:none"></i>' + label + ' ' + n + '</span>';
+  const summary = '<div style="display:flex;align-items:center;gap:2px;margin:2px 0 10px;flex-wrap:wrap">'
+    + stat('var(--success)', '完成', nDone)
+    + (nDown ? stat('var(--primary)', '下载中', nDown) : '')
+    + (nFail ? stat('var(--danger)', '失败', nFail) : '')
+    + (nWait ? stat('var(--text-3)', '等待', nWait) : '')
+    + '</div>';
+  box.innerHTML = summary +
+    '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+    '<thead><tr style="text-align:left;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border)">' +
+    '<th style="padding:8px;width:76px;font-weight:500">状态</th><th style="padding:8px;font-weight:500">名称</th>' +
+    '<th style="padding:8px;width:90px;font-weight:500;text-align:right">大小</th><th style="padding:8px;width:170px;font-weight:500">进度</th>' +
+    '<th style="padding:8px;width:90px;font-weight:500;text-align:right">完成时间</th></tr></thead>' +
     '<tbody>' + slice.map(offlineTaskRow).join('') + '</tbody></table>';
   pager.innerHTML = pages <= 1 ? '' :
     '<button class="btn btn-outline btn-sm" ' + (offlineTasksPage <= 1 ? 'disabled' : '') + ' onclick="offlineTasksNav(-1)">‹ 上一页</button>' +

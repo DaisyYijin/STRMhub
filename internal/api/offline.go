@@ -183,7 +183,14 @@ func (h *Handler) offlineTaskList(c *gin.Context) {
 				status = 1
 			}
 		}
-		items = append(items, gin.H{"name": name, "size": m["size"], "percent": m["percent"], "status": status})
+		delTime := int64(0)
+		switch v := m["del_time"].(type) {
+		case float64:
+			delTime = int64(v)
+		case string:
+			delTime, _ = strconv.ParseInt(v, 10, 64)
+		}
+		items = append(items, gin.H{"name": name, "size": m["size"], "percent": m["percent"], "status": status, "del_time": delTime})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
 }
