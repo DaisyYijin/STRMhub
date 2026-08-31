@@ -172,7 +172,14 @@ func gyIsNoLogin(body string) bool {
 
 // gyPow 过 PoW 验证：取挑战→反复平算→提交换 Cookie
 func gyPow(client *http.Client, base string) error {
-	resp, err := client.Get(base + "/res/pow")
+	// 挑战与提交的 UA 必须和后续业务请求完全一致——站点把放行凭证绑定到
+	// 浏览器指纹（UA 不一致时业务请求会报「浏览器验证已过期」）
+	req, err := http.NewRequest(http.MethodGet, base+"/res/pow", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", gyUA)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("获取 PoW 挑战失败: %s", sanitizeWecomErr(err))
 	}
@@ -198,7 +205,13 @@ func gyPow(client *http.Client, base string) error {
 	}
 
 	form := url.Values{"y": {y.Text(16)}}
-	resp2, err := client.PostForm(base+"/res/pow", form)
+	req2, err := http.NewRequest(http.MethodPost, base+"/res/pow", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req2.Header.Set("User-Agent", gyUA)
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp2, err := client.Do(req2)
 	if err != nil {
 		return fmt.Errorf("提交 PoW 结果失败: %s", sanitizeWecomErr(err))
 	}
@@ -220,7 +233,7 @@ func gyDo(client *http.Client, base, method, path string, form url.Values) (stri
 
 // gyDoReq 同 gyDo，允许附加请求头
 func gyDoReq(client *http.Client, base, method, path string, form url.Values, hdrs map[string]string) (string, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		var bodyReader io.Reader
 		if form != nil {
 			bodyReader = strings.NewReader(form.Encode())
@@ -245,7 +258,7 @@ func gyDoReq(client *http.Client, base, method, path string, form url.Values, hd
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		resp.Body.Close()
 		body := string(raw)
-		if gyIsPow(body) && attempt == 0 {
+		if gyIsPow(body) && attempt < 2 {
 			if err := gyPow(client, base); err != nil {
 				return "", err
 			}
@@ -280,9 +293,8 @@ func gyLoginOnce(client *http.Client, base, username, password string) error {
 		"password":   {password},
 		"cookietime": {"10506240"},
 	}
-	body, err := gyDoReq(client, base, http.MethodPost, "/user/login", form, map[string]string{
-		"X-Requested-With": "XMLHttpRequest",
-	})
+	hdrs := map[string]string{"X-Requested-With": "XMLHttpRequest"}
+	body, err := gyDoReq(client, base, http.MethodPost, "/user/login", form, hdrs)
 	if err != nil {
 		return err
 	}
@@ -294,6 +306,21 @@ func gyLoginOnce(client *http.Client, base, username, password string) error {
 	if json.Unmarshal([]byte(body), &jr) == nil && jr.Msg != "" {
 		if jr.Code == 200 || jr.Code == 0 {
 			return nil
+		}
+		// 验证过期类报错 → 重过一次 PoW 再试登录
+		if strings.Contains(jr.Msg, "验证") || strings.Contains(body, "powSolve") {
+			if err := gyPow(client, base); err == nil {
+				body, err = gyDoReq(client, base, http.MethodPost, "/user/login", form, hdrs)
+				if err != nil {
+					return err
+				}
+				if json.Unmarshal([]byte(body), &jr) == nil && jr.Msg != "" {
+					if jr.Code == 200 || jr.Code == 0 {
+						return nil
+					}
+					return fmt.Errorf("%s", jr.Msg)
+				}
+			}
 		}
 		return fmt.Errorf("%s", jr.Msg)
 	}
