@@ -471,7 +471,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	var precise []preciseFile
 	fallbackDir := func(cid string) { dirSet[cid] = true }
 
-	for _, ev := range pending {
+	for i, ev := range pending {
+		if i%50 == 0 {
+			SetTaskProgress(fmt.Sprintf("处理网盘变化 %d/%d 条…", i+1, len(pending)))
+		}
 		switch ev.Type {
 		case evUpload, evReceive, evCopy:
 			// 作用域过滤：冗余/已存在等整理工作区的事件不监控
@@ -716,11 +719,33 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		h.notifyEmbyRefresh(refreshBase)
 	}
 	sum.Elapsed = time.Since(incrStart).Truncate(time.Second).String()
-	if sum.EventsFresh == 0 && sum.StrmCreated == 0 && sum.AssetsDownloaded == 0 && sum.Deleted == 0 && sum.Moved == 0 {
-		return sum, nil // 空转静默：无新事件无动作不打完成汇总
+
+	// 完成汇总（大白话）：只要本轮真的处理了变化就给一条结论。
+	// 此前的术语行（媒体相关/结构性/非库区忽略…）普通用户读不懂，
+	// 且"处理了但全部无关"的轮次会整行消失，让人以为卡死没处理
+	var parts []string
+	if sum.StrmCreated > 0 {
+		parts = append(parts, fmt.Sprintf("新增视频文件 %d 个", sum.StrmCreated))
 	}
-	log.Printf("[同步] ✅ 增量同步完成（耗时 %s · 拉取 %d 条（新 %d），媒体相关 %d，结构性 %d（删 %d，移/改 %d），非库区忽略 %d，目录命中 %d（处理 %d，合并覆盖 %d，库外跳过 %d），视频 %d（STRM %d），附属下载 %d",
-		sum.Elapsed, sum.EventsTotal, sum.EventsFresh, sum.Relevant, sum.Structural, sum.Deleted, sum.Moved, sum.Ignored, len(uniqTargets)+sum.DirsSkipped, sum.Dirs, dirsMerged, sum.DirsSkipped, sum.Videos, sum.StrmCreated, sum.AssetsDownloaded)
+	if sum.AssetsDownloaded > 0 {
+		parts = append(parts, fmt.Sprintf("下载字幕/封面 %d 个", sum.AssetsDownloaded))
+	}
+	if sum.Deleted > 0 {
+		parts = append(parts, fmt.Sprintf("清理已删除内容 %d 项", sum.Deleted))
+	}
+	if sum.Moved > 0 {
+		parts = append(parts, fmt.Sprintf("跟随网盘移动/改名 %d 项", sum.Moved))
+	}
+	detail := "均与媒体库无关，无需改动本地文件"
+	if len(parts) > 0 {
+		detail = strings.Join(parts, "，")
+	}
+	ignoredNote := ""
+	if sum.Ignored > 0 {
+		ignoredNote = fmt.Sprintf("（另有 %d 条是整理目录内的变动，已忽略）", sum.Ignored)
+	}
+	log.Printf("[同步] ✓ 增量同步完成：处理 %d 条变化，%s%s。用时 %s",
+		len(pending), detail, ignoredNote, sum.Elapsed)
 	return sum, nil
 }
 
