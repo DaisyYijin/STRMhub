@@ -497,6 +497,33 @@ func (h *Handler) GyGetConfig(c *gin.Context) {
 	})
 }
 
+// GySaveConfig POST /guanying/config {base_url, username, password}
+// 仅保存接入信息，不触发登录（登录走 /guanying/login）
+func (h *Handler) GySaveConfig(c *gin.Context) {
+	var req struct {
+		BaseURL  string `json:"base_url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	cfg := loadGyCfg()
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
+	if cfg.BaseURL == "" || !strings.HasPrefix(cfg.BaseURL, "http") {
+		cfg.BaseURL = gyDefaultBase
+	}
+	cfg.Username = strings.TrimSpace(req.Username)
+	cfg.Password = req.Password
+	if err := saveGyCfg(cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+		return
+	}
+	log.Printf("[观影] ✓ 接入配置已保存（%s）", cfg.BaseURL)
+	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
+}
+
 // GyLogin POST /guanying/login {base_url?, username, password}
 // 保存凭据 → 过 PoW → 表单登录 → 会话 Cookie 持久化
 func (h *Handler) GyLogin(c *gin.Context) {

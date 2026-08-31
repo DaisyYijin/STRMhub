@@ -2888,6 +2888,36 @@ function gyRenderStatus(loggedIn, hasCookies) {
   }
 }
 
+async function gySaveConfig(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    await api('/guanying/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        base_url: document.getElementById('gy-base').value.trim(),
+        username: document.getElementById('gy-username').value.trim(),
+        password: document.getElementById('gy-password').value,
+      }),
+    });
+    toast('保存成功');
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function gyResetConfig(btn) {
+  if (!confirm('确定重置观影配置？站点地址将恢复默认，账号密码会被清空并退出登录。')) return;
+  try {
+    await api('/guanying/config', {
+      method: 'POST',
+      body: JSON.stringify({ base_url: '', username: '', password: '' }),
+    });
+    await api('/guanying/logout', { method: 'POST' });
+    toast('已重置');
+    gyLoadPage();
+  } catch (e) { toast(e.message); }
+}
+
 async function gyLogin(btn) {
   const username = document.getElementById('gy-username').value.trim();
   const password = document.getElementById('gy-password').value;
