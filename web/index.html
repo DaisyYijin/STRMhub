@@ -1017,13 +1017,7 @@ av:
     <div class="page" id="page-logs">
       <div class="card" style="height:calc(100vh - 130px);display:flex;flex-direction:column">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          <span style="font-weight:600;display:flex;align-items:center;gap:10px">任务日志
-            <div class="segmented-control" id="log-level-switch">
-              <div class="seg-item active" data-value="simple" onclick="setLogLevel('simple');saveLogLevel()">重要</div>
-              <div class="seg-item" data-value="verbose" onclick="setLogLevel('verbose');saveLogLevel()">详细</div>
-            </div>
-            <i class="help-tip" tabindex="0">?<span class="tip-bubble">重要：只留关键节点与异常（隐藏目录遍历/TMDB搜索/302请求等过程日志）；详细：全部输出。切换立即保存，30 秒内生效。日志实时推送，有新内容立即出现，最新在最上。</span></i>
-          </span>
+          <span style="font-weight:600">任务日志</span>
           <span style="margin-left:auto;display:flex;gap:8px">
             <button class="btn btn-outline" onclick="clearSystemLogs(this)">清空日志</button>
             <button class="btn btn-outline" onclick="loadSystemLogs(true)">立即刷新</button>
