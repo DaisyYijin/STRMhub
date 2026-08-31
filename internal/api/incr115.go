@@ -348,14 +348,14 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	// 直接中止本次增量——事件一条都不拉取消费，修正配置后原样补上
 	for _, ex := range excludedAbs {
 		if libAbs != "" && strings.HasPrefix(strings.TrimSuffix(libAbs, "/")+"/", ex+"/") {
-			log.Printf("[同步] ⚠⚠ 工作区目录（%s）覆盖了整个媒体库（%s），增量同步中止（事件未消费）。请到「自动整理/分享同步」把工作区目录改选为媒体库内部子目录或库外目录", ex, libAbs)
+			log.Printf("[同步] ⚠ 整理目录（%s）把整个媒体库都包含进去了，这样会误删文件，增量同步已暂停。请到设置里把待整理/已存在/冗余目录改到媒体库外面", ex)
 			return sum, fmt.Errorf("配置错误：工作区目录 %s 覆盖了整个媒体库 %s，增量同步中止（事件未消费，修正配置后重试即可补上）", ex, libAbs)
 		}
 	}
 
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
-	SetTaskProgress("拉取 115 生活事件…")
-	log.Printf("[同步] ▶ 增量同步开始（媒体库 cid=%s），沉淀等待 3 秒后拉取生活事件...", p.Cid)
+	SetTaskProgress("正在获取网盘最近的改动…")
+	log.Printf("[同步] 开始增量同步，先等网盘操作稳定 3 秒…")
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
@@ -405,7 +405,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		}
 		sum.EventsFresh += fresh
 		if fresh > 0 {
-			log.Printf("[同步] 拉取事件: 本页 %d 条，新 %d 条", len(events), fresh)
+			log.Printf("[同步] 从网盘获取到 %d 条新变化", fresh)
 		}
 		if fresh == 0 || sum.EventsFresh >= p.Limit {
 			break // 已追平或达到单次上限
@@ -421,7 +421,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	var stale []model.SyncEvent
 	h.DB.Where("status = ?", "pending").Order("event_time").Find(&stale)
 	if len(stale) > 0 {
-		log.Printf("[同步] ▶ 恢复上轮遗留未消费事件 %d 条", len(stale))
+		log.Printf("[同步] 发现上次没处理完的 %d 条变化，继续处理", len(stale))
 		pending = append(stale, pending...)
 	}
 
@@ -631,10 +631,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 			// 目录已不存在（800001）：目录被删除后残留的定位请求是永久性失败，
 			// 重试永远不会成功、还会让水位永远不推进。按"已解决"跳过
 			if strings.Contains(err.Error(), "目录不存在") || strings.Contains(err.Error(), "800001") {
-				log.Printf("[同步] ○ 目录已不存在（事件残留），跳过: cid=%s", cid)
+				log.Printf("[同步] 网盘目录已被删除，跳过相关变化")
 				continue
 			}
-			log.Printf("[同步] 定位目录路径失败 cid=%s: %v", cid, err)
+			log.Printf("[同步] 暂时无法获取网盘目录位置（cid=%s）: %v", cid, err)
 			sum.DirsSkipped++
 			continue
 		}
@@ -684,7 +684,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		sum.AssetsDownloaded += dl
 		sum.AssetsSkipped += sk
 		sum.AssetsFailed += fl
-		log.Printf("[同步] %s: 视频 %d（STRM %d），附属 %d（下载 %d，跳过 %d）", t.base, len(videos), sc, len(assets), dl, sk)
+		log.Printf("[同步] %s：新增视频 %d 个，附属文件下载 %d 个", t.base, len(videos), dl)
 	}
 
 	SetTaskProgress(fmt.Sprintf("收尾：目录 %d，STRM %d", sum.Dirs, sum.StrmCreated))
@@ -693,7 +693,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	// 不再处理，对应 STRM 就永久缺失了。整轮不消费（下轮全量重做——
 	// STRM 写入是 upsert、删除幂等，重复处理无副作用，正确性优先）
 	if sum.DirsSkipped > 0 {
-		log.Printf("[同步] ⚠ 本轮有 %d 个目录处理失败，事件不标记已消费（下轮增量将重试），水位不推进", sum.DirsSkipped)
+		log.Printf("[同步] ⚠ 有 %d 个网盘目录暂时读取失败，下轮会自动重试这些内容", sum.DirsSkipped)
 		return sum, nil
 	}
 	now := time.Now()

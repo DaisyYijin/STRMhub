@@ -147,7 +147,7 @@ func (h *Handler) runScheduledTick(cron string) {
 		endTask()
 		fullSyncMu.Unlock()
 	}()
-	log.Printf("[定时] ▶ 定时任务开始（cron: %s）", cron)
+	log.Printf("[定时] 定时任务开始（计划: %s）", cron)
 	beginTask("定时整理+增量")
 	start := time.Now()
 	// 1) 自动整理（不联动全量同步，交给下一步增量精确处理）
@@ -179,7 +179,7 @@ func (h *Handler) runScheduledTick(cron string) {
 		idle = false
 	}
 	if idle {
-		log.Printf("[定时] ○ 空转（无待整理内容，无新事件）")
+		log.Printf("[定时] 本轮没有需要处理的内容")
 	} else {
 		if sum != nil {
 			log.Printf("[定时] 增量: 新事件 %d，删 %d，移/改 %d，STRM %d，附属下载 %d",

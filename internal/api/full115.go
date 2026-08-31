@@ -213,8 +213,8 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		}
 	}
 	SetTaskProgress("")
-	log.Printf("[同步] ✅ 全量同步完成（耗时 %s · 视频 %d（生成 STRM %d），附属文件 %d（下载 %d，跳过 %d，失败 %d）",
-		time.Since(fullStart).Truncate(time.Second), len(videos), strmCreated, len(assets), downloaded, skipped, failed)
+	log.Printf("[同步] 全量同步完成：视频 %d 个（生成 STRM %d），附属文件下载 %d 个，用时 %s",
+		len(videos), strmCreated, downloaded, time.Since(fullStart).Truncate(time.Second))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "全量同步完成",

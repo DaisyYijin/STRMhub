@@ -130,7 +130,7 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 			if cid := h.shareFolderCid(); cid != "" {
 				if ops, err := h.newPan115Ops(); err == nil {
 					if entries, _, lerr := ops.listEntries(cid, 0); lerr == nil && len(entries) > 0 {
-						log.Printf("[上传] ⚡ 秒传命中（转存目录已有 %d 个条目），立即整理", len(entries))
+						log.Printf("[上传] 秒传命中（转存目录已有 %d 个条目），立即整理", len(entries))
 						h.triggerOrganizeAndSync()
 						return
 					}
@@ -222,9 +222,9 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 
 	if !fullSyncMu.TryLock() {
 		if running, tname, _, _ := TaskStatus(); running && tname != "" {
-			log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中：%s）", tname)
+			log.Printf("[上传] 先等一下：正在执行「%s」，完成后会自动整理", tname)
 		} else {
-			log.Printf("[上传] ○ 自动整理已跳过（已有任务运行中）")
+			log.Printf("[上传] 先等一下：有其他任务正在执行，完成后会自动整理")
 		}
 		return false
 	}
@@ -233,7 +233,7 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 	defer endTask()
 
 	start := time.Now()
-	log.Printf("[上传] ▶ 转存后自动整理+增量同步开始...")
+	log.Printf("[上传] 转存完成，开始自动整理和同步…")
 
 	// 整理：直接扫描转存目录（转存触发时不需要扫待整理目录）
 	shareFolder := ""
@@ -418,7 +418,7 @@ func StartTransferWatcher(h *Handler) {
 				continue
 			}
 			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
-			log.Printf("[守望] ⚑ 转存目录有 %d 个条目，触发自动整理+增量", len(entries))
+			log.Printf("[守望] 转存目录发现 %d 个新内容，开始自动整理", len(entries))
 			ran := h.triggerOrganizeAndSync()
 			// 成功清空后冷却只要 60 秒（连续多个下载先后完成时快速接续）：
 			// 闸门是 since(lastTrigger)≥5min，把锚点拨回 4 分钟前即再等 60 秒
@@ -502,11 +502,11 @@ func StartOfflineTaskMonitor(h *Handler) {
 				}
 				switch t.status {
 				case 2: // 完成
-					log.Printf("[离线] ✓ 下载完成: %s（触发整理）", truncateStr(t.name, 60))
+					log.Printf("[离线] 下载完成: %s，开始整理入库", truncateStr(t.name, 60))
 					notified[key] = true
 					doneNames = append(doneNames, truncateStr(t.name, 80))
 				case -1: // 失败
-					log.Printf("[离线] ✗ 磁力下载失败: %s（115 离线任务报错，请检查资源或重新提交）", truncateStr(t.name, 60))
+					log.Printf("[离线] 下载失败: %s（资源问题或 115 任务报错，请重新提交）", truncateStr(t.name, 60))
 					failedNames = append(failedNames, truncateStr(t.name, 80))
 					notified[key] = true
 				}
@@ -519,12 +519,12 @@ func StartOfflineTaskMonitor(h *Handler) {
 				return strings.Join(names[:keep], "\n") + fmt.Sprintf("\n…等共 %d 个", len(names))
 			}
 			if len(doneNames) > 0 {
-				NotifyMessage("✅ 离线下载完成", fmt.Sprintf("%d 个任务完成，已开始整理入库（完成后另行通知）：\n%s",
+				NotifyMessage("✓ 离线下载完成", fmt.Sprintf("%d 个任务完成，已开始整理入库（完成后另行通知）：\n%s",
 					len(doneNames), clip(doneNames, 15)))
 				go h.triggerOrganizeAndSync()
 			}
 			if len(failedNames) > 0 {
-				NotifyMessage("❌ 磁力下载失败", fmt.Sprintf("%d 个任务失败（115 离线任务报错，请检查资源或重新提交）：\n%s",
+				NotifyMessage("✗ 磁力下载失败", fmt.Sprintf("%d 个任务失败（115 离线任务报错，请检查资源或重新提交）：\n%s",
 					len(failedNames), clip(failedNames, 15)))
 			}
 			// 终态表防膨胀：只保留最近一轮见到的任务

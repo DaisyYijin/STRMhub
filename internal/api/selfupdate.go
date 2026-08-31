@@ -195,7 +195,7 @@ func notifyUpdateOnce() {
 
 	// 1) 更新完成确认：持久化的"上次运行版本"与当前不同 = 刚完成了一次更新
 	if st.Applied != "" && st.Applied != buildVersion {
-		NotifyMessage("✅ StrmHub 更新完成",
+		NotifyMessage("✓ StrmHub 更新完成",
 			"v"+shortSha(st.Applied)+" → v"+shortSha(buildVersion)+"\n新版本已生效，如遇异常可在 GitHub 提交反馈")
 	}
 	st.Applied = buildVersion
@@ -221,12 +221,12 @@ func notifyUpdateOnce() {
 				fmt.Fprintf(&b, "\n• %s %s", shortSha(cm.Sha), truncateStr(cm.Message, 60))
 			}
 			b.WriteString("\n\n到管理后台左下角点击「有新版本」即可更新")
-			NotifyMessage("🚀 StrmHub 有新版本", b.String())
+			NotifyMessage("↑ StrmHub 有新版本", b.String())
 		}
 	case "failed":
 		if st.FailSHA != latest {
 			st.FailSHA = latest
-			NotifyMessage("❌ StrmHub 新版本构建失败",
+			NotifyMessage("✗ StrmHub 新版本构建失败",
 				"提交 "+shortSha(latest)+" 的镜像构建失败，暂无法更新。\n可到 GitHub Actions 查看失败原因，修复提交后会再次通知")
 		}
 	}

@@ -259,7 +259,7 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 	if category == "added" {
 		// 入库事件走聚合富通知（封面/评分取自 Emby；15 秒防抖合并）
 		go h.queueEmbyAddedNotif(payload)
-		log.Printf("[Emby Webhook] ▶ Emby 入库事件: %s", itemName)
+		log.Printf("[Emby Webhook] Emby 入库事件: %s", itemName)
 		c.JSON(http.StatusOK, gin.H{"message": "ok（已进入入库通知队列）"})
 		return
 	}

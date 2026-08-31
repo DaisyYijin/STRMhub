@@ -521,7 +521,7 @@ async function pollTaskStatus() {
     const st = await api('/sync/status');
     if (st.running) {
       bar.style.display = 'block';
-      bar.innerHTML = '⏳ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '）'
+      bar.innerHTML = '▶ ' + esc(st.task || '任务') + ' 正在执行（已运行 ' + esc(st.elapsed || '-') + '）'
         + (st.progress ? '<br><span style="color:var(--text-2)">▸ ' + esc(st.progress) + '</span>' : '');
       btns.forEach(b => { b.disabled = true; b.style.opacity = '.5'; });
     } else {

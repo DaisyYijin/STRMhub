@@ -32,8 +32,8 @@
   <div class="mobile-topbar" id="mobile-topbar">
     <button class="btn btn-outline btn-icon" onclick="toggleSidebar()" aria-label="菜单"><span style="font-size:18px">☰</span></button>
     <div class="mobile-title" id="mobile-page-title">数据同步</div>
-    <button class="btn btn-outline btn-icon" id="btn-log-mobile" aria-label="日志"><span style="font-size:14px">📋</span></button>
-    <button class="btn btn-outline btn-icon" data-account-btn onclick="toggleAccountMenu(event)" aria-label="账号" style="margin-left:6px"><span style="font-size:14px">👤</span></button>
+    <button class="btn btn-outline btn-icon" id="btn-log-mobile" aria-label="日志"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="2" width="10" height="12" rx="1.5"/><line x1="5.5" y1="5.5" x2="10.5" y2="5.5"/><line x1="5.5" y1="8" x2="10.5" y2="8"/><line x1="5.5" y1="10.5" x2="9" y2="10.5"/></svg></button>
+    <button class="btn btn-outline btn-icon" data-account-btn onclick="toggleAccountMenu(event)" aria-label="账号" style="margin-left:6px"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5.5" r="2.8"/><path d="M2.5 14c0-3 2.5-4.6 5.5-4.6s5.5 1.6 5.5 4.6"/></svg></button>
   </div>
   <!-- 遮罩 -->
   <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
@@ -820,7 +820,7 @@ av:
         <div class="form-row"><div class="label">Cookie 路径<i class="help-tip" tabindex="0">?<span class="tip-bubble">指定 115 Cookie 文件路径，扫码登录后自动写入该文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="acc-cookie-path" value="/config/115-cookies.txt" class="inline-input"><button class="btn btn-success" onclick="checkCookie()">检测可用性</button></div>
         <div class="acc-card" id="acc-status-box" style="display:none;margin-top:10px">
           <img id="acc-avatar" class="acc-avatar" src="" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-          <div class="acc-avatar acc-avatar-ph" style="display:none">👤</div>
+          <div class="acc-avatar acc-avatar-ph" style="display:none">115</div>
           <div class="acc-info">
             <div class="acc-line1">
               <span id="acc-menu-username" style="font-weight:600">-</span>
@@ -1119,7 +1119,7 @@ av:
 <div id="account-menu" style="display:none;position:fixed;top:56px;right:24px;background:var(--white);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-card);z-index:1200;min-width:170px;padding:4px 0">
   <div style="padding:8px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border)">当前登录：<b id="account-menu-user">-</b></div>
   <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="menuNetworkTest()">🌐 网络连接测试</div>
-  <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="menuDocs()">📖 使用文档</div>
+  <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="menuDocs()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-1.5px;margin-right:6px"><path d="M8 2.5c-1.5-1-4-1-5.5 0v10c1.5-1 4-1 5.5 0 1.5-1 4-1 5.5 0v-10c-1.5-1-4-1-5.5 0z"/><line x1="8" y1="2.5" x2="8" y2="12.5"/></svg> 使用文档</div>
   <div style="padding:9px 14px;font-size:14px;color:var(--danger);cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="logoutNow()">退出登录</div>
 </div>
 <div class="modal-mask" id="account-modal" style="display:none" onclick="if(event.target===this)closeAccountModal()">
