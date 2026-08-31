@@ -606,5 +606,38 @@ tr:hover td { background: var(--fill-1); }
 /* 入库统计 SVG 图 */
 #dash-weekly svg { width: 100%; height: 140px; display: block; }
 
-/* 离线任务列表：状态徽章 */
-.otag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; }
+
+/* ==================== 离线任务列表（卡片式行） ==================== */
+.otk { display: flex; flex-direction: column; }
+.otk-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  border-radius: 8px; transition: background .15s;
+}
+.otk-row:last-child { border-bottom: none; }
+.otk-row:hover { background: var(--fill-1, #f7f8fa); }
+.otk-main { flex: 1; min-width: 0; }
+.otk-name {
+  font-size: 13px; color: var(--text-1); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.otk-sub {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 4px; font-size: 12px; color: var(--text-3);
+  font-family: Consolas, Monaco, monospace;
+}
+.otk-dot { color: var(--text-4); }
+.otk-bar {
+  flex: 1; max-width: 320px; height: 6px;
+  background: var(--fill-2); border-radius: 99px; overflow: hidden;
+}
+.otk-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; transition: width .4s; }
+.otk-pct { color: var(--primary); font-weight: 600; }
+.otk-side { flex: none; font-size: 12.5px; color: var(--text-2); font-family: Consolas, Monaco, monospace; }
+.otag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; flex: none; white-space: nowrap; }
+.otag-live { animation: otagPulse 2s infinite; }
+@keyframes otagPulse {
+  0% { box-shadow: 0 0 0 0 rgba(22,100,217,.25); }
+  70% { box-shadow: 0 0 0 6px rgba(22,100,217,0); }
+  100% { box-shadow: 0 0 0 6px rgba(22,100,217,0); }
+}

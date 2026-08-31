@@ -898,33 +898,36 @@ function offlineTaskRow(t) {
     if (typeof p === 'string' && p && !isNaN(parseFloat(p))) return parseFloat(p);
     return -1;
   })();
-  let badge;
-  if (st === -1)      badge = '<span class="otag" style="background:#ffece8;color:#b3231d">失败</span>';
-  else if (st === 2)  badge = '<span class="otag" style="background:#eafaf0;color:#00874a">完成</span>';
+  let pill;
+  if (st === -1)      pill = '<span class="otag" style="background:#ffece8;color:#b3231d">失败</span>';
+  else if (st === 2)  pill = '<span class="otag" style="background:#eafaf0;color:#00874a">完成</span>';
   else if (st === 1 || (pct >= 0 && pct < 100))
-                      badge = '<span class="otag" style="background:#e8f1ff;color:#1664d9">下载中</span>';
-  else                badge = '<span class="otag" style="background:var(--fill-2);color:var(--text-3)">等待</span>';
-  let progress = '<span style="color:var(--text-4)">—</span>';
-  if (st === 2) progress = '<span style="color:var(--success)">100%</span>';
-  else if (st === 1 || (pct >= 0 && pct < 100)) {
-    const w = Math.max(0, Math.min(100, pct < 0 ? 0 : pct)).toFixed(1);
-    progress = '<div style="display:flex;align-items:center;gap:8px">' +
-      '<div style="background:var(--fill-2);border-radius:99px;height:6px;width:110px;flex:none"><div style="background:var(--primary);height:100%;border-radius:99px;width:' + w + '%"></div></div>' +
-      '<span style="font-size:12px;color:var(--text-3);min-width:42px">' + w + '%</span></div>';
-  }
+                      pill = '<span class="otag otag-live" style="background:#e8f1ff;color:#1664d9">下载中</span>';
+  else                pill = '<span class="otag" style="background:var(--fill-2);color:var(--text-3)">等待</span>';
+
   const size = t.size && Number(t.size) > 0 ? fmtSize(Number(t.size)) : '—';
-  let doneAt = '<span style="color:var(--text-4)">—</span>';
-  if (t.del_time && Number(t.del_time) > 0) {
-    const d = new Date(Number(t.del_time) * 1000);
-    doneAt = ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2)
-      + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  const doneAt = (t.del_time && Number(t.del_time) > 0)
+    ? (() => { const d = new Date(Number(t.del_time) * 1000);
+        return ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2)
+          + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); })()
+    : '';
+
+  // 主区第二行：下载中 → 进度条；完成 → 大小 · 完成时间；等待/失败 → 大小
+  let sub;
+  if (st === 1 || (pct >= 0 && pct < 100)) {
+    const w = Math.max(0, Math.min(100, pct < 0 ? 0 : pct)).toFixed(1);
+    sub = '<div class="otk-bar"><i style="width:' + w + '%"></i></div>'
+        + '<span class="otk-pct">' + w + '%</span>';
+  } else {
+    sub = '<span>' + size + '</span>' + (doneAt ? '<span class="otk-dot">·</span><span>' + doneAt + '</span>' : '');
   }
-  return '<tr onmouseover="this.style.background=\'var(--fill-1)\'" onmouseout="this.style.background=\'\'">' +
-    '<td style="white-space:nowrap;width:76px">' + badge + '</td>' +
-    '<td style="max-width:0;width:100%;padding-right:16px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + name + '">' + name + '</div></td>' +
-    '<td style="white-space:nowrap;text-align:right;color:var(--text-2);font-family:Consolas,Monaco,monospace">' + size + '</td>' +
-    '<td style="white-space:nowrap">' + progress + '</td>' +
-    '<td style="white-space:nowrap;text-align:right;color:var(--text-3);font-family:Consolas,Monaco,monospace">' + doneAt + '</td></tr>';
+  const side = st === 1 || (pct >= 0 && pct < 100) ? size : '';
+
+  return '<div class="otk-row">' + pill +
+    '<div class="otk-main"><div class="otk-name" title="' + name + '">' + name + '</div>' +
+    '<div class="otk-sub">' + sub + '</div></div>' +
+    (side ? '<div class="otk-side">' + escHtml(side) + '</div>' : '') +
+    '</div>';
 }
 
 function renderOfflineTasks() {
@@ -954,12 +957,7 @@ function renderOfflineTasks() {
     + (nWait ? stat('var(--text-3)', '等待', nWait) : '')
     + '</div>';
   box.innerHTML = summary +
-    '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
-    '<thead><tr style="text-align:left;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border)">' +
-    '<th style="padding:8px;width:76px;font-weight:500">状态</th><th style="padding:8px;font-weight:500">名称</th>' +
-    '<th style="padding:8px;width:90px;font-weight:500;text-align:right">大小</th><th style="padding:8px;width:170px;font-weight:500">进度</th>' +
-    '<th style="padding:8px;width:90px;font-weight:500;text-align:right">完成时间</th></tr></thead>' +
-    '<tbody>' + slice.map(offlineTaskRow).join('') + '</tbody></table>';
+    '<div class="otk">' + slice.map(offlineTaskRow).join('') + '</div>';
   pager.innerHTML = pages <= 1 ? '' :
     '<button class="btn btn-outline btn-sm" ' + (offlineTasksPage <= 1 ? 'disabled' : '') + ' onclick="offlineTasksNav(-1)">‹ 上一页</button>' +
     '<span style="font-size:13px;color:var(--text-3);align-self:center;margin:0 10px">第 ' + offlineTasksPage + ' / ' + pages + ' 页</span>' +
