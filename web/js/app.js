@@ -2941,7 +2941,13 @@ async function gySearch() {
     const d = await api('/guanying/search?query=' + encodeURIComponent(q));
     const items = d.data || [];
     if (!items.length) {
-      box.innerHTML = '<span style="color:var(--text-3)">观影站内没有找到「' + esc(q) + '」的资源</span>';
+      let hint = '观影站内没有找到「' + esc(q) + '」的资源';
+      const dbg = d.debug || {};
+      if (dbg.page_len !== undefined) {
+        hint += '<br><span style="font-size:12px;color:var(--text-3)">诊断: 页面 ' + dbg.page_len
+          + ' 字节 · 标题「' + esc(dbg.title || '') + '」· ' + (dbg.nologin ? '受限页' : '非受限页') + '</span>';
+      }
+      box.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
       return;
     }
     box.innerHTML = '<div class="otk">' + items.map((it, i) => {

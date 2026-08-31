@@ -585,7 +585,23 @@ func (h *Handler) GySearch(c *gin.Context) {
 		}
 	}
 	items := gyExtractAnchors(body)
-	c.JSON(http.StatusOK, gin.H{"data": items})
+	// 0 条时附带页面特征：前端显示出来，方便远程定位（空壳/受限/正常页一眼区分）
+	debug := gin.H{}
+	if len(items) == 0 {
+		title := ""
+		if m := reTitle.FindStringSubmatch(body); m != nil {
+			title = gyHTMLUnescape(strings.TrimSpace(m[1]))
+		}
+		debug = gin.H{
+			"page_len": len(body),
+			"title":    title,
+			"nologin":  gyIsNoLogin(body),
+		}
+		log.Printf("[观影] ○ 搜索未解析出条目（q=%s）: len=%d title=%q noLogin=%v", q, len(body), title, gyIsNoLogin(body))
+	} else {
+		log.Printf("[观影] ▣ 搜索「%s」: %d 条", q, len(items))
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "debug": debug})
 }
 
 // GyResources GET /guanying/resources?path=/xxx → 详情页提取网盘链接
