@@ -1296,7 +1296,7 @@ const RENAME_VARS = {
   '{year}': '2008',
   '{tmdb_id}': '1726',
   '{first_letter}': 'G',
-  '{ext}': 'mkv',
+  '{ext}': '.mkv',
   '{custom_regex_match}': '自定义',
   '{season_episode}': 'S01E01',
   '{season_num}': '1',
