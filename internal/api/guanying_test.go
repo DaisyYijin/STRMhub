@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"math/big"
 	"testing"
 )
@@ -76,5 +77,29 @@ func TestGyExtractLinks(t *testing.T) {
 	}
 	if quark {
 		t.Errorf("script 内链接不应被提取")
+	}
+}
+
+// TestGyExtractAnchorsSample 用登录态搜索页的真实 SSR HTML 验证条目解析
+func TestGyExtractAnchorsSample(t *testing.T) {
+	raw, err := os.ReadFile("testdata/gy_search.html")
+	if err != nil {
+		t.Skipf("样本缺失: %v", err)
+	}
+	items := gyExtractAnchors(string(raw))
+	if len(items) == 0 {
+		t.Fatalf("真实样本解析出 0 个条目")
+	}
+	var found2018 bool
+	for _, it := range items {
+		if it["path"] == "/mv/GB3j" {
+			found2018 = true
+			if it["title"] != "无名之辈" || it["year"] != "2018" {
+				t.Errorf("GB3j 解析异常: %v", it)
+			}
+		}
+	}
+	if !found2018 {
+		t.Errorf("未解析到 /mv/GB3j（无名之辈 2018）")
 	}
 }

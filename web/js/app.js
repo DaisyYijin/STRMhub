@@ -2945,10 +2945,11 @@ async function gySearch() {
       return;
     }
     box.innerHTML = '<div class="otk">' + items.map((it, i) => {
-      const safePath = String(it.href).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safePath + '\',this)">'
       + '<span class="otag" style="background:#eef0ff;color:#5b5fc7">条目</span>'
-      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div></div>'
+      + '<div class="otk-main"><div class="otk-name">' + esc(it.title) + '</div>'
+      + '<div class="otk-sub"><span>' + esc(it.year || '') + '</span></div></div>'
       + '<div class="otk-side" style="color:var(--primary)">查看链接 ›</div>'
       + '</div>';
     }).join('') + '</div>';

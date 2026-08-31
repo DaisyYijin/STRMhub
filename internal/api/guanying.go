@@ -129,7 +129,6 @@ func gyClient(jar *gyJar) *http.Client {
 }
 
 var (
-	reGyYear   = regexp.MustCompile(`(19|20)\d{2}`)
 	reHTMLText = regexp.MustCompile(`<[^>]+>`)
 )
 
@@ -224,6 +223,20 @@ func gyPow(client *http.Client, base string) error {
 		return fmt.Errorf("PoW 验证被拒: %s", truncateStr(string(raw2), 100))
 	}
 	return nil
+}
+
+// gyDoNav 导航形态的内容页 GET。
+// 站点按 Sec-Fetch 头区分服务：导航请求返回完整 SSR 内容，XHR/裸请求只给
+// Vue 空壳（约 2KB 的 Loading 页）——搜索结果只存在于导航形态的 HTML 里
+func gyDoNav(client *http.Client, base, path string) (string, error) {
+	return gyDoReq(client, base, http.MethodGet, path, nil, map[string]string{
+		"Accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+		"Sec-Fetch-Dest":             "document",
+		"Sec-Fetch-Mode":             "navigate",
+		"Sec-Fetch-Site":             "same-origin",
+		"Sec-Fetch-User":             "?1",
+		"Upgrade-Insecure-Requests":  "1",
+	})
 }
 
 // gyDo 带自动过 PoW 的页面请求：返回响应正文（字符串）
@@ -354,28 +367,38 @@ type gyLink struct {
 	Pan  string `json:"pan"`
 }
 
-var (
-	reGyCode  = regexp.MustCompile(`(?:提取码|访问码|密码|pwd|pass(?:word)?|code)[=:：\s]*([A-Za-z0-9]{4})`)
-	reScript  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
-	reAnchor  = regexp.MustCompile(`(?is)<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>`)
-	reTitle   = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
-	reTagNFmt = regexp.MustCompile(`\s+`)
-)
-
 // gyHTMLUnescape 基本实体反转义
 func gyHTMLUnescape(s string) string {
 	r := strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&#39;", "'", "&apos;", "'")
 	return r.Replace(s)
 }
 
-// gyExtractAnchors 从页面提取内链条目（href, 文本），过滤导航
+var (
+	reGyCode  = regexp.MustCompile(`(?:提取码|访问码|密码|pwd|pass(?:word)?|code)[=:：\s]*([A-Za-z0-9]{4})`)
+	reScript  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+	reAnchor  = regexp.MustCompile(`(?is)<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>`)
+	reTitle   = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+	reTagNFmt = regexp.MustCompile(`\s+`)
+	reGyItem  = regexp.MustCompile(`^/([a-z]{2,6})/([A-Za-z0-9]+)$`) // 条目链接形如 /mv/VxBB
+	reGyYearT = regexp.MustCompile(`^(.*?)\s*\((\d{4})\)$`)          // 标题尾部年份：xxx (2018)
+	// 站点标题在汉字间插了空格（无 名 之 辈）
+	reGyCJK = regexp.MustCompile(`([\x{4e00}-\x{9fff}])[ ]+([\x{4e00}-\x{9fff}])`)
+)
+
+// gyNavExcludes 站内导航路径（非条目），整条排除
+var gyNavExcludes = map[string]bool{
+	"/mv": true, "/tv": true, "/ac": true, "/gbook": true,
+	"/zjx": true, "/bads": true, "/hits": true,
+}
+
+// gyExtractAnchors 从搜索/列表页提取条目（href, 标题, 年份），过滤导航与外链
 func gyExtractAnchors(body string) []gin.H {
 	clean := reScript.ReplaceAllString(body, "")
 	out := []gin.H{}
 	seen := map[string]bool{}
 	for _, m := range reAnchor.FindAllStringSubmatch(clean, -1) {
 		href := strings.TrimSpace(m[1])
-		if href == "" || href[0] != '/' {
+		if href == "" || href[0] != '/' || strings.HasPrefix(href, "//") {
 			continue
 		}
 		for _, bad := range []string{"/user", "/search", "/res/", "/help", "/about", "favicon"} {
@@ -384,15 +407,30 @@ func gyExtractAnchors(body string) []gin.H {
 				break
 			}
 		}
-		if href == "" || seen[href] {
+		if href == "" || seen[href] || gyNavExcludes[href] {
+			continue
+		}
+		// 条目链接必须是「/分类/ID」形态，纯导航路径（/mv 等）跳过
+		if !reGyItem.MatchString(href) {
 			continue
 		}
 		text := reTagNFmt.ReplaceAllString(strings.TrimSpace(gyHTMLUnescape(reHTMLText.ReplaceAllString(m[2], " "))), " ")
-		if len([]rune(text)) < 2 || len([]rune(text)) > 80 {
+		for { // 折叠汉字间空格（重叠匹配需循环到稳定）
+			next := reGyCJK.ReplaceAllString(text, "$1$2")
+			if next == text {
+				break
+			}
+			text = next
+		}
+		title, year := text, ""
+		if ym := reGyYearT.FindStringSubmatch(text); ym != nil {
+			title, year = strings.TrimSpace(ym[1]), ym[2]
+		}
+		if len([]rune(title)) < 2 || len([]rune(title)) > 80 {
 			continue
 		}
 		seen[href] = true
-		out = append(out, gin.H{"href": href, "title": text})
+		out = append(out, gin.H{"path": href, "title": title, "year": year})
 		if len(out) >= 30 {
 			break
 		}
@@ -524,7 +562,7 @@ func (h *Handler) GySearch(c *gin.Context) {
 	}
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
-	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q), nil)
+	body, err := gyDoNav(client, cfg.BaseURL, "/search?q="+url.QueryEscape(q))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error() + "（站点换域名时请更新站点地址）"})
 		return
@@ -536,7 +574,7 @@ func (h *Handler) GySearch(c *gin.Context) {
 			return
 		}
 		client = gyEnsureClient(cfg)
-		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q), nil)
+		body, err = gyDoNav(client, cfg.BaseURL, "/search?q="+url.QueryEscape(q))
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
 			return
@@ -559,7 +597,7 @@ func (h *Handler) GyResources(c *gin.Context) {
 	}
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
-	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
+	body, err := gyDoNav(client, cfg.BaseURL, p)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error()})
 		return
@@ -570,7 +608,7 @@ func (h *Handler) GyResources(c *gin.Context) {
 			return
 		}
 		client = gyEnsureClient(cfg)
-		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
+		body, err = gyDoNav(client, cfg.BaseURL, p)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
 			return
