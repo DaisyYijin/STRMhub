@@ -259,11 +259,6 @@ func embyVirtualFolderIds(base, apiKey string) map[string]string {
 // 只承载偏好设置；创建后再按 Emby Web 的保存流程调用
 // /Library/VirtualFolders/LibraryOptions 固化详细设置，确保目录与选项都生效。
 func (h *Handler) EmbyLibrariesCreate(c *gin.Context) {
-	base, apiKey, ok := h.embyServerInfo()
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 Emby 服务器（EMBY 管理卡）"})
-		return
-	}
 	var req struct {
 		Items []embyLibCandidate `json:"items"`
 	}
@@ -273,8 +268,23 @@ func (h *Handler) EmbyLibrariesCreate(c *gin.Context) {
 	}
 
 	log.Printf("[插件] ▶ Emby 建库开始：待创建 %d 个库", len(req.Items))
-	created, skipped := []string{}, []string{}
-	for _, it := range req.Items {
+	created, skipped := h.embyLibrariesCreateItems(req.Items)
+	msg := fmt.Sprintf("创建 %d 个媒体库", len(created))
+	if len(skipped) > 0 {
+		msg += fmt.Sprintf("，失败 %d 个: %s", len(skipped), strings.Join(skipped, "、"))
+	}
+	log.Printf("[插件] ✅ Emby 建库结束：%s", msg)
+	c.JSON(http.StatusOK, gin.H{"message": msg, "created": created, "skipped": skipped})
+}
+
+// embyLibrariesCreateItems 批量创建 Emby 媒体库（HTTP 插件与企微菜单「建库」指令共用）
+func (h *Handler) embyLibrariesCreateItems(items []embyLibCandidate) (created, skipped []string) {
+	base, apiKey, ok := h.embyServerInfo()
+	if !ok {
+		return nil, []string{"未配置 Emby 服务器"}
+	}
+	log.Printf("[插件] ▶ Emby 建库开始：待创建 %d 个库", len(items))
+	for _, it := range items {
 		if it.EmbyPath == "" {
 			continue
 		}
@@ -318,10 +328,5 @@ func (h *Handler) EmbyLibrariesCreate(c *gin.Context) {
 			it.Name, it.TypeLabel, it.Type, it.EmbyPath)
 		created = append(created, it.Name)
 	}
-	msg := fmt.Sprintf("创建 %d 个媒体库", len(created))
-	if len(skipped) > 0 {
-		msg += fmt.Sprintf("，失败 %d 个: %s", len(skipped), strings.Join(skipped, "、"))
-	}
-	log.Printf("[插件] ✅ Emby 建库结束：%s", msg)
-	c.JSON(http.StatusOK, gin.H{"message": msg, "created": created, "skipped": skipped})
+	return created, skipped
 }

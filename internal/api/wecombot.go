@@ -142,12 +142,15 @@ func wecomMenuCreate(cfg WecomConfig) error {
 	}
 	menu := map[string]interface{}{
 		"button": []btn{
-			{Type: "click", Name: "自动整理", Key: "整理"},
+			{Name: "自动整理", SubButton: []btn{
+				{Type: "click", Name: "115 网盘", Key: "整理"},
+				{Type: "click", Name: "123 网盘", Key: "整理123"},
+			}},
 			{Type: "click", Name: "增量同步", Key: "同步"},
-			{Name: "更多功能", SubButton: []btn{
-				{Type: "click", Name: "状态查询", Key: "状态"},
-				{Type: "click", Name: "画质补全", Key: "补全"},
-				{Type: "click", Name: "使用帮助", Key: "帮助"},
+			{Name: "插件功能", SubButton: []btn{
+				{Type: "click", Name: "创建 Emby 媒体库", Key: "建库"},
+				{Type: "click", Name: "ALIST 同步", Key: "alist"},
+				{Type: "click", Name: "115 文件夹清空", Key: "清空115"},
 			}},
 		},
 	}
@@ -297,6 +300,38 @@ func (h *Handler) wecomHandleCommand(text string) {
 			lines = append(lines, r)
 		}
 		reply(lines...)
+
+	case lower == "建库" || lower == "创建媒体库":
+		reply("已开始创建 Emby 媒体库，完成后通知。")
+		go func() {
+			cands, err := h.scanLibCandidates()
+			if err != nil {
+				NotifyMessage("🤖 StrmHub", "✗ 建库扫描失败: "+err.Error())
+				return
+			}
+			var items []embyLibCandidate
+			for _, c := range cands {
+				if !c.Exists {
+					items = append(items, c)
+				}
+			}
+			if len(items) == 0 {
+				NotifyMessage("🤖 StrmHub", "没有需要创建的媒体库（Emby 里都已存在）")
+				return
+			}
+			created, skipped := h.embyLibrariesCreateItems(items)
+			msg := fmt.Sprintf("✓ Emby 建库完成：新建 %d 个", len(created))
+			if len(skipped) > 0 {
+				msg += fmt.Sprintf("，跳过 %d 个", len(skipped))
+			}
+			NotifyMessage("🤖 StrmHub", msg)
+		}()
+
+	case lower == "整理123" || lower == "123":
+		reply("123 网盘整理功能开发中，敬请期待。")
+
+	case lower == "alist" || lower == "清空115":
+		reply("该插件功能开发中，敬请期待。")
 
 	case lower == "补全" || lower == "enrich":
 		if !loadEnrichPolicy().Enabled {
