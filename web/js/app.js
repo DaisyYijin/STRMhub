@@ -2857,7 +2857,6 @@ async function hdhiveRevoke(btn) {
 // 站点为 CSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
 // 会话 Cookie 持久化（失效自动重登）。种子搜索 → 磁力提交 115 离线下载，
 // 完成后自动整理入库。
-let gyCurrentMagnet = '';
 let gyStatusLoaded = false;
 
 async function gyLoadPage() {
@@ -2986,8 +2985,7 @@ async function gySearchSite(title, zy) {
   gyCurTitle = title;
   gyCurZy = zy || '';
   const body = document.getElementById('gy-modal-body');
-  body.innerHTML = '<div id="gy-zy-tabs"></div><div id="gy-torrent-list"><span style="color:var(--text-3)">搜索观影种子中…</span></div>'
-    + '<div id="gy-magnet-box" style="margin-top:12px"></div>';
+  body.innerHTML = '<div id="gy-zy-tabs"></div><div id="gy-torrent-list"><span style="color:var(--text-3)">搜索观影种子中…</span></div>';
   document.getElementById('gy-modal-title').textContent = '观影种子 · ' + title;
   try {
     const d = await api('/guanying/search?query=' + encodeURIComponent(title) + (zy ? '&zy=' + encodeURIComponent(zy) : ''));
@@ -3007,19 +3005,111 @@ async function gySearchSite(title, zy) {
       list.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
       return;
     }
-    list.innerHTML = '<div class="otk">' + items.map(it => {
+    gyLastItems = items;
+    gySort = { key: '', dir: -1 };
+    gyRenderTorrentList();
+  } catch (e) {
+    document.getElementById('gy-torrent-list').innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+  }
+}
+
+// ===== 种子列表：点击表头排序（大小/做种/时间）=====
+let gyLastItems = [];
+let gySort = { key: '', dir: -1 };
+
+function gySizeBytes(s) {
+  const m = String(s || '').match(/^([\d.]+)\s*([KMGT])/i);
+  if (!m) return 0;
+  const mult = { K: 1 << 10, M: 1 << 20, G: 1 << 30, T: 1 << 40 }[m[2].toUpperCase()] || 0;
+  return parseFloat(m[1]) * mult;
+}
+function gyTimeSec(s) {
+  const m = String(s || '').match(/^(\d+)\s*(小时|天|周|月|年)/);
+  if (!m) return 0;
+  const mult = { '小时': 3600, '天': 86400, '周': 604800, '月': 2592000, '年': 31536000 }[m[2]] || 0;
+  return parseFloat(m[1]) * mult;
+}
+function gySeeds(v) {
+  const n = parseInt(v, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function gySortBy(key) {
+  if (gySort.key === key) {
+    gySort.dir = -gySort.dir; // 再点一次反向
+  } else {
+    // 首次点击：大小/做种取最大在前，时间取最新在前（距今秒数最小）
+    gySort.key = key;
+    gySort.dir = key === 'time' ? 1 : -1;
+  }
+  gyRenderTorrentList();
+}
+
+function gyRenderTorrentList() {
+  const list = document.getElementById('gy-torrent-list');
+  if (!list) return;
+  const th = (label, key) => {
+    const active = gySort.key === key;
+    const arrow = active ? (gySort.dir === -1 ? '↓' : '↑') : '⇅';
+    return '<span onclick="gySortBy(\'' + key + '\')" style="cursor:pointer;'
+      + (active ? 'color:var(--primary);font-weight:600' : '') + '">' + label + ' ' + arrow + '</span>';
+  };
+  const items = gyLastItems.slice();
+  if (gySort.key === 'size') items.sort((a, b) => (gySizeBytes(a.size) - gySizeBytes(b.size)) * gySort.dir);
+  if (gySort.key === 'seeds') items.sort((a, b) => (gySeeds(a.seeds) - gySeeds(b.seeds)) * gySort.dir);
+  if (gySort.key === 'time') items.sort((a, b) => (gyTimeSec(a.time) - gyTimeSec(b.time)) * gySort.dir);
+  list.innerHTML = '<div style="display:flex;gap:14px;font-size:12px;color:var(--text-3);margin:0 0 6px;padding:0 10px;align-items:center">'
+    + '<span style="flex:1">排序：' + th('大小', 'size') + ' ' + th('做种', 'seeds') + ' ' + th('时间', 'time') + '</span>'
+    + '</div>'
+    + '<div class="otk">' + items.map(it => {
       const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const meta = [it.size, it.time, it.seeds !== undefined && it.seeds !== '' ? '做种 ' + it.seeds : '']
         .filter(Boolean).map(esc).join('</span><span class="otk-dot">·</span><span>');
-      return '<div class="otk-row" style="cursor:pointer" onclick="gyPick(\'' + safePath + '\',this)">'
+      return '<div class="otk-row" style="cursor:pointer" onclick="gySubmit(\'' + safePath + '\',this)">'
       + '<span class="otag" style="background:#eafaf0;color:#00874a">种子</span>'
       + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
-      + '<div class="otk-sub"><span>' + meta + '</span></div></div>'
-      + '<div class="otk-side" style="color:var(--primary)">磁力 ›</div>'
-      + '</div>';
+      + '<div class="otk-sub"><span>' + meta + '</span></div>'
+      + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+      + '<div class="otk-side">'
+      + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();gyCopyRowMagnet(\'' + safePath + '\',this)">复制磁力</button>'
+      + '</div></div>';
     }).join('') + '</div>';
+}
+
+// 点击种子行：提取磁力并直接提交 115 离线下载（一步完成）
+async function gySubmit(path, el) {
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该种子已提交过离线下载'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提取磁力…'; }
+  try {
+    const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
+    if (!d.magnet) throw new Error('该条目没有磁力链接');
+    if (st) { st.textContent = '提交离线…'; }
+    const r = await api('/guanying/offline', {
+      method: 'POST',
+      body: JSON.stringify({ magnet: d.magnet }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '已提交离线下载'); }
+    toast('已提交 115 离线下载，完成后自动整理入库');
   } catch (e) {
-    document.getElementById('gy-torrent-list').innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
+}
+
+// 复制单条磁力（不提交离线）
+async function gyCopyRowMagnet(path, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '获取中…';
+  try {
+    const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
+    if (!d.magnet) throw new Error('没有磁力链接');
+    gyCopyText(d.magnet);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
   }
 }
 
@@ -3038,62 +3128,6 @@ function buildGyTabs(zy) {
     html += tab(name, name, typeof n === 'number' ? n : '', gyCurZy === name);
   });
   return '<div id="gy-zy-tabs" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">' + html + '</div>';
-}
-
-async function gyPick(path, el) {
-  if (el) {
-    el.parentElement.querySelectorAll(':scope > .otk-row').forEach(n => n.style.background = '');
-    el.style.background = 'var(--fill-1, #f7f8fa)';
-  }
-  const box = document.getElementById('gy-magnet-box');
-  if (!box) return;
-  box.innerHTML = '<span style="color:var(--text-3)">提取磁力链接中…</span>';
-  try {
-    const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
-    gyRenderMagnet(d);
-  } catch (e) {
-    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
-  }
-}
-
-function gyRenderMagnet(d) {
-  const box = document.getElementById('gy-magnet-box');
-  gyCurrentMagnet = d.magnet || '';
-  if (!gyCurrentMagnet) {
-    box.innerHTML = '<span style="color:var(--text-3)">该条目没有磁力链接</span>';
-    return;
-  }
-  const shown = gyCurrentMagnet.length > 56 ? gyCurrentMagnet.slice(0, 56) + '…' : gyCurrentMagnet;
-  box.innerHTML = '<div class="otk"><div class="otk-row" id="gy-magnet-row">'
-    + '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">磁力</span>'
-    + '<div class="otk-main"><div class="otk-name" style="font-family:Consolas,Monaco,monospace;font-size:12.5px" title="' + esc(gyCurrentMagnet) + '">' + esc(shown) + '</div>'
-    + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-    + '<div class="otk-side">'
-    + '<button class="btn btn-primary btn-sm" id="gy-offline-btn" onclick="gyOffline(this)">提交 115 离线</button> '
-    + '<button class="btn btn-outline btn-sm" onclick="gyCopyText(gyCurrentMagnet)">复制磁力</button>'
-    + '</div></div></div>';
-}
-
-async function gyOffline(btn) {
-  if (!gyCurrentMagnet) return;
-  const row = document.getElementById('gy-magnet-row');
-  const st = row ? row.querySelector('.gy-st') : null;
-  btn.disabled = true;
-  btn.textContent = '提交中…';
-  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提交中…'; }
-  try {
-    const d = await api('/guanying/offline', {
-      method: 'POST',
-      body: JSON.stringify({ magnet: gyCurrentMagnet }),
-    });
-    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '已提交'); }
-    btn.textContent = '已提交';
-    toast('已提交 115 离线下载，完成后自动整理入库');
-  } catch (e) {
-    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
-    btn.disabled = false;
-    btn.textContent = '提交 115 离线';
-  }
 }
 
 // 复制（http 环境无 clipboard API 时退回 execCommand）
