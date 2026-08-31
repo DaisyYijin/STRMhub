@@ -131,15 +131,24 @@ func wecomMenuCreate(cfg WecomConfig) error {
 	if !cfg.isEnabled() || cfg.CorpID == "" || cfg.Secret == "" || cfg.AgentID == "" {
 		return fmt.Errorf("企业微信配置不完整（CorpID/Secret/AgentID）")
 	}
+	// 企业微信菜单为两级结构：一级最多 3 个，每个一级最多 5 个二级；
+	// 二级不能再套子菜单（平台硬限制）。二级 click 按钮与一级一样
+	// 通过 key 走指令路由，无需额外处理。
 	type btn struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-		Key  string `json:"key"`
+		Type      string `json:"type,omitempty"`
+		Name      string `json:"name"`
+		Key       string `json:"key,omitempty"`
+		SubButton []btn  `json:"sub_button,omitempty"`
 	}
 	menu := map[string]interface{}{
 		"button": []btn{
 			{Type: "click", Name: "自动整理", Key: "整理"},
 			{Type: "click", Name: "增量同步", Key: "同步"},
+			{Name: "更多功能", SubButton: []btn{
+				{Type: "click", Name: "状态查询", Key: "状态"},
+				{Type: "click", Name: "画质补全", Key: "补全"},
+				{Type: "click", Name: "使用帮助", Key: "帮助"},
+			}},
 		},
 	}
 	payload, _ := json.Marshal(menu)
