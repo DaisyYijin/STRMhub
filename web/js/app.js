@@ -2920,59 +2920,82 @@ async function gyLogout(btn) {
   } catch (e) { toast(e.message); }
 }
 
+function gyModalOpen(html, title) {
+  document.getElementById('gy-modal-title').textContent = title || '选择影视';
+  document.getElementById('gy-modal-body').innerHTML = html;
+  document.getElementById('gy-modal').style.display = 'flex';
+}
+function gyModalClose() {
+  document.getElementById('gy-modal').style.display = 'none';
+}
+
+let gyCurTitle = '';  // 已选影片名
+let gyCurZy = '';     // 当前资源分类（空=全部）
+let gyLastZy = {};    // 最近一次的分类分组（切分类时高亮用）
+
+// 搜索入口：TMDB 匹配条目，弹窗海报墙 + 简介让用户选择
 async function gySearch() {
   const q = document.getElementById('gy-query').value.trim();
   if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
-  const box = document.getElementById('gy-tmdb-results');
-  box.innerHTML = '<span style="color:var(--text-3)">TMDB 匹配中…</span>';
+  gyModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
   try {
     const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
     const items = d.data || [];
     if (!items.length) {
-      box.innerHTML = '<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>';
+      gyModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>', '选择影视');
       return;
     }
-    box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:10px">' + items.map(it => {
+    const cards = items.map(it => {
       const poster = it.poster
         ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
-          + 'onerror="this.style.display=\'none\'" style="width:80px;height:120px;object-fit:cover;border-radius:6px;background:var(--fill-2)">'
-        : '<div style="width:80px;height:120px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--text-3)">▨</div>';
+          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
       const typeTag = it.media_type === 'tv'
-        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧</span>'
-        : '<span class="otag" style="background:#fff4e5;color:#b26a00">影</span>';
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
+      const overview = String(it.overview || '').slice(0, 100);
       const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      return '<div onclick="gyPickTmdb(\'' + safeTitle + '\',this)" data-title="' + esc(it.title) + '" '
-        + 'style="width:104px;cursor:pointer;text-align:center" title="点击到观影搜索种子">'
-        + '<div style="position:relative">' + poster
-        + '<span style="position:absolute;top:4px;left:4px">' + typeTag + '</span></div>'
-        + '<div style="font-size:12.5px;margin-top:6px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
-        + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(it.year || '') + '</div>'
-        + '</div>';
-    }).join('') + '</div>';
+      return '<div onclick="gyPickTmdb(\'' + safeTitle + '\')" '
+        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
+        + poster
+        + '<div style="min-width:0;flex:1">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
+        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
+        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
+        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
+        + '</div>'
+        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
+        + '</div></div>';
+    }).join('');
+    gyModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
   } catch (e) {
-    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
-      + ' <a href="javascript:void(0)" style="font-size:12.5px" onclick="gySearchSite(document.getElementById(\'gy-query\').value.trim())">跳过 TMDB 直接搜观影</a>';
+    gyModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span><br>'
+      + '<a href="javascript:void(0)" style="font-size:13px" onclick="gySearchSite(document.getElementById(\'gy-query\').value.trim(), \'\')">跳过 TMDB，直接用关键词搜观影</a>', '选择影视');
   }
 }
 
-function gyPickTmdb(title, el) {
-  if (el) {
-    el.parentElement.querySelectorAll(':scope > div').forEach(n => n.style.outline = '');
-    el.style.outline = '2px solid var(--primary)';
-  }
-  gySearchSite(title);
+// 选定影片 → 弹窗切到观影种子列表（按资源分类分组）
+function gyPickTmdb(title) {
+  gyCurTitle = title;
+  gyCurZy = '';
+  gySearchSite(title, '');
 }
 
-async function gySearchSite(title) {
-  const card = document.getElementById('gy-res-card');
-  const box = document.getElementById('gy-results');
-  const label = document.getElementById('gy-site-title');
-  card.style.display = '';
-  label.textContent = '第二步 · 观影种子';
-  box.innerHTML = '<span style="color:var(--text-3)">搜索观影种子中…</span>';
+async function gySearchSite(title, zy) {
+  gyCurTitle = title;
+  gyCurZy = zy || '';
+  const body = document.getElementById('gy-modal-body');
+  body.innerHTML = '<div id="gy-zy-tabs"></div><div id="gy-torrent-list"><span style="color:var(--text-3)">搜索观影种子中…</span></div>'
+    + '<div id="gy-magnet-box" style="margin-top:12px"></div>';
+  document.getElementById('gy-modal-title').textContent = '观影种子 · ' + title;
   try {
-    const d = await api('/guanying/search?query=' + encodeURIComponent(title));
+    const d = await api('/guanying/search?query=' + encodeURIComponent(title) + (zy ? '&zy=' + encodeURIComponent(zy) : ''));
     const items = d.data || [];
+    // 分类 tabs（「全部」查询时服务端返回分组；切分类沿用缓存的分组高亮当前项）
+    if (d.zy && Object.keys(d.zy).length) gyLastZy = d.zy;
+    const tabEl = document.getElementById('gy-zy-tabs');
+    if (tabEl) tabEl.outerHTML = Object.keys(gyLastZy).length ? buildGyTabs(gyLastZy) : '';
     if (!items.length) {
       let hint = '观影站内没有找到「' + esc(title) + '」的种子';
       const dbg = d.debug || {};
@@ -2980,10 +3003,10 @@ async function gySearchSite(title) {
         hint += '<br><span style="font-size:12px;color:var(--text-3)">诊断: 页面 ' + dbg.page_len
           + ' 字节 · 标题「' + esc(dbg.title || '') + '」· ' + (dbg.nologin ? '受限页' : '非受限页') + '</span>';
       }
-      box.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
+      list.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
       return;
     }
-    box.innerHTML = '<div class="otk">' + items.map((it, i) => {
+    list.innerHTML = '<div class="otk">' + items.map(it => {
       const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const meta = [it.size, it.time, it.seeds !== undefined && it.seeds !== '' ? '做种 ' + it.seeds : '']
         .filter(Boolean).map(esc).join('</span><span class="otk-dot">·</span><span>');
@@ -2991,12 +3014,29 @@ async function gySearchSite(title) {
       + '<span class="otag" style="background:#eafaf0;color:#00874a">种子</span>'
       + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
       + '<div class="otk-sub"><span>' + meta + '</span></div></div>'
-      + '<div class="otk-side" style="color:var(--primary)">磁力链接 ›</div>'
+      + '<div class="otk-side" style="color:var(--primary)">磁力 ›</div>'
       + '</div>';
     }).join('') + '</div>';
   } catch (e) {
-    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+    document.getElementById('gy-torrent-list').innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
   }
+}
+
+function buildGyTabs(zy) {
+  const tab = (name, label, count, active) => {
+    const safeName = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+    const fg = active ? '#fff' : 'var(--text-2)';
+    return '<span onclick="gySearchSite(gyCurTitle, \'' + safeName + '\')" '
+      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+      + esc(label) + (count !== '' ? ' ' + count : '') + '</span>';
+  };
+  let html = tab('', '全部', '', gyCurZy === '');
+  Object.keys(zy).forEach(name => {
+    const n = zy[name];
+    html += tab(name, name, typeof n === 'number' ? n : '', gyCurZy === name);
+  });
+  return '<div id="gy-zy-tabs" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">' + html + '</div>';
 }
 
 async function gyPick(path, el) {
@@ -3004,28 +3044,26 @@ async function gyPick(path, el) {
     el.parentElement.querySelectorAll(':scope > .otk-row').forEach(n => n.style.background = '');
     el.style.background = 'var(--fill-1, #f7f8fa)';
   }
-  const card = document.getElementById('gy-magnet-card');
-  const list = document.getElementById('gy-res-list');
-  card.style.display = '';
-  list.innerHTML = '<span style="color:var(--text-3)">提取磁力链接中…</span>';
+  const box = document.getElementById('gy-magnet-box');
+  if (!box) return;
+  box.innerHTML = '<span style="color:var(--text-3)">提取磁力链接中…</span>';
   try {
     const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
     gyRenderMagnet(d);
   } catch (e) {
-    list.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
   }
 }
 
 function gyRenderMagnet(d) {
-  const list = document.getElementById('gy-res-list');
+  const box = document.getElementById('gy-magnet-box');
   gyCurrentMagnet = d.magnet || '';
   if (!gyCurrentMagnet) {
-    list.innerHTML = '<span style="color:var(--text-3)">该条目没有磁力链接</span>';
+    box.innerHTML = '<span style="color:var(--text-3)">该条目没有磁力链接</span>';
     return;
   }
   const shown = gyCurrentMagnet.length > 56 ? gyCurrentMagnet.slice(0, 56) + '…' : gyCurrentMagnet;
-  list.innerHTML = (d.title ? '<div style="font-weight:600;margin-bottom:8px">' + esc(d.title) + '</div>' : '')
-    + '<div class="otk"><div class="otk-row" id="gy-magnet-row">'
+  box.innerHTML = '<div class="otk"><div class="otk-row" id="gy-magnet-row">'
     + '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">磁力</span>'
     + '<div class="otk-main"><div class="otk-name" style="font-family:Consolas,Monaco,monospace;font-size:12.5px" title="' + esc(gyCurrentMagnet) + '">' + esc(shown) + '</div>'
     + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'

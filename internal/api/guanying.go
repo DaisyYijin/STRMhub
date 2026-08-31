@@ -569,8 +569,13 @@ func (h *Handler) GySearch(c *gin.Context) {
 	}
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
+	zy := strings.TrimSpace(c.Query("zy")) // 资源分类：空=全部，中字720P/4K/原盘…
+	searchPath := "/search?q=" + url.QueryEscape(q) + "&type=4"
+	if zy != "" {
+		searchPath += "&ziyuan=" + url.QueryEscape(zy)
+	}
 	fetchSearch := func() (string, error) {
-		return gyDo(client, cfg.BaseURL, http.MethodGet, "/search?q="+url.QueryEscape(q)+"&type=4", nil)
+		return gyDo(client, cfg.BaseURL, http.MethodGet, searchPath, nil)
 	}
 	body, err := fetchSearch()
 	if err != nil {
@@ -611,7 +616,19 @@ func (h *Handler) GySearch(c *gin.Context) {
 	} else {
 		log.Printf("[观影] ▣ 搜索「%s」: %d 条种子", q, len(items))
 	}
-	c.JSON(http.StatusOK, gin.H{"data": items, "debug": debug})
+	// 分类分组只在「全部」查询时返回（zy:{中字720P:3, 4K:7, ...}）
+	zyGroups := gin.H{}
+	if zy == "" {
+		if objStr, ok := gyObjJSON(body, "search"); ok {
+			var obj struct {
+				Zy map[string]any `json:"zy"`
+			}
+			if json.Unmarshal([]byte(objStr), &obj) == nil && obj.Zy != nil {
+				zyGroups = gin.H(obj.Zy)
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "zy": zyGroups, "debug": debug})
 }
 
 // GyResources GET /guanying/resources?path=/bt/XXXX → 种子详情页提取磁力链接

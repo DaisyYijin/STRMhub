@@ -970,13 +970,15 @@ func (h *Handler) TmdbSearchMulti(c *gin.Context) {
 	}
 	var result struct {
 		Results []struct {
-			ID           int    `json:"id"`
-			MediaType    string `json:"media_type"`
-			Title        string `json:"title"`
-			Name         string `json:"name"`
-			ReleaseDate  string `json:"release_date"`
-			FirstAirDate string `json:"first_air_date"`
-			PosterPath   string `json:"poster_path"`
+			ID           int     `json:"id"`
+			MediaType    string  `json:"media_type"`
+			Title        string  `json:"title"`
+			Name         string  `json:"name"`
+			ReleaseDate  string  `json:"release_date"`
+			FirstAirDate string  `json:"first_air_date"`
+			PosterPath   string  `json:"poster_path"`
+			VoteAverage  float64 `json:"vote_average"`
+			Overview     string  `json:"overview"`
 		} `json:"results"`
 	}
 	if json.Unmarshal(body, &result) != nil {
@@ -1003,6 +1005,7 @@ func (h *Handler) TmdbSearchMulti(c *gin.Context) {
 		items = append(items, gin.H{
 			"id": r.ID, "media_type": r.MediaType, "title": title,
 			"year": year, "poster": r.PosterPath,
+			"vote": r.VoteAverage, "overview": r.Overview,
 		})
 		if len(items) >= 12 {
 			break
