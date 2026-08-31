@@ -164,9 +164,10 @@ func gyIsPow(body string) bool {
 	return strings.Contains(body, "powSolve") || strings.Contains(body, "pow.core")
 }
 
-// gyIsNoLogin 判断页面是否提示需要登录
+// gyIsNoLogin 判断页面是否提示需要登录（访客标记：nologin 脚本 / 受限标题）
 func gyIsNoLogin(body string) bool {
-	return strings.Contains(body, "nologin") || strings.Contains(body, "请登录后继续")
+	return strings.Contains(body, "nologin-e02c") || strings.Contains(body, "请登录后继续") ||
+		strings.Contains(body, "未登录，访问受限")
 }
 
 // gyPow 过 PoW 验证：取挑战→反复平算→提交换 Cookie
@@ -214,6 +215,11 @@ func gyPow(client *http.Client, base string) error {
 
 // gyDo 带自动过 PoW 的页面请求：返回响应正文（字符串）
 func gyDo(client *http.Client, base, method, path string, form url.Values) (string, error) {
+	return gyDoReq(client, base, method, path, form, nil)
+}
+
+// gyDoReq 同 gyDo，允许附加请求头
+func gyDoReq(client *http.Client, base, method, path string, form url.Values, hdrs map[string]string) (string, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var bodyReader io.Reader
 		if form != nil {
@@ -228,6 +234,9 @@ func gyDo(client *http.Client, base, method, path string, form url.Values) (stri
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 		if form != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		for k, v := range hdrs {
+			req.Header.Set(k, v)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -247,46 +256,54 @@ func gyDo(client *http.Client, base, method, path string, form url.Values) (stri
 	return "", fmt.Errorf("PoW 验证后请求仍未通过")
 }
 
-// gyLoggedIn 探测当前会话是否已登录（首页是否出现退出入口）
+// gyLoggedIn 探测当前会话是否已登录。
+// 访客页面的服务端标记：<title>未登录，访问受限</title> + nologin 脚本；
+// （导航里的退出链接是前端 JS 渲染的，服务端 HTML 里没有，不能用作判定）
 func gyLoggedIn(client *http.Client, base string) (bool, error) {
 	body, err := gyDo(client, base, http.MethodGet, "/", nil)
 	if err != nil {
 		return false, err
 	}
-	return strings.Contains(body, "/user/logout"), nil
+	return !gyIsNoLogin(body), nil
 }
 
-// gyLoginOnce 账号密码登录（返回站点层错误原因）
+// gyLoginOnce 账号密码登录。
+// 真实请求格式（从站点前端 loginm.post 逆向）：表单
+// code=<验证码可空>&siteid=1&dosubmit=1&username=&password=&cookietime=10506240，
+// 响应为 JSON {code, msg}（非 200=失败，msg 为站点原文，如「账号不存在」）
 func gyLoginOnce(client *http.Client, base, username, password string) error {
 	form := url.Values{
-		"username":          {username},
-		"password":          {password},
-		"cookietime":        {"1"},
-		"captcha-submit-info": {""},
-		"button":            {""},
+		"code":       {""},
+		"siteid":     {"1"},
+		"dosubmit":   {"1"},
+		"username":   {username},
+		"password":   {password},
+		"cookietime": {"10506240"},
 	}
-	body, err := gyDo(client, base, http.MethodPost, "/user/login", form)
+	body, err := gyDoReq(client, base, http.MethodPost, "/user/login", form, map[string]string{
+		"X-Requested-With": "XMLHttpRequest",
+	})
 	if err != nil {
 		return err
 	}
-	// 登录响应可能是中间跳转页，探测一次会话状态确认
+	// 成功：JSON {code:200,...}；失败：code=403/其他，msg 为站点原文
+	var jr struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if json.Unmarshal([]byte(body), &jr) == nil && jr.Msg != "" {
+		if jr.Code == 200 || jr.Code == 0 {
+			return nil
+		}
+		return fmt.Errorf("%s", jr.Msg)
+	}
+	// 非 JSON 响应（异常情况）→ 回退会话探测
 	ok, err := gyLoggedIn(client, base)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		// 提示语提取（宽容匹配常见文案）
-		hint := ""
-		for _, kw := range []string{"验证码", "密码错误", "不存在", "封禁", "失败"} {
-			if strings.Contains(body, kw) {
-				hint = kw
-				break
-			}
-		}
-		if hint != "" {
-			return fmt.Errorf("登录未通过（%s）", hint)
-		}
-		return fmt.Errorf("登录未通过（账号密码不对，或站点要求验证码——可改用浏览器 Cookie 导入）")
+		return fmt.Errorf("登录未通过（站点响应异常）")
 	}
 	return nil
 }
