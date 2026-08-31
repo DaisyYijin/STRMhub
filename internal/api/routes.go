@@ -353,7 +353,11 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 整理→同步闭环
 		protected.POST("/organize/pipeline", h.RunOrganizePipeline)
 
-		// 影视转存 · 观影（账号密码登录 + PoW 反爬自动过验证；115 链接可自动转存）
+		// TMDB 搜索（影视转存页：名称 → 条目选择 → 站内种子搜索）
+		protected.GET("/tmdb/search", h.TmdbSearchMulti)
+		protected.GET("/tmdb/img", h.TmdbImg)
+
+		// 影视转存 · 观影（账号密码登录 + PoW 反爬自动过验证；磁力提交 115 离线）
 		protected.GET("/guanying/config", h.GyGetConfig)
 		protected.POST("/guanying/login", h.GyLogin)
 		protected.POST("/guanying/logout", h.GyLogout)

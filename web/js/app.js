@@ -2922,14 +2922,59 @@ async function gyLogout(btn) {
 
 async function gySearch() {
   const q = document.getElementById('gy-query').value.trim();
-  if (!q) { toast('请输入影视名称'); return; }
-  const box = document.getElementById('gy-results');
-  box.innerHTML = '<span style="color:var(--text-3)">搜索观影资源中…</span>';
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  const box = document.getElementById('gy-tmdb-results');
+  box.innerHTML = '<span style="color:var(--text-3)">TMDB 匹配中…</span>';
   try {
-    const d = await api('/guanying/search?query=' + encodeURIComponent(q));
+    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
     const items = d.data || [];
     if (!items.length) {
-      let hint = '观影站内没有找到「' + esc(q) + '」的资源';
+      box.innerHTML = '<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>';
+      return;
+    }
+    box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:10px">' + items.map(it => {
+      const poster = it.poster
+        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
+          + 'onerror="this.style.display=\'none\'" style="width:80px;height:120px;object-fit:cover;border-radius:6px;background:var(--fill-2)">'
+        : '<div style="width:80px;height:120px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--text-3)">▨</div>';
+      const typeTag = it.media_type === 'tv'
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">影</span>';
+      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return '<div onclick="gyPickTmdb(\'' + safeTitle + '\',this)" data-title="' + esc(it.title) + '" '
+        + 'style="width:104px;cursor:pointer;text-align:center" title="点击到观影搜索种子">'
+        + '<div style="position:relative">' + poster
+        + '<span style="position:absolute;top:4px;left:4px">' + typeTag + '</span></div>'
+        + '<div style="font-size:12.5px;margin-top:6px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
+        + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(it.year || '') + '</div>'
+        + '</div>';
+    }).join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+      + ' <a href="javascript:void(0)" style="font-size:12.5px" onclick="gySearchSite(document.getElementById(\'gy-query\').value.trim())">跳过 TMDB 直接搜观影</a>';
+  }
+}
+
+function gyPickTmdb(title, el) {
+  if (el) {
+    el.parentElement.querySelectorAll(':scope > div').forEach(n => n.style.outline = '');
+    el.style.outline = '2px solid var(--primary)';
+  }
+  gySearchSite(title);
+}
+
+async function gySearchSite(title) {
+  const card = document.getElementById('gy-res-card');
+  const box = document.getElementById('gy-results');
+  const label = document.getElementById('gy-site-title');
+  card.style.display = '';
+  label.textContent = '第二步 · 观影种子';
+  box.innerHTML = '<span style="color:var(--text-3)">搜索观影种子中…</span>';
+  try {
+    const d = await api('/guanying/search?query=' + encodeURIComponent(title));
+    const items = d.data || [];
+    if (!items.length) {
+      let hint = '观影站内没有找到「' + esc(title) + '」的种子';
       const dbg = d.debug || {};
       if (dbg.page_len !== undefined) {
         hint += '<br><span style="font-size:12px;color:var(--text-3)">诊断: 页面 ' + dbg.page_len
@@ -2959,7 +3004,7 @@ async function gyPick(path, el) {
     el.parentElement.querySelectorAll(':scope > .otk-row').forEach(n => n.style.background = '');
     el.style.background = 'var(--fill-1, #f7f8fa)';
   }
-  const card = document.getElementById('gy-res-card');
+  const card = document.getElementById('gy-magnet-card');
   const list = document.getElementById('gy-res-list');
   card.style.display = '';
   list.innerHTML = '<span style="color:var(--text-3)">提取磁力链接中…</span>';
