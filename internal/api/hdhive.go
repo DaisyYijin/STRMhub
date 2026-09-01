@@ -342,16 +342,45 @@ const hdhiveLoginRouterState = `%5B%22%22%2C%7B%22children%22%3A%5B%22(auth)%22%
 const hdhiveLoginActionFallback = "602b5a3af7ab2e93be6a14001ca83c1be491ccecea"
 
 var (
-	reHdhiveActionMeta   = regexp.MustCompile(`next-action"\s*:\s*"([a-fA-F0-9]{16,64})"`)
+	reHdhiveActionID     = regexp.MustCompile(`\$ACTION_ID_([a-f0-9]{40,})`)
+	reHdhiveActionMeta   = regexp.MustCompile(`(?i)next-action"?\s*[:=]\s*"([a-fA-F0-9]{16,64})"`)
 	reHdhiveActionForm   = regexp.MustCompile(`name="next-action"\s+value="([a-fA-F0-9]{16,64})"`)
-	reHdhiveActionCreate = regexp.MustCompile(`createServerReference\("([a-f0-9]{40,})"[\s\S]{0,400}?"login"`)
-	reHdhiveLoginChunk   = regexp.MustCompile(`<script[^>]+src="([^"]+/app/\(auth\)/login/page-[^"]+\.js)"`)
+	reHdhiveActionCreate = regexp.MustCompile(`createServerReference\("([a-f0-9]{40,})"[\s\S]{0,1500}?"login"`)
+	reHdhiveActionReg    = regexp.MustCompile(`(?i)registerServerReference\([^,]{0,80},\s*"([a-f0-9]{40,})"[\s\S]{0,300}?"login"`)
+	reHdhiveScriptSrc    = regexp.MustCompile(`(?i)<script[^>]+src="([^"]+_next/static/[^"]+\.js)"`)
+	reHdhiveLoginChunk   = regexp.MustCompile(`(?i)<script[^>]+src="([^"]*login[^"]*\.js)"`)
+	reHdhiveHexStr       = regexp.MustCompile(`"([a-f0-9]{40,64})"`)
 )
 
+// hdhiveHexNearLogin 在 chunk 文本里找「login」附近（±600 字符）的 40+ 位十六进制
+// action ID——对压缩器变体最宽容的挖法
+func hdhiveHexNearLogin(chunk string) string {
+	lower := strings.ToLower(chunk)
+	for i := 0; ; {
+		idx := strings.Index(lower[i:], "login")
+		if idx < 0 {
+			return ""
+		}
+		at := i + idx
+		start, end := at-600, at+660
+		if start < 0 {
+			start = 0
+		}
+		if end > len(chunk) {
+			end = len(chunk)
+		}
+		if m := reHdhiveHexStr.FindAllStringSubmatch(chunk[start:end], -1); len(m) > 0 {
+			return m[0][1]
+		}
+		i = at + 5
+	}
+}
+
 // hdhiveServerActionLogin Next.js Server Action 方式登录：
-// 打开登录页挖出 login action ID → POST 登录页带 next-action 头 → 收 Set-Cookie
+// 从登录页 HTML/JS chunk 多来源收集候选 action ID 并逐个尝试，
+// 从 Set-Cookie 取会话；站点明确拒绝（账号密码错误）时立即返回原文报错
 func (h *Handler) hdhiveServerActionLogin(cfg *hdhiveCfg) (bool, string) {
-	// 1. 预热登录页（拿 HTML 里的 action ID 与 CF Cookie）
+	// 1. 预热登录页（拿 HTML 与 CF Cookie）
 	status, warm, resp, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/login", "", map[string]string{
 		"Accept":  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 		"Referer": cfg.BaseURL + "/",
@@ -364,91 +393,138 @@ func (h *Handler) hdhiveServerActionLogin(cfg *hdhiveCfg) (bool, string) {
 	}
 	hdhiveImportRespCookies(cfg, resp)
 
-	// 2. 挖 login action ID：页面内联 → 登录页 JS chunk → 内置兜底
-	actionID := ""
-	for _, re := range []*regexp.Regexp{reHdhiveActionMeta, reHdhiveActionForm} {
-		if m := re.FindStringSubmatch(warm); m != nil {
-			actionID = m[1]
+	// 2. 收集候选 action ID（按可信度排序）
+	type actionCandidate struct{ from, id string }
+	var ids []actionCandidate
+	seen := map[string]bool{}
+	push := func(from, id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, actionCandidate{from, id})
+		}
+	}
+	if m := reHdhiveActionID.FindStringSubmatch(warm); m != nil {
+		push("page-form", m[1])
+	}
+	if m := reHdhiveActionMeta.FindStringSubmatch(warm); m != nil {
+		push("page-meta", m[1])
+	}
+	if m := reHdhiveActionForm.FindStringSubmatch(warm); m != nil {
+		push("page-form2", m[1])
+	}
+
+	// 候选 chunk：优先路径含 login 的，其次登录页引用的全部 _next 静态 chunk
+	var chunks []string
+	chunkSeen := map[string]bool{}
+	addChunk := func(src string) {
+		if !strings.HasPrefix(src, "http") {
+			src = cfg.BaseURL + src
+		}
+		if !chunkSeen[src] {
+			chunkSeen[src] = true
+			chunks = append(chunks, src)
+		}
+	}
+	for _, m := range reHdhiveLoginChunk.FindAllStringSubmatch(warm, 10) {
+		addChunk(m[1])
+	}
+	loginChunkCount := len(chunks)
+	for _, m := range reHdhiveScriptSrc.FindAllStringSubmatch(warm, 30) {
+		addChunk(m[1])
+	}
+	fetched := 0
+	for i, src := range chunks {
+		if fetched >= 12 {
 			break
 		}
-	}
-	if actionID == "" {
-		for _, m := range reHdhiveLoginChunk.FindAllStringSubmatch(warm, 5) {
-			src := m[1]
-			if !strings.HasPrefix(src, "http") {
-				src = cfg.BaseURL + src
-			}
-			_, chunk, _, err := hdhiveDirect(cfg, "GET", src, "", map[string]string{
-				"Accept":  "*/*",
-				"Referer": cfg.BaseURL + "/login",
-			})
-			if err != nil {
-				continue
-			}
-			if mm := reHdhiveActionCreate.FindStringSubmatch(chunk); mm != nil {
-				actionID = mm[1]
-				break
-			}
-		}
-	}
-	if actionID == "" {
-		actionID = hdhiveLoginActionFallback
-		log.Printf("[影巢] ○ 未解析到登录 Action ID，使用内置兜底值")
-	} else {
-		log.Printf("[影巢] ▶ 登录 Action ID: %s", truncateStr(actionID, 16))
-	}
-
-	// 3. POST 登录页触发 Server Action（body: [{"username","password"},"/"]）
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.Encode([]any{map[string]string{"username": cfg.Username, "password": cfg.Password}, "/"})
-	var raw string
-	status, raw, resp, err = hdhiveDirect(cfg, "POST", cfg.BaseURL+"/login",
-		strings.TrimRight(buf.String(), "\n"), map[string]string{
-			"Accept":                 "text/x-component",
-			"Content-Type":           "text/plain;charset=UTF-8",
-			"Next-Action":            actionID,
-			"Next-Router-State-Tree": hdhiveLoginRouterState,
-			"Origin":                 cfg.BaseURL,
-			"Referer":                cfg.BaseURL + "/login",
+		fetched++
+		_, chunk, _, err := hdhiveDirect(cfg, "GET", src, "", map[string]string{
+			"Accept":  "*/*",
+			"Referer": cfg.BaseURL + "/login",
 		})
-	if err != nil {
-		return false, "Server Action 登录请求失败: " + sanitizeWecomErr(err)
-	}
-	hdhiveImportRespCookies(cfg, resp)
-
-	// 4. 判定结果：Set-Cookie 带 token 即成功；否则解析流式响应里的报错
-	for _, ck := range resp.Cookies() {
-		if ck.Name == "token" && ck.Value != "" {
-			return true, ""
-		}
-	}
-	if loc := resp.Header.Get("X-Action-Redirect"); strings.Contains(loc, "/login") {
-		return false, "影巢拒绝登录（账号或密码错误）"
-	}
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "1:") {
+		if err != nil {
 			continue
 		}
-		var payload struct {
-			Error struct {
-				Message     string `json:"message"`
-				Description string `json:"description"`
-			} `json:"error"`
+		if m := reHdhiveActionCreate.FindStringSubmatch(chunk); m != nil {
+			push(fmt.Sprintf("chunk%d-csr", i), m[1])
 		}
-		if json.Unmarshal([]byte(line[2:]), &payload) == nil {
-			msg := payload.Error.Message
-			if msg == "" {
-				msg = payload.Error.Description
+		if m := reHdhiveActionReg.FindStringSubmatch(chunk); m != nil {
+			push(fmt.Sprintf("chunk%d-reg", i), m[1])
+		}
+		if id := hdhiveHexNearLogin(chunk); id != "" {
+			pref := fmt.Sprintf("chunk%d-near", i)
+			if i < loginChunkCount {
+				pref += "-loginjs"
 			}
-			if msg != "" {
-				return false, "影巢登录失败: " + msg
-			}
+			push(pref, id)
 		}
 	}
-	return false, fmt.Sprintf("Server Action 登录未取到会话（HTTP %d）: %s", status, truncateStr(raw, 100))
+	push("builtin", hdhiveLoginActionFallback)
+	log.Printf("[影巢] ▶ Server Action 候选 %d 个（页面 %d 字节，chunk %d 个/含 login 命名 %d 个，抓取 %d）",
+		len(ids), len(warm), len(chunks), loginChunkCount, fetched)
+
+	// 3. 逐个尝试，直到拿到会话或站点明确拒绝
+	var lastErr string
+	for _, cand := range ids {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		enc.Encode([]any{map[string]string{"username": cfg.Username, "password": cfg.Password}, "/"})
+		status, raw, resp, err := hdhiveDirect(cfg, "POST", cfg.BaseURL+"/login",
+			strings.TrimRight(buf.String(), "\n"), map[string]string{
+				"Accept":                 "text/x-component",
+				"Content-Type":           "text/plain;charset=UTF-8",
+				"Next-Action":            cand.id,
+				"Next-Router-State-Tree": hdhiveLoginRouterState,
+				"Origin":                 cfg.BaseURL,
+				"Referer":                cfg.BaseURL + "/login",
+			})
+		if err != nil {
+			return false, "Server Action 登录请求失败: " + sanitizeWecomErr(err)
+		}
+		hdhiveImportRespCookies(cfg, resp)
+		for _, ck := range resp.Cookies() {
+			if ck.Name == "token" && ck.Value != "" {
+				log.Printf("[影巢] ✓ 登录成功（action 来源 %s）", cand.from)
+				return true, ""
+			}
+		}
+		if loc := resp.Header.Get("X-Action-Redirect"); strings.Contains(loc, "/login") {
+			return false, "影巢拒绝登录（账号或密码错误）"
+		}
+		// 站点业务报错（action 有效但登录被拒）→ 立即透出原文
+		rejected := ""
+		if strings.Contains(raw, "账号") || strings.Contains(raw, "密码") || strings.Contains(raw, "用户名") {
+			for _, line := range strings.Split(raw, "\n") {
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(line, "1:") {
+					continue
+				}
+				var payload struct {
+					Error struct {
+						Message     string `json:"message"`
+						Description string `json:"description"`
+					} `json:"error"`
+				}
+				if json.Unmarshal([]byte(line[2:]), &payload) == nil {
+					rejected = payload.Error.Message
+					if rejected == "" {
+						rejected = payload.Error.Description
+					}
+				}
+			}
+			if rejected != "" {
+				return false, "影巢登录失败: " + rejected
+			}
+			return false, "影巢登录失败（站点返回含账号/密码字样的响应，未解析出明细）"
+		}
+		lastErr = fmt.Sprintf("action[%s]=%s → HTTP %d: %s", cand.from, truncateStr(cand.id, 12), status, truncateStr(raw, 60))
+		log.Printf("[影巢] ○ %s", lastErr)
+	}
+	if len(ids) == 0 {
+		return false, fmt.Sprintf("未能从登录页解析出任何 action ID（页面 %d 字节，chunk %d 个）", len(warm), len(chunks))
+	}
+	return false, fmt.Sprintf("Server Action 登录未取到会话，尝试 %d 个候选均失败，最后: %s", len(ids), lastErr)
 }
 
 // hdhiveCheckLogin 校验登录态（GET /api/customer/user/info）
