@@ -175,7 +175,8 @@ func shortSha(sha string) string {
 // StartUpdateNotifier 启动更新通知监视（SetupRoutes 调用）
 func StartUpdateNotifier() {
 	go func() {
-		time.Sleep(60 * time.Second) // 等网络/通知配置就绪
+		time.Sleep(15 * time.Second) // 等网络就绪（通知配置在启动时已同步加载）
+		notifyUpdateOnce()           // 启动即查：更新完成确认立刻发，不等轮询周期
 		for {
 			select {
 			case <-stopCh:
@@ -195,8 +196,20 @@ func notifyUpdateOnce() {
 
 	// 1) 更新完成确认：持久化的"上次运行版本"与当前不同 = 刚完成了一次更新
 	if st.Applied != "" && st.Applied != buildVersion {
-		NotifyMessage("✓ StrmHub 更新完成",
-			"v"+shortSha(st.Applied)+" → v"+shortSha(buildVersion)+"\n新版本已生效，如遇异常可在 GitHub 提交反馈")
+		var b strings.Builder
+		fmt.Fprintf(&b, "v%s → v%s", shortSha(st.Applied), shortSha(buildVersion))
+		if commits := fetchCommitsBetween(st.Applied, buildVersion); len(commits) > 0 {
+			fmt.Fprintf(&b, "，更新内容（%d 个提交）：", len(commits))
+			for i, cm := range commits {
+				if i >= 10 {
+					fmt.Fprintf(&b, "\n…等共 %d 个提交", len(commits))
+					break
+				}
+				fmt.Fprintf(&b, "\n• %s %s", shortSha(cm.Sha), truncateStr(cm.Message, 60))
+			}
+		}
+		b.WriteString("\n\n新版本已生效，如遇异常可在 GitHub 提交反馈")
+		NotifyMessage("✓ StrmHub 更新完成", b.String())
 	}
 	st.Applied = buildVersion
 
