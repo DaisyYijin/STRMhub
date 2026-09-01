@@ -345,7 +345,7 @@ var (
 	reHdhiveActionID     = regexp.MustCompile(`\$ACTION_ID_([a-f0-9]{40,})`)
 	reHdhiveActionMeta   = regexp.MustCompile(`(?i)next-action"?\s*[:=]\s*"([a-fA-F0-9]{16,64})"`)
 	reHdhiveActionForm   = regexp.MustCompile(`name="next-action"\s+value="([a-fA-F0-9]{16,64})"`)
-	reHdhiveActionCreate = regexp.MustCompile(`createServerReference\("([a-f0-9]{40,})"[\s\S]{0,1500}?"login"`)
+	reHdhiveActionCreate = regexp.MustCompile(`createServerReference\("([a-f0-9]{40,})"[\s\S]{0,900}?"login"`)
 	reHdhiveActionReg    = regexp.MustCompile(`(?i)registerServerReference\([^,]{0,80},\s*"([a-f0-9]{40,})"[\s\S]{0,300}?"login"`)
 	reHdhiveScriptSrc    = regexp.MustCompile(`(?i)<script[^>]+src="([^"]+_next/static/[^"]+\.js)"`)
 	reHdhiveLoginChunk   = regexp.MustCompile(`(?i)<script[^>]+src="([^"]*login[^"]*\.js)"`)
