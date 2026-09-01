@@ -254,11 +254,24 @@ func (h *Handler) hdhivePage(cfg *hdhiveCfg, path string) (string, string, error
 }
 
 // hdhiveIsLoginPage 判断最终落点是不是登录页（Cookie 失效的标志）
+// hdhiveLoginWall 通过内容识别登录墙：站点对未登录访问不重定向，
+// 而是在原 URL 渲染登录页（标记串取自实测登录页），命中 ≥2 个即判定
+func hdhiveLoginWall(body string) bool {
+	markers := []string{"忘记密码", "马上注册", "登录您的账号", "用户名或邮箱"}
+	hit := 0
+	for _, m := range markers {
+		if strings.Contains(body, m) {
+			hit++
+		}
+	}
+	return hit >= 2
+}
+
 func hdhiveIsLoginPage(finalURL, body string) bool {
 	if strings.Contains(finalURL, "/login") {
 		return true
 	}
-	return strings.Contains(body, "login") && strings.Contains(body, "password") && len(body) < 20000
+	return hdhiveLoginWall(body)
 }
 
 // ==================== 登录 ====================
@@ -413,11 +426,29 @@ func (h *Handler) hdhiveServerActionLogin(cfg *hdhiveCfg) (bool, string) {
 			return false, "Server Action 登录请求失败: " + sanitizeWecomErr(err)
 		}
 		hdhiveImportRespCookies(cfg, resp)
+		hasToken := false
 		for _, ck := range resp.Cookies() {
 			if ck.Name == "token" && ck.Value != "" {
+				hasToken = true
+			}
+		}
+		if hasToken {
+			// 鉴权探测：登录墙消失才算真的登录成功（错误 action 也可能下发 token）
+			pstatus, pbody, presp, perr := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/user", "", nil)
+			walled := perr != nil || hdhiveIsCFBlock(pstatus, pbody)
+			if !walled {
+				loc := ""
+				if presp != nil {
+					loc = presp.Header.Get("Location")
+				}
+				walled = strings.Contains(loc, "/login") || hdhiveLoginWall(pbody)
+			}
+			if !walled {
 				log.Printf("[影巢] ✓ 登录成功（action 来源 %s）", cand.from)
 				return true, ""
 			}
+			log.Printf("[影巢] ○ action[%s] 下发了 token 但仍在登录墙，换下一个候选", cand.from)
+			delete(cfg.Cookies, "token")
 		}
 		if loc := resp.Header.Get("X-Action-Redirect"); strings.Contains(loc, "/login") {
 			return false, "影巢拒绝登录（账号或密码错误）"
@@ -949,6 +980,11 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		return
 	}
 	cards := hdhiveParseCards(pageHTML)
+	if len(cards) == 0 {
+		refs := regexp.MustCompile(`/resource/115/([A-Za-z0-9_-]+)`).FindAllString(pageHTML, -1)
+		log.Printf("[影巢] ○ 资源页解析 0 卡片（tmdb %s/%s）：页面 %d 字节，登录墙=%v，/resource/ 引用 %d 处",
+			mediaType, tmdbID, len(pageHTML), hdhiveLoginWall(pageHTML), len(refs))
+	}
 	sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
 	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
