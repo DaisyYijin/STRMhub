@@ -897,8 +897,8 @@ av:
       <!-- 123 账号 -->
       <div class="tab-panel" data-panel="acc-123">
       <div class="card">
-        <div class="form-row"><div class="label">ClientID<i class="help-tip" tabindex="0">?<span class="tip-bubble">123 云盘网页端「设置 → 开放平台」申请（需填云盘UID），审核通过后在开发者平台创建应用获得。凭证仅保存在本机配置，token 由 StrmHub 自动获取与续期。</span></i></div><div class="control"><input type="text" id="pan123-client-id" placeholder="开放平台 ClientID" class="inline-input"></div></div>
-        <div class="form-row"><div class="label">ClientSecret</div><div class="control"><input type="password" id="pan123-client-secret" placeholder="开放平台 ClientSecret" class="inline-input"></div></div>
+        <div class="form-row"><div class="label">扫码登录<i class="help-tip" tabindex="0">?<span class="tip-bubble">推荐方式：用 123 云盘 App（或微信）扫码确认即可，无需申请任何凭证。网页 token 有效期 30 天，到期后回来重新扫一次。</span></i></div><div class="control"><div class="form-inline-group"><button class="btn btn-primary" onclick="pan123QrLogin()"><span class="qr-icon">▦</span> 二维码登录</button><span id="pan123-login-status" style="font-size:12.5px"></span></div></div></div>
+        <div class="form-row"><div class="label">开放平台凭证<i class="help-tip" tabindex="0">?<span class="tip-bubble">可选。扫码登录的替代方案：在 123 云盘网页端「设置 → 开放平台」申请（需填云盘UID），审核通过后在开发者平台创建应用获得。凭证模式 token 自动续期，无需再扫码。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="pan123-client-id" placeholder="ClientID（可选）" class="inline-input"><input type="password" id="pan123-client-secret" placeholder="ClientSecret（可选）" class="inline-input"></div></div></div>
         <div class="form-row"><div class="label">连接状态</div><div class="control"><div class="form-inline-group"><button class="btn btn-success" onclick="pan123Test(this)">测试连接</button><span id="pan123-test-result" style="font-size:12.5px"></span></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="pan123Save(this)">保存配置</button></div></div>
       </div>

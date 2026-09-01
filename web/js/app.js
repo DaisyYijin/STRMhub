@@ -1505,12 +1505,53 @@ async function pan123LoadUI() {
     setVal('pan123-client-secret', c.client_secret || '');
     setVal('pan123-target', c.target_id || '');
     setVal('pan123-local', c.local_path || '/media');
+    const st = document.getElementById('pan123-login-status');
+    if (st && c.token) st.textContent = '✓ 已登录（' + (c.token_exp || '') + ' 前有效）';
   } catch (e) { /* 首次为空 */ }
 }
 
 function pan123GoAccount() {
   showPage('config-accounts');
   switchTab('page-config-accounts', 'acc-123');
+}
+
+let pan123QrTimer = null;
+
+async function pan123QrLogin() {
+  const status = document.getElementById('pan123-login-status');
+  status.textContent = '获取二维码中…';
+  try {
+    const d = await api('/pan123/qrcode', { method: 'POST' });
+    document.getElementById('qrcode-modal').style.display = 'flex';
+    document.getElementById('qrcode-img').innerHTML = '<img src="' + d.qrcode + '" style="width:170px;height:170px">';
+    document.getElementById('qrcode-status').textContent = '请用 123 云盘 App / 微信扫码并确认登录';
+    status.textContent = '';
+    clearInterval(pan123QrTimer);
+    const startedAt = Date.now();
+    pan123QrTimer = setInterval(async () => {
+      if (Date.now() - startedAt > 150000) {
+        clearInterval(pan123QrTimer);
+        document.getElementById('qrcode-status').textContent = '二维码已超时，请重新点击「二维码登录」';
+        return;
+      }
+      try {
+        const p = await api('/pan123/qrcode/poll?uni_id=' + encodeURIComponent(d.uni_id));
+        const st = p.status;
+        if (st === 1) document.getElementById('qrcode-status').textContent = '已扫码，请在手机上确认登录';
+        else if (st === 2) { clearInterval(pan123QrTimer); document.getElementById('qrcode-status').textContent = '已取消登录'; }
+        else if (st === 4) { clearInterval(pan123QrTimer); document.getElementById('qrcode-status').textContent = '二维码已失效，请重新获取'; }
+        else if (st === 3) {
+          clearInterval(pan123QrTimer);
+          document.getElementById('qrcode-status').textContent = '✓ ' + (p.message || '登录成功');
+          setTimeout(() => { document.getElementById('qrcode-modal').style.display = 'none'; }, 1200);
+          status.textContent = '✓ 已登录（30 天内有效）';
+        }
+      } catch (e) { /* 网络抖动，继续轮询 */ }
+    }, 2500);
+  } catch (e) {
+    status.textContent = '✗ ' + e.message;
+    status.style.color = 'var(--danger)';
+  }
 }
 
 async function pan123Save(btn) {

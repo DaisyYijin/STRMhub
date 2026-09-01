@@ -12,6 +12,7 @@ package api
 //   - QPS：列表 15、download_info 较低（客户端统一 150ms 节流）
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,12 +21,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/skip2/go-qrcode"
 )
 
 const pan123Base = "https://open-api.123pan.com"
@@ -33,6 +36,8 @@ const pan123Base = "https://open-api.123pan.com"
 type pan123Cfg struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	Token        string `json:"token"`      // 扫码登录拿到的网页 token（30 天，可随时重扫）
+	TokenExp     string `json:"token_exp"`  // token 预期过期时间
 	TargetID     string `json:"target_id"`  // 扫描根目录 ID（123 网盘里开启直链空间的目录）
 	LocalPath    string `json:"local_path"` // STRM 输出目录
 }
@@ -121,13 +126,25 @@ func (h *Handler) pan123FetchToken() (string, error) {
 	return env.Data.AccessToken, nil
 }
 
-// pan123Token 取缓存 token，临期自动换新
+// pan123Token 取缓存 token，临期自动换新。
+// 优先扫码登录的网页 token（30 天，过期需重扫），其次开放平台凭证
 func (h *Handler) pan123Token() (string, error) {
 	pan123TokenMu.Lock()
 	tok, exp := pan123TokenVal, pan123TokenExp
 	pan123TokenMu.Unlock()
 	if tok != "" && time.Now().Before(exp.Add(-24*time.Hour)) {
 		return tok, nil
+	}
+	cfg := h.loadPan123Cfg()
+	if cfg.Token != "" {
+		exp := time.Now().Add(29 * 24 * time.Hour)
+		if t, err := time.Parse("2006-01-02 15:04", cfg.TokenExp); err == nil {
+			exp = t
+		}
+		if time.Now().Before(exp.Add(-24 * time.Hour)) {
+			return cfg.Token, nil
+		}
+		return "", fmt.Errorf("123 登录已过期（token 有效期 30 天），请到「账号管理 → 123 账号」重新扫码")
 	}
 	return h.pan123FetchToken()
 }
@@ -163,11 +180,15 @@ func (h *Handler) pan123API(method, path string, query url.Values, out any) erro
 	if err != nil {
 		return err
 	}
-	// token 失效 → 强制换新重试一次
+	// token 失效 → 强制换新重试一次（仅开放平台凭证可自动续；扫码 token 过期报错）
 	if status == 401 || status == 419 {
 		pan123TokenMu.Lock()
 		pan123TokenVal = ""
 		pan123TokenMu.Unlock()
+		cfg := h.loadPan123Cfg()
+		if cfg.Token != "" && cfg.ClientID == "" {
+			return fmt.Errorf("123 登录已失效，请到「账号管理 → 123 账号」重新扫码")
+		}
 		if token, err = h.pan123FetchToken(); err != nil {
 			return err
 		}
@@ -387,6 +408,105 @@ func writeStrm123(localRoot, domain, format string, keepExt, skipExist bool, rel
 	return true, nil
 }
 
+// ==================== 扫码登录（login.123pan.com 网页接口） ====================
+
+const pan123LoginBase = "https://login.123pan.com"
+
+// pan123LoginGet 调登录域名接口（带网页 UA/Origin）
+func pan123LoginGet(path string, query url.Values) (map[string]any, error) {
+	u := pan123LoginBase + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", hdhiveDefaultUA)
+	req.Header.Set("Origin", "https://www.123pan.com")
+	req.Header.Set("Referer", "https://www.123pan.com/")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var env struct {
+		Code int             `json:"code"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("响应非 JSON: %s", truncateStr(string(raw), 120))
+	}
+	var data map[string]any
+	if len(env.Data) > 0 {
+		_ = json.Unmarshal(env.Data, &data)
+	}
+	return data, nil
+}
+
+// Pan123Qrcode POST /pan123/qrcode：生成扫码登录二维码（PNG data URL）
+func (h *Handler) Pan123Qrcode(c *gin.Context) {
+	data, err := pan123LoginGet("/api/user/qr-code/generate", nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "获取二维码失败: " + err.Error()})
+		return
+	}
+	uniID, _ := data["uniID"].(string)
+	baseURL, _ := data["url"].(string)
+	if uniID == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "二维码响应缺少 uniID"})
+		return
+	}
+	content := strings.TrimSuffix(baseURL, ".html") + "?uniID=" + url.QueryEscape(uniID)
+	png, err := qrcode.Encode(content, qrcode.Medium, 220)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成二维码图片失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"uni_id": uniID, "qrcode": "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)})
+}
+
+// Pan123QrcodePoll GET /pan123/qrcode/poll?uni_id=
+// loginStatus: 0 等待扫码 / 1 已扫码 / 2 已取消 / 3 已登录 / 4 已失效
+func (h *Handler) Pan123QrcodePoll(c *gin.Context) {
+	uniID := strings.TrimSpace(c.Query("uni_id"))
+	if uniID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 uniID"})
+		return
+	}
+	data, err := pan123LoginGet("/api/user/qr-code/result", url.Values{"uniID": {uniID}})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	status := 0
+	if v, ok := data["loginStatus"].(float64); ok {
+		status = int(v)
+	}
+	out := gin.H{"status": status}
+	if status == 3 {
+		token, _ := data["token"].(string)
+		if token == "" {
+			// token 字段位置不固定，兜底从整个 data 里正则提取
+			raw, _ := json.Marshal(data)
+			if m := regexp.MustCompile(`"token":"([^"]+)"`).FindSubmatch(raw); m != nil {
+				token = string(m[1])
+			}
+		}
+		if token == "" {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "登录成功但未取到 token"})
+			return
+		}
+		cfg := h.loadPan123Cfg()
+		cfg.Token = token
+		cfg.TokenExp = time.Now().Add(30 * 24 * time.Hour).Format("2006-01-02 15:04")
+		h.savePan123Cfg(cfg)
+		out["message"] = "登录成功，token 有效期 30 天"
+	}
+	c.JSON(http.StatusOK, out)
+}
+
 // ==================== HTTP 处理器 ====================
 
 // Pan123GetConfig GET /pan123/config
@@ -395,19 +515,25 @@ func (h *Handler) Pan123GetConfig(c *gin.Context) {
 }
 
 // Pan123SaveConfig POST /pan123/config
+// 扫码 token 不经前端表单，保存时原值保留，避免被空值覆盖
 func (h *Handler) Pan123SaveConfig(c *gin.Context) {
 	var req pan123Cfg
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
+	if req.Token == "" {
+		if old := h.loadPan123Cfg(); old.Token != "" {
+			req.Token, req.TokenExp = old.Token, old.TokenExp
+		}
+	}
 	h.savePan123Cfg(req)
 	c.JSON(http.StatusOK, gin.H{"message": "已保存"})
 }
 
-// Pan123Test POST /pan123/test：验证凭证（换 token + 列根目录）
+// Pan123Test POST /pan123/test：验证登录态（扫码 token 或开放平台凭证均可）
 func (h *Handler) Pan123Test(c *gin.Context) {
-	if _, err := h.pan123FetchToken(); err != nil {
+	if _, err := h.pan123Token(); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -416,7 +542,7 @@ func (h *Handler) Pan123Test(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "token 正常但列目录失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("连接成功，根目录 %d 个子项", len(files))})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("连接正常，根目录 %d 个子项", len(files))})
 }
 
 // Pan123CheckDir POST /pan123/checkdir {id}：校验目录 ID 可访问

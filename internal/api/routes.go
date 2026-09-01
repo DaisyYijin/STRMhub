@@ -388,6 +388,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/pan123/test", h.Pan123Test)
 		protected.POST("/pan123/checkdir", h.Pan123CheckDir)
 		protected.POST("/pan123/scan", h.Pan123Scan)
+		protected.POST("/pan123/qrcode", h.Pan123Qrcode)
+		protected.GET("/pan123/qrcode/poll", h.Pan123QrcodePoll)
 
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
