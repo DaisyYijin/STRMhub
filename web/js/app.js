@@ -2905,12 +2905,29 @@ async function hdhiveSearch() {
 // 空结果时抓取页面与其 JS 里的隐藏 API，复制给开发者用于适配
 async function hdhiveDiag() {
   const path = '/tmdb/' + hdhiveCur.type + '/' + hdhiveCur.id;
-  let text = '';
   try {
     const d = await api('/hdhive/diag?path=' + encodeURIComponent(path));
-    text = JSON.stringify(d);
-    await navigator.clipboard.writeText(text);
-    toast('诊断信息已复制，请粘贴发给开发者');
+    const text = JSON.stringify(d);
+    // HTTP 环境没有 navigator.clipboard，依次降级：execCommand → 弹窗手动复制
+    let copied = false;
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); copied = true; } catch (e) { /* 降级 */ }
+    }
+    if (!copied) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { copied = document.execCommand('copy'); } catch (e) { /* 降级 */ }
+      document.body.removeChild(ta);
+    }
+    if (copied) {
+      toast('诊断信息已复制，请粘贴发给开发者');
+    } else {
+      hdhiveModalOpen('<p style="margin-bottom:8px;color:var(--text-2)">自动复制不可用，请点击框内全选后手动复制发给开发者：</p>'
+        + '<textarea readonly onclick="this.select()" style="width:100%;height:280px;font-size:11px;font-family:Consolas,Monaco,monospace;line-height:1.4">' + esc(text) + '</textarea>', '影巢诊断信息');
+    }
   } catch (e) {
     toast('诊断失败：' + e.message);
   }
