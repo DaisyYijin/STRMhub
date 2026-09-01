@@ -993,6 +993,11 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 // 影巢页面为前端渲染，资源列表由浏览器调内部接口加载。此接口抓取
 // 页面与其引用的 JS chunk，挖出隐藏的 API 端点与 action ID 供适配。
 func (h *Handler) HdhiveDiag(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("诊断过程异常: %v", r)})
+		}
+	}()
 	cfg := loadHdhiveCfg()
 	path := c.DefaultQuery("path", "/tmdb/movie/1930")
 	pageHTML, finalURL, err := h.hdhivePage(cfg, path)
@@ -1077,7 +1082,7 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 	// 页面专属 chunk 藏在 flight 数据里（script 标签没有）：挖出来扫描 resources 调用参数
 	var appChunks []string
 	appSeen := map[string]bool{}
-	for _, m := range regexp.MustCompile(`static/chunks/app/[^"'\]+\.js`).FindAllString(pageHTML, -1) {
+	for _, m := range regexp.MustCompile(`static/chunks/app/[^"'\\]+\.js`).FindAllString(pageHTML, -1) {
 		full := cfg.BaseURL + "/_next/" + m
 		if !appSeen[full] {
 			appSeen[full] = true
