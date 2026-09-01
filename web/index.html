@@ -70,7 +70,7 @@
     <div class="page" id="page-sync">
       <div class="tabs">
         <div class="tab active" data-tab="acc115-sync">115 账号同步</div>
-        <div class="tab" data-tab="acc123-sync">123 账号同步</div>
+        <div class="tab" data-tab="acc123-sync" style="opacity:.45;pointer-events:none">123 账号同步（待开发）</div>
         <div class="tab" data-tab="acc-openlist-sync" style="opacity:.45;pointer-events:none">OpenList 同步（待开发）</div>
         <div class="tab" data-tab="acc-quark-sync" style="opacity:.45;pointer-events:none">夸克账号同步（待开发）</div>
         <div class="tab" data-tab="acc-ali-sync" style="opacity:.45;pointer-events:none">阿里账号同步（待开发）</div>
@@ -726,11 +726,11 @@ av:
     <!-- 影视转存（资源站搜索 → 解锁 → 115 转存 → 自动整理） -->
     <div class="page" id="page-media-transfer">
       <div class="tabs">
-        <div class="tab active" data-tab="mt-hdhive">影巢</div>
-        <div class="tab" data-tab="mt-gy">观影</div>
+        <div class="tab" data-tab="mt-hdhive" style="opacity:.45;pointer-events:none">影巢（待开发）</div>
+        <div class="tab active" data-tab="mt-gy">观影</div>
         <div class="tab" style="opacity:.45;pointer-events:none">更多资源站（待开发）</div>
       </div>
-      <div class="tab-panel active" data-panel="mt-hdhive">
+      <div class="tab-panel" data-panel="mt-hdhive">
         <div class="card">
           <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢官方地址 https://hdhive.com，被墙或换域名时可自行修改，保存后需重新登录。</span></i></div><div class="control"><input type="text" id="hd-base" placeholder="影巢站点地址"></div></div>
           <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢站内账号。登录即测试账号有效性，会话 Cookie 持久化，失效后重新登录即可。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hd-username" placeholder="影巢账号" style="flex:1" autocomplete="off"><input type="password" id="hd-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="hd-auth-btn" onclick="hdAuthClick(this)">登录</button></div></div></div>
@@ -751,7 +751,7 @@ av:
           </div>
         </div>
       </div>
-      <div class="tab-panel" data-panel="mt-gy">
+      <div class="tab-panel active" data-panel="mt-gy">
         <div class="card">
           <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">观影常更换域名（gying.in 已失效），默认观影.com。搜索失败时到站点首页看最新地址，改这里后保存并重新登录。</span></i></div><div class="control"><input type="text" id="gy-base" placeholder="观影站点地址"></div></div>
           <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">观影站内账号（搜索/详情需登录）。登录即测试账号有效性；服务端自动通过站点反爬验证并保持登录态，会话失效后自动重登。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="gy-username" placeholder="观影用户名 / 邮箱" style="flex:1" autocomplete="off"><input type="password" id="gy-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="gy-auth-btn" onclick="gyAuthClick(this)">登录</button></div></div></div>
@@ -858,7 +858,7 @@ av:
 <div class="page" id="page-config-accounts">
       <div class="tabs">
         <div class="tab active" data-tab="acc-115">115 账号</div>
-        <div class="tab" data-tab="acc-123">123 账号</div>
+        <div class="tab" data-tab="acc-123" style="opacity:.45;pointer-events:none">123 账号（待开发）</div>
         <div class="tab" data-tab="acc-openlist" style="opacity:.45;pointer-events:none">OpenList 账号（待开发）</div>
         <div class="tab" data-tab="acc-quark" style="opacity:.45;pointer-events:none">夸克账号（待开发）</div>
         <div class="tab" data-tab="acc-ali" style="opacity:.45;pointer-events:none">阿里账号（待开发）</div>
@@ -1082,7 +1082,7 @@ av:
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
       <div class="plugin-content-header">
-        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 6 个插件 · 4 个可用</span></div>
+        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 6 个插件 · 3 个可用</span></div>
       </div>
       <div class="rule-container">
         <!-- 卡片：115 每日签到（可用） -->
@@ -1113,17 +1113,17 @@ av:
             <button class="action-button run-button" id="emby-lib-run-btn" onclick="embyLibRun()"><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
           </div></div>
         </div>
-        <!-- 卡片：123 云盘（可用） -->
-        <div class="rule-card rule-card-active">
-          <div class="card-status-badge"><span class="status-dot animated"></span></div>
+        <!-- 卡片：123 云盘（待开发） -->
+        <div class="rule-card">
+          <div class="card-status-badge inactive"><span class="status-dot"></span></div>
           <div class="rule-header">
             <div class="rule-title"><span class="icon">▤</span>123 云盘</div>
-            <div class="rule-status"><span class="status-text active">可用</span></div>
+            <div class="rule-status"><span class="status-text">待开发</span></div>
           </div>
-          <div class="rule-content"><p>官方开放平台接入：扫描 123 网盘目录生成 STRM，播放走 302 直链。需在 123 开放平台申请凭证。</p></div>
+          <div class="rule-content"><p>官方开放平台接入：扫描 123 网盘目录生成 STRM，播放走 302 直链。功能开发中，暂未开放。</p></div>
           <div class="rule-footer"><div class="button-group">
-            <button class="action-button config-button" onclick="pan123GoAccount()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
-            <button class="action-button run-button" onclick="pan123ScanRun(this)"><span class="btn-icon run-icon">▶</span><span>立即扫描</span></button>
+            <button class="action-button config-button" disabled><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
+            <button class="action-button run-button" disabled><span class="btn-icon run-icon">▶</span><span>立即扫描</span></button>
           </div></div>
         </div>
         <!-- 卡片：TG 频道搜索（可用） -->
