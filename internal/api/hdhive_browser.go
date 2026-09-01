@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -125,9 +126,12 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		return n > 0
 	}
 	runErr := func() error {
+		log.Printf("[影巢] ▶ 浏览器启动 %s", exe)
+		t0 := time.Now()
 		if err := chromedp.Run(ctx, network.Enable()); err != nil {
 			return fmt.Errorf("network.Enable: %w", err)
 		}
+		log.Printf("[影巢] ▶ 浏览器就绪（%s），注入 Cookie %d 条", time.Since(t0).Round(time.Millisecond), len(cfg.Cookies))
 		if len(cfg.Cookies) > 0 {
 			err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
 				for k, v := range cfg.Cookies {
@@ -148,11 +152,14 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		if err := chromedp.Run(ctx, chromedp.Navigate(target)); err != nil {
 			return fmt.Errorf("打开 %s: %w", target, err)
 		}
+		log.Printf("[影巢] ▶ 页面已打开 %s，等待渲染…", pagePath)
 		deadline := time.Now().Add(wait)
+		lastTick := time.Now()
 		for time.Now().Before(deadline) {
 			select {
 			case rid := <-finished:
 				if body := captureBody(rid); body != "" {
+					log.Printf("[影巢] ▶ 截获接口响应 %d 字节", len(body))
 					apiHit = body
 				}
 			default:
@@ -173,10 +180,15 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 				return ctx.Err()
 			case <-time.After(600 * time.Millisecond):
 			}
+			if time.Since(lastTick) >= 5*time.Second {
+				lastTick = time.Now()
+				log.Printf("[影巢] ▶ 渲染等待中 %s/%s，已截获 %d 字节", time.Since(deadline.Add(-wait)).Round(time.Second), wait, len(apiHit))
+			}
 		}
 		if err := chromedp.Run(ctx, chromedp.OuterHTML("html", &html)); err != nil {
 			return fmt.Errorf("读取渲染结果: %w", err)
 		}
+		log.Printf("[影巢] ▶ 渲染完成：HTML %d 字节，接口响应 %d 字节", len(html), len(apiHit))
 		return nil
 	}()
 	if runErr != nil {

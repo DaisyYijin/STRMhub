@@ -1112,6 +1112,7 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		return
 	}
 	// 优先直连页面背后的资源 JSON 接口
+	log.Printf("[影巢] ▶ 资源搜索开始（tmdb %s/%s，先尝试直连 JSON）", mediaType, tmdbID)
 	if items, raw, sigRequired := h.hdhiveFetchResourcesJSON(cfg, mediaType, tmdbID); items != nil {
 		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
 		c.JSON(http.StatusOK, gin.H{"data": items, "source": "api"})
@@ -1123,8 +1124,11 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 	pagePath := "/tmdb/" + mediaType + "/" + url.PathEscape(tmdbID)
 
 	// 签名墙或直连失败 → 浏览器渲染兜底（站点 JS 自行完成握手/签名）
+	log.Printf("[影巢] ▶ 直连资源接口不可用，启动浏览器渲染（tmdb %s/%s）", mediaType, tmdbID)
+	t0 := time.Now()
 	if apiBody, html, berr := hdhiveBrowserFetch(cfg, pagePath, "/api/customer/resources",
 		`document.querySelectorAll('a[href*="/resource/"]').length > 0 || (document.body && document.body.innerText.indexOf('发布于') >= 0)`, 25*time.Second); berr == nil {
+		log.Printf("[影巢] ▶ 浏览器渲染总耗时 %s", time.Since(t0).Round(time.Millisecond))
 		if hdhiveLoginWall(html) || hdhiveIsLoginPage(cfg.BaseURL+pagePath, html) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
 			return
