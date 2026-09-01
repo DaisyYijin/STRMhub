@@ -1073,6 +1073,83 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 			findings = append(findings, f)
 		}
 	}
+
+	// 页面专属 chunk 藏在 flight 数据里（script 标签没有）：挖出来扫描 resources 调用参数
+	var appChunks []string
+	appSeen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`static/chunks/app/[^"'\]+\.js`).FindAllString(pageHTML, -1) {
+		full := cfg.BaseURL + "/_next/" + m
+		if !appSeen[full] {
+			appSeen[full] = true
+			appChunks = append(appChunks, full)
+		}
+	}
+	var appFindings []chunkFinding
+	for i, src := range appChunks {
+		if i >= 6 {
+			break
+		}
+		_, body, _, err := hdhiveDirect(cfg, "GET", src, "", map[string]string{"Accept": "*/*"})
+		if err != nil {
+			continue
+		}
+		f := chunkFinding{URL: src, Size: len(body)}
+		apiSet := map[string]bool{}
+		for _, m := range regexp.MustCompile(`/api/[a-zA-Z0-9/_.?=&${}-]+`).FindAllString(body, -1) {
+			apiSet[strings.TrimSuffix(m, "&")] = true
+		}
+		for k := range apiSet {
+			f.APIs = append(f.APIs, k)
+		}
+		seen := map[string]bool{}
+		for _, kw := range []string{"resources", "tmdb_id", "media_type"} {
+			lower := strings.ToLower(body)
+			for pos, n := 0, 0; n < 3; n++ {
+				idx := strings.Index(lower[pos:], strings.ToLower(kw))
+				if idx < 0 {
+					break
+				}
+				at := pos + idx
+				start, end := at-120, at+280
+				if start < 0 {
+					start = 0
+				}
+				if end > len(body) {
+					end = len(body)
+				}
+				e := fmt.Sprintf("[%s#%d] …%s…", kw, n, strings.ReplaceAll(body[start:end], "\n", " "))
+				if !seen[e] {
+					seen[e] = true
+					f.Excerpts = append(f.Excerpts, e)
+				}
+				pos = at + len(kw)
+			}
+		}
+		appFindings = append(appFindings, f)
+	}
+
+	// 端点试探：资源列表与当前用户（候选参数组合逐一探，记录状态与响应开头）
+	type probeResult struct {
+		URL    string `json:"url"`
+		Status int    `json:"status"`
+		Head   string `json:"head"`
+	}
+	var probes []probeResult
+	probe := func(u string) {
+		st, body, _, err := hdhiveDirect(cfg, "GET", u, "", nil)
+		if err != nil {
+			probes = append(probes, probeResult{URL: u, Status: -1, Head: sanitizeWecomErr(err)})
+			return
+		}
+		probes = append(probes, probeResult{URL: u, Status: st, Head: truncateStr(body, 240)})
+	}
+	movieID := path[strings.LastIndex(path, "/")+1:]
+	probe(cfg.BaseURL + "/api/customer/user/current")
+	probe(cfg.BaseURL + "/api/customer/resources/?tmdb_id=" + movieID)
+	probe(cfg.BaseURL + "/api/customer/resources/?tmdb_id=" + movieID + "&type=movie")
+	probe(cfg.BaseURL + "/api/customer/resources/?media_type=movie&tmdb_id=" + movieID)
+	probe(cfg.BaseURL + "/api/customer/resources/movie/" + movieID)
+	probe(cfg.BaseURL + "/go-api/customer/resources/?tmdb_id=" + movieID)
 	c.JSON(http.StatusOK, gin.H{
 		"path":           path,
 		"final_url":      finalURL,
@@ -1085,6 +1162,9 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 		"chunk_count":    len(chunks),
 		"chunks":         chunks,
 		"chunk_findings": findings,
+		"app_chunks":     appChunks,
+		"app_findings":   appFindings,
+		"probes":         probes,
 	})
 }
 
