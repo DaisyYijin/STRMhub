@@ -10,9 +10,8 @@ package api
 //     /api/customer/auth/login），取 Set-Cookie（token/refresh_token/...）
 //     或响应体 meta.access_token；GET /api/customer/user/info 校验登录态
 //   - 会话：Cookie（含 cf_clearance）+ 绑定 UA 持久化，失效自动重登
-//   - Cloudflare：影巢对数据中心 IP/非浏览器指纹直接 403 封禁页。直连
-//     （Chrome 指纹 tls-client）失败时走 FlareSolverr 过盾：渲染页面 +
-//     取 cf_clearance Cookie，之后同 IP 直连请求即可通过
+//   - Cloudflare：影巢对数据中心 IP/非浏览器指纹可能 403 封禁页，
+//     直连（Chrome 指纹 tls-client）被拦时会给出明确报错
 //   - 搜索：GET /tmdb/{movie|tv}/{tmdb_id} 渲染页 → 解析资源卡片
 //     （标题/大小/分辨率/积分/发布时间，规则对齐 _SCRAPE_CARDS_JS）
 //   - 解锁：GET /resource/115/{slug} 渲染页 → 正则提取 115 分享链接；
@@ -60,7 +59,6 @@ type hdhiveCfg struct {
 	BaseURL     string            `json:"base_url"`     // 默认 https://hdhive.com
 	Username    string            `json:"username"`     // 影巢账号
 	Password    string            `json:"password"`     // 影巢密码
-	FlareURL    string            `json:"flare_url"`    // FlareSolverr 地址（http://ip:8191），可选
 	TargetDir   string            `json:"target_dir"`   // 解锁转存目标目录（空则回落分享同步接收文件夹）
 	AllowPoints bool              `json:"allow_points"` // 预留：付费资源提示开关（网页通道付费解锁需站内操作）
 	Organize    bool              `json:"organize"`     // 转存后自动整理入库（默认开）
@@ -128,7 +126,7 @@ func hdhiveSave(cfg *hdhiveCfg) {
 	}
 }
 
-// ==================== HTTP 会话层（Chrome 指纹直连 + FlareSolverr 过盾） ====================
+// ==================== HTTP 会话层（Chrome 指纹直连） ====================
 
 var hdhiveHTTPOnce sync.Once
 var hdhiveHTTPClient tlsclient.HttpClient
@@ -216,63 +214,6 @@ func hdhiveImportRespCookies(cfg *hdhiveCfg, resp *fhttp.Response) {
 	}
 }
 
-// hdhiveFlareGet 经 FlareSolverr 渲染页面：返回 HTML、最终 URL。
-// 顺带把过盾得到的 Cookie（cf_clearance 等）和 UA 存进配置——之后同 IP
-// 直连请求带上它们即可通过 CF。
-func (h *Handler) hdhiveFlareGet(cfg *hdhiveCfg, pageURL string) (string, string, error) {
-	endpoint := strings.TrimRight(cfg.FlareURL, "/")
-	if !strings.HasSuffix(endpoint, "/v1") {
-		endpoint += "/v1"
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"cmd":        "request.get",
-		"url":        pageURL,
-		"maxTimeout": 60000,
-	})
-	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(string(payload)))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&fhttp.Client{Timeout: 90 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("连接 FlareSolverr 失败: %s", sanitizeWecomErr(err))
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-	var out struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
-		Solution struct {
-			Status    int    `json:"status"`
-			URL       string `json:"url"`
-			Response  string `json:"response"`
-			UserAgent string `json:"userAgent"`
-			Cookies   []struct {
-				Name  string `json:"name"`
-				Value string `json:"value"`
-			} `json:"cookies"`
-		} `json:"solution"`
-	}
-	if json.Unmarshal(raw, &out) != nil {
-		return "", "", fmt.Errorf("FlareSolverr 响应解析失败: %s", truncateStr(string(raw), 150))
-	}
-	if out.Status != "ok" {
-		return "", "", fmt.Errorf("FlareSolverr 过盾失败: %s", out.Message)
-	}
-	for _, ck := range out.Solution.Cookies {
-		if ck.Name != "" && ck.Value != "" {
-			cfg.Cookies[ck.Name] = ck.Value
-		}
-	}
-	if out.Solution.UserAgent != "" {
-		cfg.UA = out.Solution.UserAgent
-	}
-	hdhiveSave(cfg)
-	log.Printf("[影巢] ✓ FlareSolverr 过盾成功（%d Cookie，HTTP %d）", len(out.Solution.Cookies), out.Solution.Status)
-	return out.Solution.Response, out.Solution.URL, nil
-}
-
 // hdhiveEnsureSession 保证有能通过 CF 的会话：直连探测首页，被拦且配置了
 // FlareSolverr 时自动过盾；都没配则给出明确指引
 func (h *Handler) hdhiveEnsureSession(cfg *hdhiveCfg) error {
@@ -282,28 +223,17 @@ func (h *Handler) hdhiveEnsureSession(cfg *hdhiveCfg) error {
 			return nil
 		}
 	}
-	if cfg.FlareURL != "" {
-		_, _, err := h.hdhiveFlareGet(cfg, cfg.BaseURL+"/")
-		return err
-	}
 	// 无 Cookie 也直连通过：站点未对本 IP 开 CF（部署环境不同策略不同）
 	status, body, _, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/", "", nil)
 	if err == nil && !hdhiveIsCFBlock(status, body) {
 		return nil
 	}
-	return fmt.Errorf("影巢站点被 Cloudflare 拦截（HTTP %d）。本服务 IP 无法直连时，请部署 FlareSolverr（docker run -d -p 8191:8191 flaresolverr/flaresolverr）并把地址填到影巢配置里", status)
+	return fmt.Errorf("影巢站点被 Cloudflare 拦截（HTTP %d）：当前服务器 IP 无法直连影巢", status)
 }
 
 // hdhivePage 拉取渲染后的页面 HTML：优先 FlareSolverr，未配置时直连（并诊断失败原因）
 func (h *Handler) hdhivePage(cfg *hdhiveCfg, path string) (string, string, error) {
 	abs := cfg.BaseURL + path
-	if cfg.FlareURL != "" {
-		htmlStr, finalURL, err := h.hdhiveFlareGet(cfg, abs)
-		if err != nil {
-			return "", "", err
-		}
-		return htmlStr, finalURL, nil
-	}
 	status, body, resp, err := hdhiveDirect(cfg, "GET", abs, "", map[string]string{
 		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 	})
@@ -311,7 +241,7 @@ func (h *Handler) hdhivePage(cfg *hdhiveCfg, path string) (string, string, error
 		return "", "", fmt.Errorf("连接影巢失败: %s", sanitizeWecomErr(err))
 	}
 	if hdhiveIsCFBlock(status, body) {
-		return "", "", fmt.Errorf("影巢站点被 Cloudflare 拦截（HTTP %d）。请部署 FlareSolverr（docker run -d -p 8191:8191 flaresolverr/flaresolverr）并把地址填到影巢配置里", status)
+		return "", "", fmt.Errorf("影巢站点被 Cloudflare 拦截（HTTP %d）：当前服务器 IP 无法直连影巢", status)
 	}
 	if status == 429 {
 		return "", "", fmt.Errorf("影巢请求过快（HTTP 429），稍后再试")
@@ -698,7 +628,6 @@ func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 		"base_url":     cfg.BaseURL,
 		"username":     cfg.Username,
 		"password":     cfg.Password,
-		"flare_url":    cfg.FlareURL,
 		"target_dir":   cfg.TargetDir,
 		"allow_points": cfg.AllowPoints,
 		"organize":     cfg.Organize,
@@ -715,7 +644,6 @@ func (h *Handler) HdhiveSaveConfig(c *gin.Context) {
 		BaseURL     string `json:"base_url"`
 		Username    string `json:"username"`
 		Password    string `json:"password"`
-		FlareURL    string `json:"flare_url"`
 		TargetDir   string `json:"target_dir"`
 		AllowPoints *bool  `json:"allow_points"`
 	}
@@ -737,7 +665,6 @@ func (h *Handler) HdhiveSaveConfig(c *gin.Context) {
 	if req.Password != "" {
 		cfg.Password = req.Password
 	}
-	cfg.FlareURL = strings.TrimSpace(req.FlareURL)
 	cfg.TargetDir = strings.TrimSpace(req.TargetDir)
 	if req.AllowPoints != nil {
 		cfg.AllowPoints = *req.AllowPoints

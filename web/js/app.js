@@ -2731,14 +2731,13 @@ window.addEventListener('DOMContentLoaded', () => {
 // ==================== 影视转存 · 影巢 ====================
 // 网页账号密码登录（影巢官方凭证需审核，走零门槛网页通道）：
 // TMDB 选片 → 影巢搜资源 → 点资源行提取 115 分享链接自动转存，完成后自动整理入库。
-// Cloudflare 较强：服务器直连被拦时需部署 FlareSolverr 过盾（配置里填地址）。
+// 服务器直连被 Cloudflare 拦截时会给出明确报错。
 async function loadHdhivePage() {
   try {
     const d = await api('/hdhive/config');
     document.getElementById('hd-base').value = d.base_url || '';
     document.getElementById('hd-username').value = d.username || '';
     document.getElementById('hd-password').value = d.password || '';
-    document.getElementById('hd-flare').value = d.flare_url || '';
     document.getElementById('hdhive-target-dir').value = d.target_dir || '';
     setHdhiveAllowPoints(!!d.allow_points);
     hdRenderLogin(d.logged_in, d.login_at, d.user);
@@ -2782,7 +2781,6 @@ async function hdSaveConfig(btn) {
         base_url: document.getElementById('hd-base').value.trim(),
         username: document.getElementById('hd-username').value.trim(),
         password: document.getElementById('hd-password').value,
-        flare_url: document.getElementById('hd-flare').value.trim(),
         target_dir: document.getElementById('hdhive-target-dir').value.trim(),
         allow_points: allowEl ? allowEl.dataset.value === 'true' : false,
       }),
@@ -2803,7 +2801,7 @@ async function hdResetConfig(btn) {
       method: 'POST',
       body: JSON.stringify({
         base_url: 'https://hdhive.com',
-        username: '', password: '', flare_url: '',
+        username: '', password: '',
         target_dir: '', allow_points: false,
       }),
     });
@@ -2876,22 +2874,29 @@ async function hdhiveSearch() {
       hdhiveModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>', '选择影视');
       return;
     }
-    hdhiveModalOpen('<div style="display:flex;flex-wrap:wrap;gap:10px">' + items.map(it => {
+    const cards = items.map(it => {
       const poster = it.poster
         ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
-          + 'onerror="this.style.display=\'none\'" style="width:80px;height:120px;object-fit:cover;border-radius:6px;background:var(--fill-2)">'
-        : '<div style="width:80px;height:120px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--text-3)">▨</div>';
+          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
       const typeTag = it.media_type === 'tv'
-        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧</span>'
-        : '<span class="otag" style="background:#fff4e5;color:#b26a00">影</span>';
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
+      const overview = String(it.overview || '').slice(0, 100);
       return '<div onclick="hdhivePickTmdb(' + it.id + ',\'' + esc(it.media_type) + '\',this)" data-title="' + esc(it.title) + '" '
-        + 'style="width:104px;cursor:pointer;text-align:center" title="点击到影巢搜索资源">'
-        + '<div style="position:relative">' + poster
-        + '<span style="position:absolute;top:4px;left:4px">' + typeTag + '</span></div>'
-        + '<div style="font-size:12.5px;margin-top:6px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
-        + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(it.year || '') + '</div>'
-        + '</div>';
-    }).join('') + '</div>', '选择影视');
+        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'" title="点击到影巢搜索资源">'
+        + poster
+        + '<div style="min-width:0;flex:1">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
+        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
+        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
+        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
+        + '</div>'
+        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
+        + '</div></div>';
+    }).join('');
+    hdhiveModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
   } catch (e) {
     hdhiveModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>', '选择影视');
   }
