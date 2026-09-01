@@ -2,8 +2,8 @@
 # --platform=$BUILDPLATFORM 让 builder 始终以宿主原生架构运行（CI 上是 amd64），
 # 所有 RUN 不经过 QEMU；配合 GOARCH=$TARGETARCH 交叉编译出目标架构二进制。
 # 若不固定 BUILDPLATFORM，arm64 构建的 RUN 会在 QEMU 模拟的 arm64 容器里执行，极慢
-# golang 1.26：chromedp v0.16 依赖链要求 go >= 1.26，go.mod 已升到 1.26
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+# golang 1.25：依赖链（tls-client 等）要求 go >= 1.24，go.mod 已升到 1.25
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 # buildx 多架构构建时自动注入目标架构（amd64/arm64）
 ARG TARGETARCH
@@ -25,9 +25,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -X main
 # 运行阶段：最小镜像
 FROM alpine:latest
 # ffmpeg：观影门户服务端转封装（MKV→HLS 无损直串流）、内嵌轨道识别与媒体信息探测；
-# ca-certificates（TLS）、tzdata（时区）；
-# chromium：影巢浏览器渲染通道（站点请求签名层需真实浏览器执行 JS/WASM）
-RUN apk add --no-cache ffmpeg ca-certificates tzdata chromium ttf-freefont
+# ca-certificates（TLS）、tzdata（时区）
+RUN apk add --no-cache ffmpeg ca-certificates tzdata
 
 WORKDIR /app
 

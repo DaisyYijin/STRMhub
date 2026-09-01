@@ -1117,62 +1117,35 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		return
 	}
 	// 优先直连页面背后的资源 JSON 接口
-	log.Printf("[影巢] ▶ 资源搜索开始（tmdb %s/%s，先尝试直连 JSON）", mediaType, tmdbID)
 	if items, raw, sigRequired := h.hdhiveFetchResourcesJSON(cfg, mediaType, tmdbID); items != nil {
 		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
 		c.JSON(http.StatusOK, gin.H{"data": items, "source": "api"})
 		return
-	} else if raw != "" && !sigRequired {
+	} else if sigRequired {
+		log.Printf("[影巢] ✗ 资源接口要求请求签名（站点安全层），Go 直连无法复刻")
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源接口要求请求签名（站点安全层），暂时无法直连"})
+		return
+	} else if raw != "" {
 		log.Printf("[影巢] ○ 资源 JSON 直连失败样例: %s", truncateStr(raw, 200))
 	}
 
-	pagePath := "/tmdb/" + mediaType + "/" + url.PathEscape(tmdbID)
-
-	// 签名墙或直连失败 → 浏览器渲染兜底（站点 JS 自行完成握手/签名）
-	log.Printf("[影巢] ▶ 直连资源接口不可用，启动浏览器渲染（tmdb %s/%s）", mediaType, tmdbID)
-	t0 := time.Now()
-	res, berr := hdhiveBrowserFetch(cfg, pagePath, "/api/customer/resources",
-		`document.querySelectorAll('a[href*="/resource/"]').length > 0 || (document.body && document.body.innerText.indexOf('发布于') >= 0)`, 25*time.Second)
-	if berr != nil {
-		log.Printf("[影巢] ○ 浏览器渲染失败: %v", berr)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源需要浏览器渲染兜底: " + berr.Error()})
+	pageHTML, finalURL, err := h.hdhivePage(cfg, "/tmdb/"+mediaType+"/"+url.PathEscape(tmdbID))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	html, apiBody := res.HTML, res.APIBody
-	log.Printf("[影巢] ▶ 浏览器渲染总耗时 %s", time.Since(t0).Round(time.Millisecond))
-	if hdhiveLoginWall(html) || hdhiveIsLoginPage(cfg.BaseURL+pagePath, html) {
+	if hdhiveIsLoginPage(finalURL, pageHTML) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
 		return
 	}
-	// 站点安全层识别出无头浏览器（页面直接渲染拦截提示）
-	if strings.Contains(res.Text, "未通过安全检测") || strings.Contains(res.Text, "无法完成安全验证") {
-		log.Printf("[影巢] ✗ 站点安全层拦截了无头浏览器（安全检测未通过），页面文本: %s", truncateStr(res.Text, 200))
-		for _, r := range res.Reqs {
-			log.Printf("[影巢]   · 请求 %d %s", r.Status, r.URL)
-		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢站点安全层拦截了无头浏览器（浏览器环境检测未通过），请把日志发开发者"})
-		return
-	}
-	// 优先用截获的接口 JSON
-	if items := hdhiveParseResourceListJSON([]byte(apiBody)); len(items) > 0 {
-		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
-		log.Printf("[影巢] ✓ 浏览器截获资源接口（tmdb %s/%s）：%d 项", mediaType, tmdbID, len(items))
-		c.JSON(http.StatusOK, gin.H{"data": items, "source": "browser-api"})
-		return
-	}
-	cards := hdhiveParseCards(html)
+	cards := hdhiveParseCards(pageHTML)
 	if len(cards) == 0 {
-		// 0 卡片：把浏览器会话里观察到的请求全部打进日志，用于定位真实数据源
-		log.Printf("[影巢] ○ 浏览器渲染 0 卡片（tmdb %s/%s），页面 %d 字节，页面文本头: %s",
-			mediaType, tmdbID, len(html), truncateStr(res.Text, 400))
-		for _, r := range res.Reqs {
-			log.Printf("[影巢]   · 请求 %d %s", r.Status, r.URL)
-		}
+		refs := regexp.MustCompile(`/resource/115/([A-Za-z0-9_-]+)`).FindAllString(pageHTML, -1)
+		log.Printf("[影巢] ○ 资源页解析 0 卡片（tmdb %s/%s）：页面 %d 字节，登录墙=%v，/resource/ 引用 %d 处",
+			mediaType, tmdbID, len(pageHTML), hdhiveLoginWall(pageHTML), len(refs))
 	}
-	log.Printf("[影巢] ✓ 浏览器渲染资源页（tmdb %s/%s）：卡片 %d，接口响应 %d 字节", mediaType, tmdbID, len(cards), len(apiBody))
 	sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
-	c.JSON(http.StatusOK, gin.H{"data": cards, "source": "browser-dom",
-		"debug": gin.H{"requests": res.Reqs, "page_text": res.Text}})
+	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
 
 // HdhiveDiagSign GET /hdhive/diag/sign
@@ -1457,20 +1430,6 @@ func (h *Handler) HdhiveUnlock(c *gin.Context) {
 	link := ""
 	if m := reHdhive115Link.FindString(pageHTML); m != "" {
 		link = hdhiveTrimLink(m)
-	}
-	// 直连页面是 JS 渲染壳（无链接）→ 浏览器渲染兜底后再提取
-	if link == "" && !hdhiveLoginWall(pageHTML) {
-		if res, berr := hdhiveBrowserFetch(cfg, "/resource/115/"+url.PathEscape(req.Slug), "",
-			`document.body && document.body.innerText.length > 200`, 20*time.Second); berr == nil {
-			if m := reHdhive115Link.FindString(res.HTML); m != "" {
-				link = hdhiveTrimLink(m)
-			}
-			if strings.Contains(res.HTML, "积分不足") {
-				pageHTML = res.HTML
-			}
-		} else {
-			log.Printf("[影巢] ○ 解锁页浏览器渲染失败: %v", berr)
-		}
 	}
 	if link == "" {
 		hint := "该资源需要解锁：请在影巢网页端打开此资源并点「确定解锁」（付费解锁只能在站内完成），完成后回到这里重试即可自动转存"
