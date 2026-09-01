@@ -798,13 +798,8 @@ av:
       <!-- 第二行：当前任务 + 最近整理 -->
       <div class="dash-grid dash-grid-2">
         <div class="card dash-card">
-          <div class="dash-card-title">任务状态</div>
-          <div id="dash-task-box">
-            <div style="font-size:15px;font-weight:600;color:var(--text-3)">空闲</div>
-            <div style="font-size:12px;color:var(--text-3);margin-top:6px">无正在执行的任务</div>
-          </div>
-          <div class="dash-card-title" style="margin-top:18px">快捷操作</div>
-          <div class="dash-actions">
+          <div class="dash-card-title">快捷操作</div>
+          <div class="dash-actions" style="margin-top:12px">
             <button class="btn btn-outline" onclick="startFullSyncQuick(this)">⇄ 全量同步</button>
             <button class="btn btn-outline" onclick="quickOrganize(this)">⚙ 整理</button>
             <button class="btn btn-outline" onclick="quickIncr(this)">⚡ 增量</button>
@@ -1081,7 +1076,7 @@ av:
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
       <div class="plugin-content-header">
-        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 4 个插件 · 2 个可用</span></div>
+        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 5 个插件 · 3 个可用</span></div>
       </div>
       <div class="rule-container">
         <!-- 卡片：115 每日签到（可用） -->
@@ -1112,6 +1107,19 @@ av:
             <button class="action-button run-button" id="emby-lib-run-btn" onclick="embyLibRun()"><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
           </div></div>
         </div>
+        <!-- 卡片：TG 频道搜索（可用） -->
+        <div class="rule-card rule-card-active">
+          <div class="card-status-badge"><span class="status-dot animated"></span></div>
+          <div class="rule-header">
+            <div class="rule-title"><span class="icon">✈</span>TG 频道搜索</div>
+            <div class="rule-status"><span class="status-text active">可用</span></div>
+          </div>
+          <div class="rule-content"><p>搜索 Telegram 资源频道的公开消息，提取 115 分享/磁力链接一键转存。</p></div>
+          <div class="rule-footer"><div class="button-group">
+            <button class="action-button config-button" onclick="tgSearchConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
+            <button class="action-button run-button" onclick="tgSearchOpen()"><span class="btn-icon run-icon">▶</span><span>立即搜索</span></button>
+          </div></div>
+        </div>
         <!-- 卡片：ALIST 同步（规划中） -->
         <div class="rule-card">
           <div class="card-status-badge inactive"><span class="status-dot"></span></div>
@@ -1140,6 +1148,29 @@ av:
         </div>
       </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- TG 频道搜索弹窗 -->
+<div class="modal-mask" id="tgsearch-modal" style="display:none">
+  <div class="modal" style="max-width:680px">
+    <h3 id="tgsearch-title">TG 频道搜索</h3>
+    <div id="tgsearch-config-area" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+      <div class="form-row" style="margin-bottom:8px"><div class="label">频道列表</div><div class="control"><textarea id="tgsearch-channels" class="auto-resize" rows="3" placeholder="每行一个，如：&#10;@quanquan_115&#10;dianyingku"></textarea></div></div>
+      <div class="form-row" style="margin-bottom:8px"><div class="label">转存目录</div><div class="control"><div class="form-inline-group"><input type="text" id="tgsearch-target" readonly placeholder="未选择" style="flex:1"><button class="btn btn-outline" onclick="openDirPicker('115','tgsearch-target')">选择</button></div></div></div>
+      <div class="form-row" style="margin-bottom:0"><div class="label">转存后自动整理</div><div class="control"><div class="segmented-control" id="tgsearch-organize"><div class="seg-item" data-value="false" onclick="tgSegPick(this)">关闭</div><div class="seg-item" data-value="true" onclick="tgSegPick(this)">开启</div></div></div></div>
+      <div class="actions" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="tgSearchSaveConfig(this)">保存配置</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" id="tgsearch-keyword" placeholder="输入片名 / 番号搜索" style="flex:1" onkeydown="if(event.key==='Enter')tgSearchDo()">
+      <button class="btn btn-primary" onclick="tgSearchDo()">搜索</button>
+    </div>
+    <div id="tgsearch-results" style="max-height:56vh;overflow:auto"></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="tgModalClose()">关闭</button>
     </div>
   </div>
 </div>
