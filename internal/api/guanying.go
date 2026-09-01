@@ -49,6 +49,18 @@ var (
 	gyCfgAt time.Time
 )
 
+// gyNormalizeBase 归一化站点地址：自动补协议头（用户填 xxx.com 也能用）
+func gyNormalizeBase(raw string) string {
+	b := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if b == "" {
+		return gyDefaultBase
+	}
+	if !strings.HasPrefix(b, "http://") && !strings.HasPrefix(b, "https://") {
+		b = "https://" + b
+	}
+	return b
+}
+
 func loadGyCfg() *gyCfg {
 	gyCfgMu.Lock()
 	defer gyCfgMu.Unlock()
@@ -59,10 +71,7 @@ func loadGyCfg() *gyCfg {
 	if v := settingValueCompat("guanying"); v != "" {
 		json.Unmarshal([]byte(v), cfg)
 	}
-	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	if cfg.BaseURL == "" || !strings.HasPrefix(cfg.BaseURL, "http") {
-		cfg.BaseURL = gyDefaultBase
-	}
+	cfg.BaseURL = gyNormalizeBase(cfg.BaseURL)
 	if cfg.Cookies == nil {
 		cfg.Cookies = map[string]string{}
 	}
@@ -510,10 +519,7 @@ func (h *Handler) GySaveConfig(c *gin.Context) {
 		return
 	}
 	cfg := loadGyCfg()
-	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
-	if cfg.BaseURL == "" || !strings.HasPrefix(cfg.BaseURL, "http") {
-		cfg.BaseURL = gyDefaultBase
-	}
+	cfg.BaseURL = gyNormalizeBase(req.BaseURL)
 	cfg.Username = strings.TrimSpace(req.Username)
 	cfg.Password = req.Password
 	if err := saveGyCfg(cfg); err != nil {
@@ -537,8 +543,8 @@ func (h *Handler) GyLogin(c *gin.Context) {
 		return
 	}
 	cfg := loadGyCfg()
-	if strings.TrimSpace(req.BaseURL) != "" {
-		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
+	if b := gyNormalizeBase(req.BaseURL); b != "" {
+		cfg.BaseURL = b
 	}
 	cfg.Username = strings.TrimSpace(req.Username)
 	cfg.Password = req.Password
