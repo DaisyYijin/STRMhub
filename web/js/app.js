@@ -23,17 +23,24 @@ async function api(path, options = {}) {
       ...options.headers,
     },
   });
-  // 登录过期：清令牌回登录页（一次），后续调用自然静默
+  // 仅当 401 来自鉴权中间件（固定文案 未登录/登录已过期）才清令牌回登录页；
+  // 业务接口的 401（影巢登录未通过、115 OpenAPI 校验失败等）按普通错误提示，
+  // 否则点一次影巢登录就把后台登录态误清了
   if (res.status === 401) {
-    if (!authRedirecting) {
-      authRedirecting = true;
-      localStorage.removeItem('token');
-      stopLogPoll();
-      showAuth(false);
-      toast('登录已过期，请重新登录');
-      setTimeout(() => { authRedirecting = false; }, 1000);
+    const data401 = await res.json().catch(() => ({}));
+    const msg401 = data401.error || data401.message || '';
+    if (msg401 === '未登录' || msg401 === '登录已过期') {
+      if (!authRedirecting) {
+        authRedirecting = true;
+        localStorage.removeItem('token');
+        stopLogPoll();
+        showAuth(false);
+        toast('登录已过期，请重新登录');
+        setTimeout(() => { authRedirecting = false; }, 1000);
+      }
+      throw new Error('登录已过期');
     }
-    throw new Error('登录已过期');
+    throw new Error(msg401 || '请求失败');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || '请求失败');
