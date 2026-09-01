@@ -2720,8 +2720,9 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==================== 影视转存 · 影巢 ====================
-// OAuth 授权码流程：应用配置（Client ID + Secret）→ 跳转授权页 →
-// 回调换取令牌 → 展示账号基本信息。资源查询/转存链路待应用放开后接入。
+// ==================== 影视转存 · 影巢 ====================
+// X-API-Key（个人 API Key 或应用 Secret）+ OAuth 用户令牌（可选）双通道：
+// TMDB 选片 → 影巢搜资源 → 点资源行一键「解锁 + 115 转存」，完成后自动整理入库。
 async function loadHdhivePage() {
   // OAuth 回跳参数：提示一次后清理地址栏，刷新不再重复提示
   const params = new URLSearchParams(location.search);
@@ -2739,20 +2740,31 @@ async function loadHdhivePage() {
     const d = await api('/hdhive/config');
     document.getElementById('hdhive-client-id').value = d.client_id || '';
     document.getElementById('hdhive-api-key').value = d.api_key || '';
+    document.getElementById('hdhive-target-dir').value = d.target_dir || '';
+    setHdhiveAllowPoints(!!d.allow_points);
     creds = d.creds || '';
   } catch (e) { console.error('[影巢] 配置回填失败:', e.message); }
   hdhiveLoadUser(creds);
+}
+
+function setHdhiveAllowPoints(v) {
+  document.querySelectorAll('#hdhive-allow-points .seg-item').forEach(el => {
+    el.classList.toggle('active', String(el.dataset.value) === String(v));
+  });
 }
 
 async function hdhiveSaveConfig(btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
   try {
+    const allowEl = document.querySelector('#hdhive-allow-points .seg-item.active');
     await api('/hdhive/config', {
       method: 'POST',
       body: JSON.stringify({
         client_id: document.getElementById('hdhive-client-id').value.trim(),
         api_key: document.getElementById('hdhive-api-key').value.trim(),
+        target_dir: document.getElementById('hdhive-target-dir').value.trim(),
+        allow_points: allowEl ? allowEl.dataset.value === 'true' : false,
       }),
     });
     toast('保存成功');
@@ -2768,7 +2780,7 @@ async function hdhiveTest(btn) {
   showTestPending(el, '连接影巢中…');
   try {
     const d = await api('/hdhive/test', { method: 'POST' });
-    let detail = '应用 Secret 有效';
+    let detail = 'API Key 有效';
     const q = d.quota;
     if (q && typeof q === 'object') {
       const lines = [];
@@ -2809,18 +2821,19 @@ async function hdhiveLoadUser(creds) {
   if (!box) return;
   try {
     const d = await api('/hdhive/user');
-    if (!d.authorized) {
-      let hint = '未授权 · 点击下方按钮跳转影巢授权页';
+    const u = d.user || {};
+    const hasUser = Object.keys(u).length > 0;
+    if (!d.authorized && !hasUser) {
+      let hint = '未授权 · 填写个人 API Key 即可搜索解锁，无需授权';
       if (creds === 'builtin') hint = '未授权 · 本镜像已内置官方应用，点下方按钮即可跳转授权';
-      else if (!creds) hint = '未授权 · 需先填写并保存自有 Client ID / Secret（官方内置镜像可留空）';
+      else if (!creds) hint = '未授权 · 填写个人 API Key（推荐）或自有 Client ID / Secret';
       box.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
       if (unauthBtn) unauthBtn.style.display = 'none';
       if (authBtn) authBtn.textContent = '授权影巢账号';
       return;
     }
-    if (authBtn) authBtn.textContent = '重新授权';
-    if (unauthBtn) unauthBtn.style.display = '';
-    const u = d.user || {};
+    if (authBtn) authBtn.textContent = d.authorized ? '重新授权' : '授权影巢账号';
+    if (unauthBtn) unauthBtn.style.display = d.authorized ? '' : 'none';
     const nick = u.nickname || u.name || u.username || u.email || '影巢用户';
     const avatar = u.avatar || u.avatar_url || u.image_url || '';
     const badges = [];
@@ -2829,7 +2842,8 @@ async function hdhiveLoadUser(creds) {
     if (vip) badges.push(typeof vip === 'string' ? vip : 'VIP');
     const pts = u.points !== undefined ? u.points : (u.credit !== undefined ? u.credit : u.score);
     if (pts !== undefined && pts !== null) badges.push('积分 ' + pts);
-    if (badges.length === 0 && Object.keys(u).length === 0) badges.push('账号信息待刷新');
+    if (!d.authorized) badges.push('个人 Key 模式');
+    if (badges.length === 0 && !hasUser) badges.push('账号信息待刷新');
     box.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
       + (avatar
         ? '<img src="' + esc(avatar) + '" onerror="this.remove()" style="width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--fill-2)">'
@@ -2837,6 +2851,7 @@ async function hdhiveLoadUser(creds) {
       + '<div><div style="font-weight:600">' + esc(nick) + '</div>'
       + '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' + badges.map(b => esc(String(b))).join(' · ')
       + (d.authorized_at ? (badges.length ? ' · ' : '') + '授权于 ' + esc(d.authorized_at) : '')
+      + (d.fetch_error ? (badges.length ? ' · ' : '') + '<span style="color:var(--danger)">账号信息获取失败</span>' : '')
       + '</div></div></div>';
   } catch (e) {
     box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
@@ -2851,6 +2866,145 @@ async function hdhiveRevoke(btn) {
     document.getElementById('hdhive-auth-btn').textContent = '授权影巢账号';
     hdhiveLoadUser();
   } catch (e) { toast(e.message); }
+}
+
+// ===== 影巢搜索：TMDB 选片 → 资源列表 → 一键解锁转存 =====
+
+function hdhiveModalOpen(html, title) {
+  document.getElementById('hdhive-modal-title').textContent = title || '选择影视';
+  document.getElementById('hdhive-modal-body').innerHTML = html;
+  document.getElementById('hdhive-modal').style.display = '';
+}
+function hdhiveModalClose() {
+  document.getElementById('hdhive-modal').style.display = 'none';
+}
+
+async function hdhiveSearch() {
+  const q = document.getElementById('hdhive-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  hdhiveModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
+  try {
+    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
+    const items = d.data || [];
+    if (!items.length) {
+      hdhiveModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>', '选择影视');
+      return;
+    }
+    hdhiveModalOpen('<div style="display:flex;flex-wrap:wrap;gap:10px">' + items.map(it => {
+      const poster = it.poster
+        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
+          + 'onerror="this.style.display=\'none\'" style="width:80px;height:120px;object-fit:cover;border-radius:6px;background:var(--fill-2)">'
+        : '<div style="width:80px;height:120px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:26px;color:var(--text-3)">▨</div>';
+      const typeTag = it.media_type === 'tv'
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">影</span>';
+      return '<div onclick="hdhivePickTmdb(' + it.id + ',\'' + esc(it.media_type) + '\',this)" data-title="' + esc(it.title) + '" '
+        + 'style="width:104px;cursor:pointer;text-align:center" title="点击到影巢搜索资源">'
+        + '<div style="position:relative">' + poster
+        + '<span style="position:absolute;top:4px;left:4px">' + typeTag + '</span></div>'
+        + '<div style="font-size:12.5px;margin-top:6px;line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
+        + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(it.year || '') + '</div>'
+        + '</div>';
+    }).join('') + '</div>', '选择影视');
+  } catch (e) {
+    hdhiveModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>', '选择影视');
+  }
+}
+
+let hdhiveCur = { title: '', type: 'movie', id: 0 };
+let hdhiveItems = [];
+let hdhiveSortKey = '';
+
+function hdhivePickTmdb(id, mediaType, el) {
+  if (el) {
+    el.parentElement.querySelectorAll(':scope > div').forEach(n => n.style.outline = '');
+    el.style.outline = '2px solid var(--primary)';
+  }
+  hdhiveCur = {
+    title: el ? (el.dataset.title || '') : '',
+    type: mediaType === 'tv' ? 'tv' : 'movie',
+    id: id,
+  };
+  hdhiveSearchSite();
+}
+
+async function hdhiveSearchSite() {
+  const body = document.getElementById('hdhive-modal-body');
+  body.innerHTML = '<div id="hdhive-res-list"><span style="color:var(--text-3)">搜索影巢资源中…</span></div>';
+  document.getElementById('hdhive-modal-title').textContent = '影巢资源 · ' + hdhiveCur.title;
+  try {
+    const d = await api('/hdhive/resources?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id);
+    const items = d.data || [];
+    if (!items.length) {
+      body.innerHTML = '<span style="color:var(--text-3)">影巢站内没有找到「' + esc(hdhiveCur.title) + '」的资源</span>';
+      return;
+    }
+    hdhiveItems = items;
+    hdhiveSortKey = '';
+    hdhiveRenderList();
+  } catch (e) {
+    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+  }
+}
+
+// 点表头排序：默认=推荐序（服务端已排：115 优先/免费优先/4K 优先），大小/积分可切换
+function hdhiveSortBy(key) {
+  hdhiveSortKey = hdhiveSortKey === key ? '' : key;
+  hdhiveRenderList();
+}
+
+function hdhiveRenderList() {
+  const list = document.getElementById('hdhive-res-list');
+  if (!list) return;
+  const th = (label, key) => {
+    const active = hdhiveSortKey === key;
+    return '<span onclick="hdhiveSortBy(\'' + key + '\')" style="cursor:pointer;'
+      + (active ? 'color:var(--primary);font-weight:600' : '') + '">' + label + (active ? ' ↓' : '') + '</span>';
+  };
+  const items = hdhiveItems.slice();
+  if (hdhiveSortKey === 'size') items.sort((a, b) => gySizeBytes(b.size) - gySizeBytes(a.size));
+  if (hdhiveSortKey === 'points') items.sort((a, b) => (a.unlock_points || 0) - (b.unlock_points || 0));
+  list.innerHTML = '<div style="display:flex;gap:14px;font-size:12px;color:var(--text-3);margin:0 0 6px;padding:0 10px;align-items:center">'
+    + '<span style="flex:1">排序：' + th('推荐', '') + ' ' + th('大小', 'size') + ' ' + th('积分', 'points') + '</span>'
+    + '</div>'
+    + '<div class="otk">' + items.map(it => {
+      const slug = String(it.slug || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const pts = parseInt(it.unlock_points, 10) || 0;
+      const pan = String(it.pan_type || it.drive_type || '').toLowerCase();
+      const panTag = pan === '115'
+        ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">115</span>'
+        : pan === 'quark'
+          ? '<span class="otag" style="background:#fff0e8;color:#d9571c">夸克</span>'
+          : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(pan || '网盘') + '</span>';
+      const meta = [it.size, (it.video_resolution || []).slice(0, 2).join('/'), (it.source || []).slice(0, 1).join(''),
+        pts > 0 ? '<span style="color:#b26a00">' + pts + ' 积分</span>' : '<span style="color:#00874a">免费</span>']
+        .filter(Boolean).join('<span class="otk-dot">·</span>');
+      return '<div class="otk-row" style="cursor:pointer" onclick="hdhiveSubmit(\'' + slug + '\',' + pts + ',this)">'
+      + panTag
+      + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title || '') + '">' + esc(it.title || slug) + '</div>'
+      + '<div class="otk-sub">' + meta + '</div>'
+      + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+      + '<div class="otk-side" style="color:var(--primary)">解锁转存 ›</div>'
+      + '</div>';
+    }).join('') + '</div>';
+}
+
+// 点击资源行：解锁 → 115 自动转存（一步完成）
+async function hdhiveSubmit(slug, points, el) {
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已转存过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = points > 0 ? '解锁中（消耗 ' + points + ' 积分）…' : '解锁中…'; }
+  try {
+    const r = await api('/hdhive/unlock', {
+      method: 'POST',
+      body: JSON.stringify({ slug: slug, points: points }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '完成'); }
+    toast(r.manual ? (r.message || '已解锁') : '已解锁并转存 115，完成后自动整理入库');
+    hdhiveLoadUser(); // 积分/账号信息可能变化
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
 }
 
 // ==================== 影视转存 · 观影 ====================
