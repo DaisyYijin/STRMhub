@@ -458,7 +458,9 @@ func (h *Handler) Pan123Qrcode(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "二维码响应缺少 uniID"})
 		return
 	}
-	content := strings.TrimSuffix(baseURL, ".html") + "?uniID=" + url.QueryEscape(uniID)
+	// 二维码内容格式来自 p123client：保留 .html 页面 + 完整参数，
+	// 缺参数时手机扫码会当普通网页打开（跳到下载页而不是登录确认）
+	content := baseURL + "?env=production&uniID=" + url.QueryEscape(uniID) + "&source=123pan&type=login"
 	png, err := qrcode.Encode(content, qrcode.Medium, 220)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成二维码图片失败: " + err.Error()})
