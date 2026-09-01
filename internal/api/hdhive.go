@@ -1116,30 +1116,36 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
 		c.JSON(http.StatusOK, gin.H{"data": items, "source": "api"})
 		return
-	} else if sigRequired {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源接口要求请求签名（站点安全层），暂时无法直连，请把日志发开发者"})
-		return
-	} else if raw != "" {
+	} else if raw != "" && !sigRequired {
 		log.Printf("[影巢] ○ 资源 JSON 直连失败样例: %s", truncateStr(raw, 200))
 	}
 
-	pageHTML, finalURL, err := h.hdhivePage(cfg, "/tmdb/"+mediaType+"/"+url.PathEscape(tmdbID))
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+	pagePath := "/tmdb/" + mediaType + "/" + url.PathEscape(tmdbID)
+
+	// 签名墙或直连失败 → 浏览器渲染兜底（站点 JS 自行完成握手/签名）
+	if apiBody, html, berr := hdhiveBrowserFetch(cfg, pagePath, "/api/customer/resources",
+		`document.querySelectorAll('a[href*="/resource/"]').length > 0 || (document.body && document.body.innerText.indexOf('发布于') >= 0)`, 25*time.Second); berr == nil {
+		if hdhiveLoginWall(html) || hdhiveIsLoginPage(cfg.BaseURL+pagePath, html) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
+			return
+		}
+		// 优先用截获的接口 JSON
+		if items := hdhiveParseResourceListJSON([]byte(apiBody)); len(items) > 0 {
+			sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
+			log.Printf("[影巢] ✓ 浏览器截获资源接口（tmdb %s/%s）：%d 项", mediaType, tmdbID, len(items))
+			c.JSON(http.StatusOK, gin.H{"data": items, "source": "browser-api"})
+			return
+		}
+		cards := hdhiveParseCards(html)
+		log.Printf("[影巢] ✓ 浏览器渲染资源页（tmdb %s/%s）：卡片 %d，接口响应 %d 字节", mediaType, tmdbID, len(cards), len(apiBody))
+		sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
+		c.JSON(http.StatusOK, gin.H{"data": cards, "source": "browser-dom"})
+		return
+	} else {
+		log.Printf("[影巢] ○ 浏览器渲染失败: %v", berr)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源需要浏览器渲染兜底: " + berr.Error()})
 		return
 	}
-	if hdhiveIsLoginPage(finalURL, pageHTML) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
-		return
-	}
-	cards := hdhiveParseCards(pageHTML)
-	if len(cards) == 0 {
-		refs := regexp.MustCompile(`/resource/115/([A-Za-z0-9_-]+)`).FindAllString(pageHTML, -1)
-		log.Printf("[影巢] ○ 资源页解析 0 卡片（tmdb %s/%s）：页面 %d 字节，登录墙=%v，/resource/ 引用 %d 处",
-			mediaType, tmdbID, len(pageHTML), hdhiveLoginWall(pageHTML), len(refs))
-	}
-	sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
-	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
 
 // HdhiveDiagSign GET /hdhive/diag/sign
@@ -1424,6 +1430,20 @@ func (h *Handler) HdhiveUnlock(c *gin.Context) {
 	link := ""
 	if m := reHdhive115Link.FindString(pageHTML); m != "" {
 		link = hdhiveTrimLink(m)
+	}
+	// 直连页面是 JS 渲染壳（无链接）→ 浏览器渲染兜底后再提取
+	if link == "" && !hdhiveLoginWall(pageHTML) {
+		if _, html, berr := hdhiveBrowserFetch(cfg, "/resource/115/"+url.PathEscape(req.Slug), "",
+			`document.body && document.body.innerText.length > 200`, 20*time.Second); berr == nil {
+			if m := reHdhive115Link.FindString(html); m != "" {
+				link = hdhiveTrimLink(m)
+			}
+			if strings.Contains(html, "积分不足") {
+				pageHTML = html
+			}
+		} else {
+			log.Printf("[影巢] ○ 解锁页浏览器渲染失败: %v", berr)
+		}
 	}
 	if link == "" {
 		hint := "该资源需要解锁：请在影巢网页端打开此资源并点「确定解锁」（付费解锁只能在站内完成），完成后回到这里重试即可自动转存"

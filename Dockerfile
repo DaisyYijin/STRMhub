@@ -25,8 +25,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -X main
 # 运行阶段：最小镜像
 FROM alpine:latest
 # ffmpeg：观影门户服务端转封装（MKV→HLS 无损直串流）、内嵌轨道识别与媒体信息探测；
-# ca-certificates（TLS）、tzdata（时区）
-RUN apk add --no-cache ffmpeg ca-certificates tzdata
+# ca-certificates（TLS）、tzdata（时区）；
+# chromium：影巢浏览器渲染通道（站点请求签名层需真实浏览器执行 JS/WASM）
+RUN apk add --no-cache ffmpeg ca-certificates tzdata chromium ttf-freefont
 
 WORKDIR /app
 
