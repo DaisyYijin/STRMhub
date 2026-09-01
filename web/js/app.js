@@ -2956,16 +2956,20 @@ function hdhiveSortBy(key) {
 function hdhiveRenderList() {
   const list = document.getElementById('hdhive-res-list');
   if (!list) return;
-  const th = (label, key) => {
-    const active = hdhiveSortKey === key;
-    return '<span onclick="hdhiveSortBy(\'' + key + '\')" style="cursor:pointer;'
-      + (active ? 'color:var(--primary);font-weight:600' : '') + '">' + label + (active ? ' ↓' : '') + '</span>';
+  // 排序按钮：与资源分类 tab 同款胶囊样式（推荐=服务端序：115 优先/免费优先/4K 优先）
+  const pill = (label, key) => {
+    const active = hdhiveSortKey === key && key !== '';
+    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+    const fg = active ? '#fff' : 'var(--text-2)';
+    return '<span onclick="hdhiveSortBy(\'' + key + '\')" '
+      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+      + label + '</span>';
   };
   const items = hdhiveItems.slice();
   if (hdhiveSortKey === 'size') items.sort((a, b) => gySizeBytes(b.size) - gySizeBytes(a.size));
   if (hdhiveSortKey === 'points') items.sort((a, b) => (a.unlock_points || 0) - (b.unlock_points || 0));
-  list.innerHTML = '<div style="display:flex;gap:14px;font-size:12px;color:var(--text-3);margin:0 0 6px;padding:0 10px;align-items:center">'
-    + '<span style="flex:1">排序：' + th('推荐', '') + ' ' + th('大小', 'size') + ' ' + th('积分', 'points') + '</span>'
+  list.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">排序'
+    + pill('推荐', '') + pill('大小', 'size') + pill('积分', 'points')
     + '</div>'
     + '<div class="otk">' + items.map(it => {
       const slug = String(it.slug || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -3242,18 +3246,22 @@ function gySortBy(key) {
 function gyRenderTorrentList() {
   const list = document.getElementById('gy-torrent-list');
   if (!list) return;
-  const th = (label, key) => {
-    const active = gySort.key === key;
-    const arrow = active ? (gySort.dir === -1 ? '↓' : '↑') : '⇅';
-    return '<span onclick="gySortBy(\'' + key + '\')" style="cursor:pointer;'
-      + (active ? 'color:var(--primary);font-weight:600' : '') + '">' + label + ' ' + arrow + '</span>';
+  // 排序按钮：与资源分类 tab 同款胶囊样式，激活高亮，再点一次反向
+  const pill = (label, key) => {
+    const active = gySort.key === key && key !== '';
+    const arrow = active ? (gySort.dir === -1 ? ' ↓' : ' ↑') : '';
+    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+    const fg = active ? '#fff' : 'var(--text-2)';
+    return '<span onclick="gySortBy(\'' + key + '\')" '
+      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+      + label + arrow + '</span>';
   };
   const items = gyLastItems.slice();
   if (gySort.key === 'size') items.sort((a, b) => (gySizeBytes(a.size) - gySizeBytes(b.size)) * gySort.dir);
   if (gySort.key === 'seeds') items.sort((a, b) => (gySeeds(a.seeds) - gySeeds(b.seeds)) * gySort.dir);
   if (gySort.key === 'time') items.sort((a, b) => (gyTimeSec(a.time) - gyTimeSec(b.time)) * gySort.dir);
-  list.innerHTML = '<div style="display:flex;gap:14px;font-size:12px;color:var(--text-3);margin:0 0 6px;padding:0 10px;align-items:center">'
-    + '<span style="flex:1">排序：' + th('大小', 'size') + ' ' + th('做种', 'seeds') + ' ' + th('时间', 'time') + '</span>'
+  list.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">排序'
+    + pill('默认', '') + pill('大小', 'size') + pill('做种', 'seeds') + pill('时间', 'time')
     + '</div>'
     + '<div class="otk">' + items.map(it => {
       const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -3264,9 +3272,8 @@ function gyRenderTorrentList() {
       + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
       + '<div class="otk-sub"><span>' + meta + '</span></div>'
       + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-      + '<div class="otk-side">'
-      + '<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();gyCopyRowMagnet(\'' + safePath + '\',this)">复制磁力</button>'
-      + '</div></div>';
+      + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
+      + '</div>';
     }).join('') + '</div>';
 }
 
@@ -3290,23 +3297,6 @@ async function gySubmit(path, el) {
   }
 }
 
-// 复制单条磁力（不提交离线）
-async function gyCopyRowMagnet(path, btn) {
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '获取中…';
-  try {
-    const d = await api('/guanying/resources?path=' + encodeURIComponent(path));
-    if (!d.magnet) throw new Error('没有磁力链接');
-    gyCopyText(d.magnet);
-  } catch (e) {
-    toast(e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
-  }
-}
-
 function buildGyTabs(zy) {
   const tab = (name, label, count, active) => {
     const safeName = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -3322,22 +3312,4 @@ function buildGyTabs(zy) {
     html += tab(name, name, typeof n === 'number' ? n : '', gyCurZy === name);
   });
   return '<div id="gy-zy-tabs" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">' + html + '</div>';
-}
-
-// 复制（http 环境无 clipboard API 时退回 execCommand）
-function gyCopyText(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(() => toast('已复制'), () => gyCopyFallback(text));
-  } else {
-    gyCopyFallback(text);
-  }
-}
-function gyCopyFallback(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;opacity:0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); toast('已复制'); } catch (e) { toast('复制失败，请手动复制'); }
-  document.body.removeChild(ta);
 }
