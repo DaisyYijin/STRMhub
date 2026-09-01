@@ -539,6 +539,7 @@ func buildNewNameWithTemplate(media *TmdbMedia, parsed *ParsedName, originalName
 		path = ctx.ApplyTemplate(renameTpl.TVFolder) + "/" + ctx.ApplyTemplate(renameTpl.TVFile)
 	default:
 		path = ctx.ApplyTemplate(renameTpl.AVFolder) + "/" + ctx.ApplyTemplate(renameTpl.AVFile)
+		path = collapseDuplicateAVNum(path, media.Title)
 	}
 	// 剧集需要插入 Season 目录（如果模板没有包含）
 	if media.MediaType == "tv" && parsed.Season > 0 && !strings.Contains(path, "Season") {

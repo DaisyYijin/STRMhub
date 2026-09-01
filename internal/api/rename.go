@@ -226,7 +226,7 @@ func (h *Handler) LoadRenameTemplates() *RenameConfig {
 		TVFolder:   "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
 		TVFile:   "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
 		AVFolder:   "{first_letter}-{title}",
-		AVFile:   "{title}<.{resource_pix}><.{resource_type}>{ext}",
+		AVFile:   "{num}<.{resource_pix}><.{resource_type}>{ext}",
 	}
 
 	v := h.getSettingValue("org-rename")
@@ -277,7 +277,18 @@ func (h *Handler) BuildPathWithTemplate(media *TmdbMedia, parsed *ParsedName, or
 		file = ctx.ApplyTemplate(tpl.AVFile)
 	}
 
-	return folder + "/" + file
+	return collapseDuplicateAVNum(folder+"/"+file, ctx.Num)
+}
+
+// collapseDuplicateAVNum AV 兜底：番号在结果中背靠背重复（如历史模板
+// {num}-{title} 渲染出 "ABC-123-ABC-123"）时折叠为单个。AV 流程里
+// {num} 与 {title} 同值，模板同用两个变量必产生重复
+func collapseDuplicateAVNum(s, num string) string {
+	if num == "" || !strings.Contains(s, num) {
+		return s
+	}
+	q := regexp.QuoteMeta(num)
+	return regexp.MustCompile(`(` + q + `)[-_. ]?` + q).ReplaceAllString(s, num)
 }
 
 // sanitizePath 清理路径中的空段和连续分隔符

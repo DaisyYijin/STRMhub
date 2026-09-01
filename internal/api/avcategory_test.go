@@ -50,3 +50,20 @@ func TestClassifyAVNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestCollapseDuplicateAVNum(t *testing.T) {
+	cases := []struct{ in, num, want string }{
+		{"ABC-123ABC-123.mp4", "ABC-123", "ABC-123.mp4"},
+		{"ABC-123-ABC-123.mp4", "ABC-123", "ABC-123.mp4"},
+		{"ABC-123_ABC-123.mp4", "ABC-123", "ABC-123.mp4"},
+		{"ABC-123 ABC-123.mp4", "ABC-123", "ABC-123.mp4"},
+		{"A/ABC-123/ABC-123-ABC-123 - 2160p.mp4", "ABC-123", "A/ABC-123/ABC-123 - 2160p.mp4"},
+		{"ABC-123 - 2160p.mp4", "ABC-123", "ABC-123 - 2160p.mp4"},   // 正常名不受影响
+		{"START-622-4K.mp4", "ABC-123", "START-622-4K.mp4"},          // 不同番号不误伤
+	}
+	for _, c := range cases {
+		if got := collapseDuplicateAVNum(c.in, c.num); got != c.want {
+			t.Errorf("collapseDuplicateAVNum(%q, %q) = %q, want %q", c.in, c.num, got, c.want)
+		}
+	}
+}

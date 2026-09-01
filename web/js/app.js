@@ -2007,7 +2007,7 @@ const DEFAULT_CONFIGS = {
     tv_folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
     tv_file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
     av_folder: '{first_letter}-{title}',
-    av_file: '{title}{ext}',
+    av_file: '{num}<.{resource_pix}><.{resource_type}>{ext}',
   },
   'monitor': { dir: '', target: '' },
   'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', token: '', encoding_aes_key: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false }, feishu: { webhook: '', secret: '', enabled: false }, qq_onebot: { url: '', token: '', target_type: 'group', target: '', admin: '', event_token: '', enabled: false }, qq_official: { app_id: '', secret: '', group_id: '', enabled: false } },
