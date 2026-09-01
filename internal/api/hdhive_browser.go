@@ -44,13 +44,26 @@ func hdhiveCookieDomain(baseURL string) string {
 	return u.Hostname()
 }
 
+// hdhiveReqLog 浏览器会话中观察到的请求（诊断用）
+type hdhiveReqLog struct {
+	Status int    `json:"status"`
+	URL    string `json:"url"`
+}
+
+// hdhiveBrowserResult 浏览器渲染结果
+type hdhiveBrowserResult struct {
+	APIBody string          `json:"-"`
+	HTML    string          `json:"-"`
+	Reqs    []hdhiveReqLog  `json:"requests"`
+	Text    string          `json:"page_text"`
+}
+
 // hdhiveBrowserFetch 用无头浏览器打开 pagePath，注入登录 Cookie，
-// 轮询等待 waitExpr（JS 表达式）为真或超时；
-// 返回（截获的 apiPath 接口响应体，最终页面 HTML）。
-func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait time.Duration) (string, string, error) {
+// 轮询等待 waitExpr（JS 表达式）为真或超时。
+func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait time.Duration) (*hdhiveBrowserResult, error) {
 	exe := hdhiveChromePath()
 	if exe == "" {
-		return "", "", fmt.Errorf("服务器缺少 Chromium（镜像内置 alpine chromium；本机开发可设 HDHIVE_CHROME 指向 Chrome 可执行文件）")
+		return nil, fmt.Errorf("服务器缺少 Chromium（镜像内置 alpine chromium；本机开发可设 HDHIVE_CHROME 指向 Chrome 可执行文件）")
 	}
 	ua := cfg.UA
 	if ua == "" {
@@ -81,6 +94,7 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		mu       sync.Mutex
 		lastRID  network.RequestID
 		finished = make(chan network.RequestID, 8)
+		reqLog   []hdhiveReqLog
 	)
 	captureBody := func(rid network.RequestID) string {
 		var body []byte
@@ -98,11 +112,19 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *network.EventResponseReceived:
-			if e.Response != nil && strings.Contains(e.Response.URL, apiPath) {
-				mu.Lock()
-				lastRID = e.RequestID
-				mu.Unlock()
+			if e.Response == nil {
+				return
 			}
+			mu.Lock()
+			if strings.Contains(e.Response.URL, apiPath) {
+				lastRID = e.RequestID
+			}
+			// 记录站内接口请求（诊断 0 卡片时定位数据源）
+			u := e.Response.URL
+			if (strings.Contains(u, "/api/") || strings.Contains(u, "/wasm/") || strings.Contains(u, "/go-api/")) && len(reqLog) < 60 {
+				reqLog = append(reqLog, hdhiveReqLog{Status: int(e.Response.Status), URL: u})
+			}
+			mu.Unlock()
 		case *network.EventLoadingFinished:
 			mu.Lock()
 			mine := e.RequestID == lastRID
@@ -192,9 +214,11 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		return nil
 	}()
 	if runErr != nil {
-		return "", "", runErr
+		return nil, runErr
 	}
+	var text string
+	_ = chromedp.Run(ctx, chromedp.Evaluate("document.body ? document.body.innerText : ''", &text))
 	mu.Lock()
 	defer mu.Unlock()
-	return apiHit, html, nil
+	return &hdhiveBrowserResult{APIBody: apiHit, HTML: html, Reqs: reqLog, Text: truncateStr(text, 1200)}, nil
 }

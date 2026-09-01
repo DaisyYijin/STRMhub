@@ -1056,6 +1056,11 @@ func hdhiveResourceLess(a, b map[string]any) bool {
 // 返回 items/原始响应/是否要求请求签名
 func (h *Handler) hdhiveFetchResourcesJSON(cfg *hdhiveCfg, mediaType, tmdbID string) ([]map[string]any, string, bool) {
 	urls := []string{
+		// /go-api/ 前缀：站点前端对该前缀用普通 fetch（不走 signedFetch 签名层）
+		cfg.BaseURL + "/go-api/customer/resources?type=" + mediaType + "&tmdb_id=" + tmdbID,
+		cfg.BaseURL + "/go-api/customer/resources?media_type=" + mediaType + "&tmdb_id=" + tmdbID,
+		cfg.BaseURL + "/go-api/customer/resources?tmdb_id=" + tmdbID,
+		// /api/customer/ 直连（有签名墙，通常 401 missing_signature）
 		cfg.BaseURL + "/api/customer/resources?type=" + mediaType + "&tmdb_id=" + tmdbID,
 		cfg.BaseURL + "/api/customer/resources?media_type=" + mediaType + "&tmdb_id=" + tmdbID,
 		cfg.BaseURL + "/api/customer/resources?tmdb_id=" + tmdbID,
@@ -1126,30 +1131,39 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 	// 签名墙或直连失败 → 浏览器渲染兜底（站点 JS 自行完成握手/签名）
 	log.Printf("[影巢] ▶ 直连资源接口不可用，启动浏览器渲染（tmdb %s/%s）", mediaType, tmdbID)
 	t0 := time.Now()
-	if apiBody, html, berr := hdhiveBrowserFetch(cfg, pagePath, "/api/customer/resources",
-		`document.querySelectorAll('a[href*="/resource/"]').length > 0 || (document.body && document.body.innerText.indexOf('发布于') >= 0)`, 25*time.Second); berr == nil {
-		log.Printf("[影巢] ▶ 浏览器渲染总耗时 %s", time.Since(t0).Round(time.Millisecond))
-		if hdhiveLoginWall(html) || hdhiveIsLoginPage(cfg.BaseURL+pagePath, html) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
-			return
-		}
-		// 优先用截获的接口 JSON
-		if items := hdhiveParseResourceListJSON([]byte(apiBody)); len(items) > 0 {
-			sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
-			log.Printf("[影巢] ✓ 浏览器截获资源接口（tmdb %s/%s）：%d 项", mediaType, tmdbID, len(items))
-			c.JSON(http.StatusOK, gin.H{"data": items, "source": "browser-api"})
-			return
-		}
-		cards := hdhiveParseCards(html)
-		log.Printf("[影巢] ✓ 浏览器渲染资源页（tmdb %s/%s）：卡片 %d，接口响应 %d 字节", mediaType, tmdbID, len(cards), len(apiBody))
-		sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
-		c.JSON(http.StatusOK, gin.H{"data": cards, "source": "browser-dom"})
-		return
-	} else {
+	res, berr := hdhiveBrowserFetch(cfg, pagePath, "/api/customer/resources",
+		`document.querySelectorAll('a[href*="/resource/"]').length > 0 || (document.body && document.body.innerText.indexOf('发布于') >= 0)`, 25*time.Second)
+	if berr != nil {
 		log.Printf("[影巢] ○ 浏览器渲染失败: %v", berr)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源需要浏览器渲染兜底: " + berr.Error()})
 		return
 	}
+	html, apiBody := res.HTML, res.APIBody
+	log.Printf("[影巢] ▶ 浏览器渲染总耗时 %s", time.Since(t0).Round(time.Millisecond))
+	if hdhiveLoginWall(html) || hdhiveIsLoginPage(cfg.BaseURL+pagePath, html) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
+		return
+	}
+	// 优先用截获的接口 JSON
+	if items := hdhiveParseResourceListJSON([]byte(apiBody)); len(items) > 0 {
+		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
+		log.Printf("[影巢] ✓ 浏览器截获资源接口（tmdb %s/%s）：%d 项", mediaType, tmdbID, len(items))
+		c.JSON(http.StatusOK, gin.H{"data": items, "source": "browser-api"})
+		return
+	}
+	cards := hdhiveParseCards(html)
+	if len(cards) == 0 {
+		// 0 卡片：把浏览器会话里观察到的请求全部打进日志，用于定位真实数据源
+		log.Printf("[影巢] ○ 浏览器渲染 0 卡片（tmdb %s/%s），页面 %d 字节，页面文本头: %s",
+			mediaType, tmdbID, len(html), truncateStr(res.Text, 400))
+		for _, r := range res.Reqs {
+			log.Printf("[影巢]   · 请求 %d %s", r.Status, r.URL)
+		}
+	}
+	log.Printf("[影巢] ✓ 浏览器渲染资源页（tmdb %s/%s）：卡片 %d，接口响应 %d 字节", mediaType, tmdbID, len(cards), len(apiBody))
+	sort.Slice(cards, func(i, j int) bool { return hdhiveCardLess(cards[i], cards[j]) })
+	c.JSON(http.StatusOK, gin.H{"data": cards, "source": "browser-dom",
+		"debug": gin.H{"requests": res.Reqs, "page_text": res.Text}})
 }
 
 // HdhiveDiagSign GET /hdhive/diag/sign
@@ -1437,13 +1451,13 @@ func (h *Handler) HdhiveUnlock(c *gin.Context) {
 	}
 	// 直连页面是 JS 渲染壳（无链接）→ 浏览器渲染兜底后再提取
 	if link == "" && !hdhiveLoginWall(pageHTML) {
-		if _, html, berr := hdhiveBrowserFetch(cfg, "/resource/115/"+url.PathEscape(req.Slug), "",
+		if res, berr := hdhiveBrowserFetch(cfg, "/resource/115/"+url.PathEscape(req.Slug), "",
 			`document.body && document.body.innerText.length > 200`, 20*time.Second); berr == nil {
-			if m := reHdhive115Link.FindString(html); m != "" {
+			if m := reHdhive115Link.FindString(res.HTML); m != "" {
 				link = hdhiveTrimLink(m)
 			}
-			if strings.Contains(html, "积分不足") {
-				pageHTML = html
+			if strings.Contains(res.HTML, "积分不足") {
+				pageHTML = res.HTML
 			}
 		} else {
 			log.Printf("[影巢] ○ 解锁页浏览器渲染失败: %v", berr)
