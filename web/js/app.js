@@ -75,7 +75,7 @@ const PAGE_TITLES = {
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
-  'media-transfer': ['影视转存', '影巢授权 / 观影种子 / 115 离线'],
+  'media-transfer': ['影视转存', '影巢资源 / 观影种子 / 115 离线'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
   'dashboard': ['仪表盘', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
@@ -2721,30 +2721,40 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // ==================== 影视转存 · 影巢 ====================
 // ==================== 影视转存 · 影巢 ====================
-// X-API-Key（个人 API Key 或应用 Secret）+ OAuth 用户令牌（可选）双通道：
-// TMDB 选片 → 影巢搜资源 → 点资源行一键「解锁 + 115 转存」，完成后自动整理入库。
+// 网页账号密码登录（影巢官方凭证需审核，走零门槛网页通道）：
+// TMDB 选片 → 影巢搜资源 → 点资源行提取 115 分享链接自动转存，完成后自动整理入库。
+// Cloudflare 较强：服务器直连被拦时需部署 FlareSolverr 过盾（配置里填地址）。
 async function loadHdhivePage() {
-  // OAuth 回跳参数：提示一次后清理地址栏，刷新不再重复提示
-  const params = new URLSearchParams(location.search);
-  if (params.get('hdhive_auth') === '1') {
-    toast('影巢授权成功');
-    history.replaceState(null, '', location.pathname);
-  } else if (params.get('hdhive_auth') === '0') {
-    toast('影巢授权失败：' + (params.get('hdhive_msg') || '未知原因'));
-    history.replaceState(null, '', location.pathname);
-  }
-  const cb = document.getElementById('hdhive-callback-url');
-  if (cb) cb.textContent = location.origin + '/api/hdhive/oauth/callback';
-  let creds = '';
   try {
     const d = await api('/hdhive/config');
-    document.getElementById('hdhive-client-id').value = d.client_id || '';
-    document.getElementById('hdhive-api-key').value = d.api_key || '';
+    document.getElementById('hd-base').value = d.base_url || '';
+    document.getElementById('hd-username').value = d.username || '';
+    document.getElementById('hd-password').value = d.password || '';
+    document.getElementById('hd-flare').value = d.flare_url || '';
     document.getElementById('hdhive-target-dir').value = d.target_dir || '';
     setHdhiveAllowPoints(!!d.allow_points);
-    creds = d.creds || '';
+    hdRenderLogin(d.logged_in, d.login_at, d.user);
   } catch (e) { console.error('[影巢] 配置回填失败:', e.message); }
-  hdhiveLoadUser(creds);
+}
+
+function hdRenderLogin(loggedIn, loginAt, user) {
+  const btn = document.getElementById('hd-auth-btn');
+  const st = document.getElementById('hd-login-status');
+  if (!btn) return;
+  if (loggedIn) {
+    btn.textContent = '退出登录';
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-warning');
+    const nick = user ? (user.nickname || user.username || user.email || '') : '';
+    st.style.color = 'var(--success)';
+    st.textContent = '✓ 已登录' + (nick ? ' · ' + nick : '') + (loginAt ? ' · ' + loginAt : '');
+  } else {
+    btn.textContent = '登录';
+    btn.classList.add('btn-primary');
+    btn.classList.remove('btn-warning');
+    st.style.color = 'var(--text-3)';
+    st.textContent = '未登录';
+  }
 }
 
 function setHdhiveAllowPoints(v) {
@@ -2753,7 +2763,7 @@ function setHdhiveAllowPoints(v) {
   });
 }
 
-async function hdhiveSaveConfig(btn) {
+async function hdSaveConfig(btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
   try {
@@ -2761,111 +2771,79 @@ async function hdhiveSaveConfig(btn) {
     await api('/hdhive/config', {
       method: 'POST',
       body: JSON.stringify({
-        client_id: document.getElementById('hdhive-client-id').value.trim(),
-        api_key: document.getElementById('hdhive-api-key').value.trim(),
+        base_url: document.getElementById('hd-base').value.trim(),
+        username: document.getElementById('hd-username').value.trim(),
+        password: document.getElementById('hd-password').value,
+        flare_url: document.getElementById('hd-flare').value.trim(),
         target_dir: document.getElementById('hdhive-target-dir').value.trim(),
         allow_points: allowEl ? allowEl.dataset.value === 'true' : false,
       }),
     });
     toast('保存成功');
-    showTestResult(document.getElementById('hdhive-test-banner'), null);
     const d = await api('/hdhive/config');
-    hdhiveLoadUser(d.creds || ''); // 授权状态随凭据来源刷新
+    hdRenderLogin(d.logged_in, d.login_at, d.user);
   } catch (e) { toast(e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
 
-async function hdhiveTest(btn) {
-  const el = document.getElementById('hdhive-test-banner');
-  showTestPending(el, '连接影巢中…');
+async function hdResetConfig(btn) {
+  if (!confirm('确定重置影巢配置？账号密码、站点与过盾设置将被清空并退出登录。')) return;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '重置中…'; }
   try {
-    const d = await api('/hdhive/test', { method: 'POST' });
-    let detail = 'API Key 有效';
-    const q = d.quota;
-    if (q && typeof q === 'object') {
-      const lines = [];
-      const walk = (obj, prefix) => {
-        Object.keys(obj || {}).forEach(k => {
-          const val = obj[k];
-          if (val && typeof val === 'object') walk(val, prefix + k + ' · ');
-          else if (typeof val !== 'object') lines.push(prefix + k + ': ' + val);
-        });
-      };
-      walk(q, '');
-      if (lines.length) detail = lines.slice(0, 6).join('　');
-    }
-    showTestResult(el, true, '✓ 影巢连接成功', detail);
+    await api('/hdhive/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        base_url: 'https://hdhive.com',
+        username: '', password: '', flare_url: '',
+        target_dir: '', allow_points: false,
+      }),
+    });
+    await api('/hdhive/logout', { method: 'POST' });
+    toast('已重置');
+    loadHdhivePage();
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+function hdAuthClick(btn) {
+  const loggedIn = btn.textContent.trim() === '退出登录';
+  if (loggedIn) hdLogout(btn);
+  else hdLogin(btn);
+}
+
+async function hdLogin(btn) {
+  const username = document.getElementById('hd-username').value.trim();
+  const password = document.getElementById('hd-password').value;
+  if (!username || !password) { toast('请先填写影巢账号和密码（修改后点保存配置也可以）'); return; }
+  const st = document.getElementById('hd-login-status');
+  btn.disabled = true;
+  btn.textContent = '登录中…';
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '登录中…'; }
+  try {
+    const d = await api('/hdhive/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: username, password: password }),
+    });
+    toast(d.message || '登录成功');
+    await loadHdhivePage();
   } catch (e) {
-    showTestResult(el, false, '连接失败', e.message);
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+    btn.disabled = false;
+    btn.textContent = '登录';
   }
 }
 
-async function hdhiveAuthorize(btn) {
+async function hdLogout(btn) {
   btn.disabled = true;
-  const orig = btn.textContent;
-  btn.textContent = '跳转中…';
   try {
-    const d = await api('/hdhive/oauth/start', { method: 'POST' });
-    location.href = d.url; // 跳转影巢授权页，授权后回调自动返回本页
+    await api('/hdhive/logout', { method: 'POST' });
+    toast('已退出登录');
+    await loadHdhivePage();
   } catch (e) {
     toast(e.message);
     btn.disabled = false;
-    btn.textContent = orig;
   }
-}
-
-async function hdhiveLoadUser(creds) {
-  const box = document.getElementById('hdhive-user-box');
-  const authBtn = document.getElementById('hdhive-auth-btn');
-  const unauthBtn = document.getElementById('hdhive-unauth-btn');
-  if (!box) return;
-  try {
-    const d = await api('/hdhive/user');
-    const u = d.user || {};
-    const hasUser = Object.keys(u).length > 0;
-    if (!d.authorized && !hasUser) {
-      let hint = '未授权 · 填写个人 API Key 即可搜索解锁，无需授权';
-      if (creds === 'builtin') hint = '未授权 · 本镜像已内置官方应用，点下方按钮即可跳转授权';
-      else if (!creds) hint = '未授权 · 填写个人 API Key（推荐）或自有 Client ID / Secret';
-      box.innerHTML = '<span style="color:var(--text-3)">' + hint + '</span>';
-      if (unauthBtn) unauthBtn.style.display = 'none';
-      if (authBtn) authBtn.textContent = '授权影巢账号';
-      return;
-    }
-    if (authBtn) authBtn.textContent = d.authorized ? '重新授权' : '授权影巢账号';
-    if (unauthBtn) unauthBtn.style.display = d.authorized ? '' : 'none';
-    const nick = u.nickname || u.name || u.username || u.email || '影巢用户';
-    const avatar = u.avatar || u.avatar_url || u.image_url || '';
-    const badges = [];
-    if (u.id !== undefined && u.id !== null) badges.push('ID ' + u.id);
-    const vip = u.vip_status || u.vip || u.is_vip;
-    if (vip) badges.push(typeof vip === 'string' ? vip : 'VIP');
-    const pts = u.points !== undefined ? u.points : (u.credit !== undefined ? u.credit : u.score);
-    if (pts !== undefined && pts !== null) badges.push('积分 ' + pts);
-    if (!d.authorized) badges.push('个人 Key 模式');
-    if (badges.length === 0 && !hasUser) badges.push('账号信息待刷新');
-    box.innerHTML = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-      + (avatar
-        ? '<img src="' + esc(avatar) + '" onerror="this.remove()" style="width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--fill-2)">'
-        : '<div style="width:44px;height:44px;border-radius:50%;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:20px">◉</div>')
-      + '<div><div style="font-weight:600">' + esc(nick) + '</div>'
-      + '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' + badges.map(b => esc(String(b))).join(' · ')
-      + (d.authorized_at ? (badges.length ? ' · ' : '') + '授权于 ' + esc(d.authorized_at) : '')
-      + (d.fetch_error ? (badges.length ? ' · ' : '') + '<span style="color:var(--danger)">账号信息获取失败</span>' : '')
-      + '</div></div></div>';
-  } catch (e) {
-    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
-  }
-}
-
-async function hdhiveRevoke(btn) {
-  if (!confirm('确定取消影巢账号授权？已保存的令牌将被清除。')) return;
-  try {
-    await api('/hdhive/oauth/revoke', { method: 'POST' });
-    toast('已取消授权');
-    document.getElementById('hdhive-auth-btn').textContent = '授权影巢账号';
-    hdhiveLoadUser();
-  } catch (e) { toast(e.message); }
 }
 
 // ===== 影巢搜索：TMDB 选片 → 资源列表 → 一键解锁转存 =====
@@ -3005,7 +2983,6 @@ async function hdhiveSubmit(slug, points, el) {
     });
     if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '完成'); }
     toast(r.manual ? (r.message || '已解锁') : '已解锁并转存 115，完成后自动整理入库');
-    hdhiveLoadUser(); // 积分/账号信息可能变化
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
   }

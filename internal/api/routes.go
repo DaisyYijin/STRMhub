@@ -306,8 +306,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/tmdb/img", h.TmdbImg)
 		// QQ OneBot 事件回调（NapCat 等推送事件；token 鉴权，私聊管理 QQ 触发指令）
 		r.POST("/onebot/event", h.OneBotEvent)
-		// 影巢 OAuth 回调（授权页跳回浏览器时不带登录态；state 校验防伪造）
-		r.GET("/hdhive/oauth/callback", h.HdhiveOAuthCallback)
 
 						
 		// 刮削整理
@@ -370,13 +368,12 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
 
-		// 影视转存 · 影巢（X-API-Key / OAuth → 搜资源 → 解锁 → 115 转存）
+		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
 		protected.POST("/hdhive/config", h.HdhiveSaveConfig)
 		protected.POST("/hdhive/test", h.HdhiveTest)
-		protected.POST("/hdhive/oauth/start", h.HdhiveOAuthStart)
-		protected.GET("/hdhive/user", h.HdhiveUser)
-		protected.POST("/hdhive/oauth/revoke", h.HdhiveOAuthRevoke)
+		protected.POST("/hdhive/login", h.HdhiveLogin)
+		protected.POST("/hdhive/logout", h.HdhiveLogout)
 		protected.GET("/hdhive/resources", h.HdhiveResources)
 		protected.POST("/hdhive/unlock", h.HdhiveUnlock)
 

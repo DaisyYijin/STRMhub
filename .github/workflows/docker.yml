@@ -60,8 +60,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUILD_SHA=${{ github.sha }}
-            HDHIVE_CLIENT_ID=${{ secrets.HDHIVE_CLIENT_ID }}
-            HDHIVE_SECRET=${{ secrets.HDHIVE_SECRET }}
-            HDHIVE_REDIRECT_RELAY=${{ secrets.HDHIVE_REDIRECT_RELAY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

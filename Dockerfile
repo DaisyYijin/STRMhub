@@ -34,15 +34,6 @@ COPY --from=builder /build/strmhub .
 # 复制前端静态资源
 COPY --from=builder /build/web ./web
 
-# 影巢内置应用凭据（可选）：CI 用 GitHub Secrets 经 build-args 注入，
-# 仓库源码不落盘；留空时用户自备凭据（影视转存 → 影巢 → 接入配置）
-ARG HDHIVE_CLIENT_ID=
-ARG HDHIVE_SECRET=
-ARG HDHIVE_REDIRECT_RELAY=
-ENV HDHIVE_CLIENT_ID=$HDHIVE_CLIENT_ID \
-    HDHIVE_SECRET=$HDHIVE_SECRET \
-    HDHIVE_REDIRECT_RELAY=$HDHIVE_REDIRECT_RELAY
-
 # 6060 管理后台 / 6086 302直链代理 / 6688 观影门户
 EXPOSE 6060 6086 6688
 

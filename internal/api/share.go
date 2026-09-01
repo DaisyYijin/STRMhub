@@ -90,7 +90,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 		url.Values{"share_code": {shareCode}}, cookie, 15*time.Second)
 	if err != nil {
 		log.Printf("[上传] ✗ 获取分享信息失败: %v", err)
-		return "", 0, 0, fmt.Errorf("获取分享信息失败: " + err.Error())
+		return "", 0, 0, fmt.Errorf("获取分享信息失败: %s", err.Error())
 	}
 	var info struct {
 		State bool `json:"state"`
@@ -101,7 +101,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	}
 	if json.Unmarshal(infoBody, &info) != nil || !info.State {
 		log.Printf("[上传] ✗ 分享信息校验失败: %s", truncateStr(string(infoBody), 120))
-		return "", 0, 0, fmt.Errorf("分享信息校验失败: " + truncateStr(string(infoBody), 120))
+		return "", 0, 0, fmt.Errorf("分享信息校验失败: %s", truncateStr(string(infoBody), 120))
 	}
 
 	// 2. 文件列表（顶层收全部；1150/页翻页收取——此前只取第一页，
@@ -125,7 +125,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 				"fc_mix":      {"0"},
 			}, cookie, 15*time.Second)
 		if err != nil {
-			return "", 0, 0, fmt.Errorf("获取分享文件列表失败: " + err.Error())
+			return "", 0, 0, fmt.Errorf("获取分享文件列表失败: %s", err.Error())
 		}
 		var snap struct {
 			State bool `json:"state"`
@@ -136,7 +136,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 		}
 		if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
 			log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
-			return "", 0, 0, fmt.Errorf("文件列表获取失败（提取码错误？）: " + truncateStr(string(snapBody), 120))
+			return "", 0, 0, fmt.Errorf("文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
 		}
 		allItems = append(allItems, snap.Data.List...)
 		if len(snap.Data.List) < 1150 {
@@ -158,7 +158,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	}
 	postBody, err := httpPostForm115("https://webapi.115.com/share/sharepost", form, cookie, 20*time.Second)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("sharepost 失败: " + err.Error())
+		return "", 0, 0, fmt.Errorf("sharepost 失败: %s", err.Error())
 	}
 	var post struct {
 		State bool `json:"state"`
@@ -173,7 +173,7 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	}
 	if json.Unmarshal(postBody, &post) != nil || !post.State {
 		log.Printf("[上传] ✗ sharepost 被拒: %s", truncateStr(string(postBody), 120))
-		return "", 0, 0, fmt.Errorf("sharepost 被拒: " + truncateStr(string(postBody), 120))
+		return "", 0, 0, fmt.Errorf("sharepost 被拒: %s", truncateStr(string(postBody), 120))
 	}
 
 	// 4. 逐个转存到目标目录
