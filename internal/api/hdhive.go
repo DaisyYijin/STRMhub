@@ -1142,6 +1142,73 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
 
+// HdhiveDiagSign GET /hdhive/diag/sign
+// 摘取含握手/签名的 JS chunk 关键代码段，用于评估 Go 侧复刻签名可行性
+func (h *Handler) HdhiveDiagSign(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("诊断异常: %v", r)})
+		}
+	}()
+	cfg := loadHdhiveCfg()
+	pageHTML, _, err := h.hdhivePage(cfg, "/login")
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	var chunks []string
+	for _, m := range reHdhiveScriptSrc.FindAllStringSubmatch(pageHTML, 40) {
+		src := m[1]
+		if !strings.HasPrefix(src, "http") {
+			src = cfg.BaseURL + src
+		}
+		chunks = append(chunks, src)
+	}
+	type excerpt struct {
+		URL  string   `json:"url"`
+		Hits []string `json:"hits"`
+	}
+	keywords := []string{"session/handshake", "signedFetch", "missing_signature", "action-proof", "signature", "wasm"}
+	var out []excerpt
+	for _, u := range chunks {
+		_, body, _, err := hdhiveDirect(cfg, "GET", u, "", map[string]string{"Accept": "*/*"})
+		if err != nil || len(body) == 0 {
+			continue
+		}
+		lower := strings.ToLower(body)
+		e := excerpt{URL: u}
+		for _, kw := range keywords {
+			pos := 0
+			for n := 0; n < 3; n++ {
+				idx := strings.Index(lower[pos:], strings.ToLower(kw))
+				if idx < 0 {
+					break
+				}
+				at := pos + idx
+				start, end := at-350, at+500
+				if start < 0 {
+					start = 0
+				}
+				if end > len(body) {
+					end = len(body)
+				}
+				e.Hits = append(e.Hits, fmt.Sprintf("[%s] …%s…", kw, strings.ReplaceAll(body[start:end], "\n", " ")))
+				pos = at + len(kw)
+			}
+		}
+		if len(e.Hits) > 0 {
+			out = append(out, e)
+		}
+	}
+	// 握手接口本体：不带参数 GET 一次，看它要求什么输入
+	hsStatus, hsBody, _, hsErr := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/api/public/security/session/handshake", "", nil)
+	hs := gin.H{"status": hsStatus, "head": truncateStr(hsBody, 400)}
+	if hsErr != nil {
+		hs["error"] = sanitizeWecomErr(hsErr)
+	}
+	c.JSON(http.StatusOK, gin.H{"chunks": chunks, "sign_findings": out, "handshake": hs})
+}
+
 // HdhiveDiag GET /hdhive/diag?path=/tmdb/movie/1930
 // 影巢页面为前端渲染，资源列表由浏览器调内部接口加载。此接口抓取
 // 页面与其引用的 JS chunk，挖出隐藏的 API 端点与 action ID 供适配。

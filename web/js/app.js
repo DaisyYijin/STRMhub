@@ -2903,10 +2903,10 @@ async function hdhiveSearch() {
 }
 
 // 空结果时抓取页面与其 JS 里的隐藏 API，复制给开发者用于适配
-async function hdhiveDiag() {
-  const path = '/tmdb/' + hdhiveCur.type + '/' + hdhiveCur.id;
+async function hdhiveDiag(mode) {
+  const path = mode === 'sign' ? '/hdhive/diag/sign' : '/hdhive/diag?path=' + encodeURIComponent('/tmdb/' + hdhiveCur.type + '/' + hdhiveCur.id);
   try {
-    const d = await api('/hdhive/diag?path=' + encodeURIComponent(path));
+    const d = await api(path);
     const text = JSON.stringify(d);
     // HTTP 环境没有 navigator.clipboard，依次降级：execCommand → 弹窗手动复制
     let copied = false;
@@ -2966,7 +2966,10 @@ async function hdhiveSearchSite() {
     hdhiveSortKey = '';
     hdhiveRenderList();
   } catch (e) {
-    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+      + (e.message && e.message.indexOf('签名') >= 0
+        ? ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag(\'sign\')">复制签名诊断</a>'
+        : '');
   }
 }
 

@@ -384,6 +384,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/hdhive/logout", h.HdhiveLogout)
 		protected.GET("/hdhive/resources", h.HdhiveResources)
 		protected.GET("/hdhive/diag", h.HdhiveDiag)
+		protected.GET("/hdhive/diag/sign", h.HdhiveDiagSign)
 		protected.POST("/hdhive/unlock", h.HdhiveUnlock)
 
 		// 离线下载（磁力/ed2k/HTTP）
