@@ -17,8 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/chromedp"
 )
 
 // hdhiveChromePath 探测可用的 Chrome/Chromium 可执行文件（容器内为 alpine chromium）
@@ -80,6 +81,9 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("window-size", "1440,900"),
 		chromedp.Flag("lang", "zh-CN"),
+		// 反无头检测：站点安全层会检查自动化/无头指纹（navigator.webdriver 等）
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("accept-lang", "zh-CN,zh;q=0.9,en;q=0.8"),
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancelAlloc()
@@ -153,6 +157,18 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		if err := chromedp.Run(ctx, network.Enable()); err != nil {
 			return fmt.Errorf("network.Enable: %w", err)
 		}
+		// 无头指纹伪装（document start 注入，先于站点 JS 执行）
+		if _, err := page.AddScriptToEvaluateOnNewDocument(hdhiveStealthJS).Do(ctx); err != nil {
+			return fmt.Errorf("注入伪装脚本: %w", err)
+		}
+		// sec-ch-ua 客户端提示头伪装成正常 Chrome（无头模式默认带 HeadlessChrome 品牌）
+		if err := chromedp.Run(ctx, network.SetExtraHTTPHeaders(network.Headers{
+			"sec-ch-ua":         "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
+			"sec-ch-ua-mobile":  "?0",
+			"sec-ch-ua-platform": "\"Windows\"",
+		})); err != nil {
+			return fmt.Errorf("设置客户端提示头: %w", err)
+		}
 		log.Printf("[影巢] ▶ 浏览器就绪（%s），注入 Cookie %d 条", time.Since(t0).Round(time.Millisecond), len(cfg.Cookies))
 		if len(cfg.Cookies) > 0 {
 			err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
@@ -210,7 +226,10 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 		if err := chromedp.Run(ctx, chromedp.OuterHTML("html", &html)); err != nil {
 			return fmt.Errorf("读取渲染结果: %w", err)
 		}
-		log.Printf("[影巢] ▶ 渲染完成：HTML %d 字节，接口响应 %d 字节", len(html), len(apiHit))
+		var fp string
+		_ = chromedp.Run(ctx, chromedp.Evaluate(
+			`'webdriver='+navigator.webdriver+' plugins='+(navigator.plugins?navigator.plugins.length:'x')+' ua='+navigator.userAgent.slice(0,90)`, &fp))
+		log.Printf("[影巢] ▶ 渲染完成：HTML %d 字节，接口响应 %d 字节，指纹[%s]", len(html), len(apiHit), fp)
 		return nil
 	}()
 	if runErr != nil {
@@ -222,3 +241,30 @@ func hdhiveBrowserFetch(cfg *hdhiveCfg, pagePath, apiPath, waitExpr string, wait
 	defer mu.Unlock()
 	return &hdhiveBrowserResult{APIBody: apiHit, HTML: html, Reqs: reqLog, Text: truncateStr(text, 1200)}, nil
 }
+
+// hdhiveStealthJS 抹掉无头 Chromium 的常见指纹（webdriver/插件/语言/WebGL 渲染器），
+// 站点安全层在 JS 层做浏览器环境检测
+const hdhiveStealthJS = `
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+if (!window.chrome) { window.chrome = {runtime: {}, loadTimes: () => ({}), csi: () => ({})}; }
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+try {
+  Object.defineProperty(navigator, 'plugins', {get: () => {
+    const mk = (n) => ({name: n, filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1});
+    return [mk('Chrome PDF Viewer'), mk('Chromium PDF Viewer'), mk('Microsoft Edge PDF Viewer'), mk('WebKit built-in PDF')];
+  }});
+} catch (e) {}
+try {
+  const origQuery = navigator.permissions.query.bind(navigator.permissions);
+  navigator.permissions.query = (p) => p && p.name === 'notifications'
+    ? Promise.resolve({state: Notification.permission}) : origQuery(p);
+} catch (e) {}
+try {
+  const proto = WebGLRenderingContext.prototype, orig = proto.getParameter;
+  proto.getParameter = function(p) {
+    if (p === 37445) return 'Intel Inc.';
+    if (p === 37446) return 'Intel Iris OpenGL Engine';
+    return orig.apply(this, [p]);
+  };
+} catch (e) {}
+`

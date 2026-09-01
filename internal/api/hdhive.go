@@ -1144,6 +1144,15 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "影巢登录已失效，请重新登录"})
 		return
 	}
+	// 站点安全层识别出无头浏览器（页面直接渲染拦截提示）
+	if strings.Contains(res.Text, "未通过安全检测") || strings.Contains(res.Text, "无法完成安全验证") {
+		log.Printf("[影巢] ✗ 站点安全层拦截了无头浏览器（安全检测未通过），页面文本: %s", truncateStr(res.Text, 200))
+		for _, r := range res.Reqs {
+			log.Printf("[影巢]   · 请求 %d %s", r.Status, r.URL)
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢站点安全层拦截了无头浏览器（浏览器环境检测未通过），请把日志发开发者"})
+		return
+	}
 	// 优先用截获的接口 JSON
 	if items := hdhiveParseResourceListJSON([]byte(apiBody)); len(items) > 0 {
 		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
