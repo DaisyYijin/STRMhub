@@ -1020,22 +1020,38 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 		}
 		chunks = append(chunks, src)
 	}
-	// 抓前 10 个 chunk，挖其中的 API 路径与 login/resource 相关 action
+	// 扫描全部 chunk：API 路径、action ID、关键词上下文摘要
 	type chunkFinding struct {
 		URL     string   `json:"url"`
+		Status  string   `json:"status,omitempty"`
+		Size    int      `json:"size,omitempty"`
 		APIs    []string `json:"apis,omitempty"`
 		Actions []string `json:"actions,omitempty"`
+		Excerpts []string `json:"excerpts,omitempty"`
+	}
+	excerptAround := func(body, kw string) string {
+		idx := strings.Index(strings.ToLower(body), strings.ToLower(kw))
+		if idx < 0 {
+			return ""
+		}
+		start, end := idx-150, idx+260
+		if start < 0 {
+			start = 0
+		}
+		if end > len(body) {
+			end = len(body)
+		}
+		return fmt.Sprintf("[%s] …%s…", kw, strings.ReplaceAll(body[start:end], "\n", " "))
 	}
 	var findings []chunkFinding
-	for i, src := range chunks {
-		if i >= 10 {
-			break
-		}
+	keywords := []string{"resource", "tmdb", "customer", "fetch("}
+	for _, src := range chunks {
 		_, body, _, err := hdhiveDirect(cfg, "GET", src, "", map[string]string{"Accept": "*/*"})
 		if err != nil {
+			findings = append(findings, chunkFinding{URL: src, Status: "fetch-err: " + sanitizeWecomErr(err)})
 			continue
 		}
-		f := chunkFinding{URL: src}
+		f := chunkFinding{URL: src, Size: len(body)}
 		apiSet := map[string]bool{}
 		for _, m := range regexp.MustCompile(`/api/[a-zA-Z0-9/_.?=&-]+`).FindAllString(body, -1) {
 			apiSet[strings.TrimSuffix(m, "&")] = true
@@ -1046,7 +1062,14 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 		for _, m := range regexp.MustCompile(`"([a-f0-9]{40,64})"[\s\S]{0,300}?"(login|resource|checkin|sign)"`).FindAllStringSubmatch(body, -1) {
 			f.Actions = append(f.Actions, m[1]+"("+m[2]+")")
 		}
-		if len(f.APIs) > 0 || len(f.Actions) > 0 {
+		seen := map[string]bool{}
+		for _, kw := range keywords {
+			if e := excerptAround(body, kw); e != "" && !seen[e] {
+				seen[e] = true
+				f.Excerpts = append(f.Excerpts, e)
+			}
+		}
+		if len(f.APIs) > 0 || len(f.Actions) > 0 || len(f.Excerpts) > 0 {
 			findings = append(findings, f)
 		}
 	}
@@ -1060,6 +1083,7 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 		"api_refs":       apiRefs,
 		"resource_refs":  len(regexp.MustCompile(`/resource/115/`).FindAllString(pageHTML, -1)),
 		"chunk_count":    len(chunks),
+		"chunks":         chunks,
 		"chunk_findings": findings,
 	})
 }
