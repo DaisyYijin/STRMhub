@@ -989,6 +989,81 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
 
+// HdhiveDiag GET /hdhive/diag?path=/tmdb/movie/1930
+// 影巢页面为前端渲染，资源列表由浏览器调内部接口加载。此接口抓取
+// 页面与其引用的 JS chunk，挖出隐藏的 API 端点与 action ID 供适配。
+func (h *Handler) HdhiveDiag(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	path := c.DefaultQuery("path", "/tmdb/movie/1930")
+	pageHTML, finalURL, err := h.hdhivePage(cfg, path)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	title := ""
+	if m := regexp.MustCompile(`<title>([^<]{0,120})`).FindStringSubmatch(pageHTML); m != nil {
+		title = m[1]
+	}
+	buildID := ""
+	if m := regexp.MustCompile(`"buildId":"([^"]+)"`).FindStringSubmatch(pageHTML); m != nil {
+		buildID = m[1]
+	}
+	apiRefs := map[string]bool{}
+	for _, m := range regexp.MustCompile(`/api/[a-zA-Z0-9/_.?=&-]+`).FindAllString(pageHTML, -1) {
+		apiRefs[strings.TrimSuffix(m, "&")] = true
+	}
+	var chunks []string
+	for _, m := range reHdhiveScriptSrc.FindAllStringSubmatch(pageHTML, 40) {
+		src := m[1]
+		if !strings.HasPrefix(src, "http") {
+			src = cfg.BaseURL + src
+		}
+		chunks = append(chunks, src)
+	}
+	// 抓前 10 个 chunk，挖其中的 API 路径与 login/resource 相关 action
+	type chunkFinding struct {
+		URL     string   `json:"url"`
+		APIs    []string `json:"apis,omitempty"`
+		Actions []string `json:"actions,omitempty"`
+	}
+	var findings []chunkFinding
+	for i, src := range chunks {
+		if i >= 10 {
+			break
+		}
+		_, body, _, err := hdhiveDirect(cfg, "GET", src, "", map[string]string{"Accept": "*/*"})
+		if err != nil {
+			continue
+		}
+		f := chunkFinding{URL: src}
+		apiSet := map[string]bool{}
+		for _, m := range regexp.MustCompile(`/api/[a-zA-Z0-9/_.?=&-]+`).FindAllString(body, -1) {
+			apiSet[strings.TrimSuffix(m, "&")] = true
+		}
+		for k := range apiSet {
+			f.APIs = append(f.APIs, k)
+		}
+		for _, m := range regexp.MustCompile(`"([a-f0-9]{40,64})"[\s\S]{0,300}?"(login|resource|checkin|sign)"`).FindAllStringSubmatch(body, -1) {
+			f.Actions = append(f.Actions, m[1]+"("+m[2]+")")
+		}
+		if len(f.APIs) > 0 || len(f.Actions) > 0 {
+			findings = append(findings, f)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"path":           path,
+		"final_url":      finalURL,
+		"page_len":       len(pageHTML),
+		"login_wall":     hdhiveLoginWall(pageHTML),
+		"title":          title,
+		"build_id":       buildID,
+		"api_refs":       apiRefs,
+		"resource_refs":  len(regexp.MustCompile(`/resource/115/`).FindAllString(pageHTML, -1)),
+		"chunk_count":    len(chunks),
+		"chunk_findings": findings,
+	})
+}
+
 // ==================== 解锁与转存 ====================
 
 // hdhiveTrimLink 去掉链接尾部被 HTML/正文带入的标点

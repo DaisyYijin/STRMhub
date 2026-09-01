@@ -2902,6 +2902,20 @@ async function hdhiveSearch() {
   }
 }
 
+// 空结果时抓取页面与其 JS 里的隐藏 API，复制给开发者用于适配
+async function hdhiveDiag() {
+  const path = '/tmdb/' + hdhiveCur.type + '/' + hdhiveCur.id;
+  let text = '';
+  try {
+    const d = await api('/hdhive/diag?path=' + encodeURIComponent(path));
+    text = JSON.stringify(d);
+    await navigator.clipboard.writeText(text);
+    toast('诊断信息已复制，请粘贴发给开发者');
+  } catch (e) {
+    toast('诊断失败：' + e.message);
+  }
+}
+
 let hdhiveCur = { title: '', type: 'movie', id: 0 };
 let hdhiveItems = [];
 let hdhiveSortKey = '';
@@ -2927,7 +2941,8 @@ async function hdhiveSearchSite() {
     const d = await api('/hdhive/resources?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id);
     const items = d.data || [];
     if (!items.length) {
-      body.innerHTML = '<span style="color:var(--text-3)">影巢站内没有找到「' + esc(hdhiveCur.title) + '」的资源</span>';
+      body.innerHTML = '<span style="color:var(--text-3)">影巢站内没有找到「' + esc(hdhiveCur.title) + '」的资源</span>'
+        + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
       return;
     }
     hdhiveItems = items;
