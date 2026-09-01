@@ -152,14 +152,14 @@ function showPage(id) {
     loadConfigs();
     updateStrmExample();
   }
-  if (id === 'config-accounts') loadAccount();
+  if (id === 'config-accounts') { loadAccount(); pan123LoadUI(); }
   if (id === 'config-extension') ck115LoadPage();
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
     loadWash();
   }
-  if (id === 'sync') { loadConfigs(); previewCron(); }
+  if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'media-transfer') { loadHdhivePage(); gyLoadPage(); }
@@ -1485,61 +1485,65 @@ async function tgSaveLink(el) {
 }
 
 // ==================== 123 云盘（官方开放平台） ====================
-function pan123ModalClose() { document.getElementById('pan123-modal').style.display = 'none'; }
+// 凭证在「账号管理 → 123 账号」，扫描配置在「数据同步 → 123 账号同步」，
+// 两处共用同一份 setting（任一页保存都会带上另一页当前填写的值）
 
-async function pan123Config() {
-  document.getElementById('pan123-modal').style.display = 'flex';
+function pan123Gather() {
+  return {
+    client_id: val('pan123-client-id').trim(),
+    client_secret: val('pan123-client-secret').trim(),
+    target_id: val('pan123-target').trim(),
+    local_path: val('pan123-local').trim(),
+  };
+}
+
+async function pan123LoadUI() {
   try {
     const d = await api('/pan123/config');
     const c = d.data || {};
     setVal('pan123-client-id', c.client_id || '');
     setVal('pan123-client-secret', c.client_secret || '');
     setVal('pan123-target', c.target_id || '');
-    setVal('pan123-local', c.local_path || '');
+    setVal('pan123-local', c.local_path || '/media');
   } catch (e) { /* 首次为空 */ }
 }
 
+function pan123GoAccount() {
+  showPage('config-accounts');
+  switchTab('page-config-accounts', 'acc-123');
+}
+
 async function pan123Save(btn) {
-  const body = {
-    client_id: val('pan123-client-id').trim(),
-    client_secret: val('pan123-client-secret').trim(),
-    target_id: val('pan123-target').trim(),
-    local_path: val('pan123-local').trim(),
-  };
-  if (!body.client_id || !body.client_secret) { toast('请先填写 clientID/clientSecret'); return; }
   btn.disabled = true;
   try {
-    await api('/pan123/config', { method: 'POST', body: JSON.stringify(body) });
+    await api('/pan123/config', { method: 'POST', body: JSON.stringify(pan123Gather()) });
     toast('配置已保存');
-    pan123ModalClose();
   } catch (e) { toast('保存失败：' + e.message); }
   btn.disabled = false;
 }
 
+async function pan123SyncSave(btn) { await pan123Save(btn); }
+
 async function pan123Test(btn) {
   // 先保存再测试：测试用的是服务端已保存的凭证
-  const saveBtn = btn;
-  const body = {
-    client_id: val('pan123-client-id').trim(),
-    client_secret: val('pan123-client-secret').trim(),
-    target_id: val('pan123-target').trim(),
-    local_path: val('pan123-local').trim(),
-  };
-  if (!body.client_id || !body.client_secret) { toast('请先填写 clientID/clientSecret'); return; }
+  if (!val('pan123-client-id').trim() || !val('pan123-client-secret').trim()) {
+    toast('请先填写 clientID/clientSecret');
+    return;
+  }
   const result = document.getElementById('pan123-test-result');
-  saveBtn.disabled = true;
+  btn.disabled = true;
   result.textContent = '测试中…';
   result.style.color = 'var(--text-3)';
   try {
-    await api('/pan123/config', { method: 'POST', body: JSON.stringify(body) });
+    await api('/pan123/config', { method: 'POST', body: JSON.stringify(pan123Gather()) });
     const d = await api('/pan123/test', { method: 'POST' });
     result.textContent = '✓ ' + (d.message || '连接成功');
-    result.style.color = 'var(--ok, #1f8a4c)';
+    result.style.color = '#1f8a4c';
   } catch (e) {
     result.textContent = '✗ ' + e.message;
     result.style.color = 'var(--danger)';
   }
-  saveBtn.disabled = false;
+  btn.disabled = false;
 }
 
 async function pan123CheckDir(btn) {
@@ -1551,7 +1555,7 @@ async function pan123CheckDir(btn) {
   try {
     const d = await api('/pan123/checkdir', { method: 'POST', body: JSON.stringify({ id }) });
     result.textContent = '✓ ' + (d.message || '目录有效');
-    result.style.color = 'var(--ok, #1f8a4c)';
+    result.style.color = '#1f8a4c';
   } catch (e) {
     result.textContent = '✗ ' + e.message;
     result.style.color = 'var(--danger)';
