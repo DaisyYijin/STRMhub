@@ -957,6 +957,147 @@ func hdhiveSizeBytes(s string) int64 {
 	return int64(v * mult)
 }
 
+// hdhiveParseResourceListJSON 兼容多种响应壳的资源数组提取
+func hdhiveParseResourceListJSON(body []byte) []map[string]any {
+	var arr []map[string]any
+	if json.Unmarshal(body, &arr) == nil && arr != nil {
+		return arr
+	}
+	var obj struct {
+		Success *bool           `json:"success"`
+		State   *bool           `json:"state"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &obj) != nil {
+		return nil
+	}
+	if obj.Data == nil {
+		return nil
+	}
+	if json.Unmarshal(obj.Data, &arr) == nil && arr != nil {
+		return arr
+	}
+	var inner map[string]any
+	if json.Unmarshal(obj.Data, &inner) == nil {
+		for _, k := range []string{"resources", "list", "items"} {
+			if children, ok := inner[k].([]any); ok {
+				var out []map[string]any
+				for _, it := range children {
+					if m, ok := it.(map[string]any); ok {
+						out = append(out, m)
+					}
+				}
+				if out != nil {
+					return out
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// hdhiveResourceLess JSON 资源项推荐序：115 优先 → 免积分优先 → 4K/1080P → 标题
+func hdhiveResourceLess(a, b map[string]any) bool {
+	getStr := func(m map[string]any, keys ...string) string {
+		for _, k := range keys {
+			if s, ok := m[k].(string); ok && s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	getInt := func(m map[string]any, keys ...string) int64 {
+		for _, k := range keys {
+			if f, ok := m[k].(float64); ok {
+				return int64(f)
+			}
+		}
+		return 0
+	}
+	panRank := func(m map[string]any) int {
+		switch strings.ToLower(getStr(m, "pan_type", "drive_type", "netdisk", "cloud_type")) {
+		case "115":
+			return 0
+		case "quark", "夸克":
+			return 1
+		}
+		return 2
+	}
+	resRank := func(m map[string]any) int {
+		for _, r := range []any{m["video_resolution"]} {
+			if arr, ok := r.([]any); ok {
+				for _, v := range arr {
+					s := strings.ToUpper(fmt.Sprint(v))
+					if strings.Contains(s, "4K") || strings.Contains(s, "2160") {
+						return 0
+					}
+					if strings.Contains(s, "1080") {
+						return 1
+					}
+				}
+			}
+		}
+		return 2
+	}
+	if c := panRank(a) - panRank(b); c != 0 {
+		return c < 0
+	}
+	pa, pb := getInt(a, "unlock_points", "points"), getInt(b, "unlock_points", "points")
+	if (pa > 0) != (pb > 0) {
+		return pa == 0
+	}
+	if c := resRank(a) - resRank(b); c != 0 {
+		return c < 0
+	}
+	return getStr(a, "title", "name") < getStr(b, "title", "name")
+}
+
+// hdhiveFetchResourcesJSON 直连资源 JSON 接口（页面资源列表的数据源）。
+// 返回 items/原始响应/是否要求请求签名
+func (h *Handler) hdhiveFetchResourcesJSON(cfg *hdhiveCfg, mediaType, tmdbID string) ([]map[string]any, string, bool) {
+	urls := []string{
+		cfg.BaseURL + "/api/customer/resources?type=" + mediaType + "&tmdb_id=" + tmdbID,
+		cfg.BaseURL + "/api/customer/resources?media_type=" + mediaType + "&tmdb_id=" + tmdbID,
+		cfg.BaseURL + "/api/customer/resources?tmdb_id=" + tmdbID,
+	}
+	sigRequired := false
+	var lastRaw string
+	for _, u := range urls {
+		status, body, resp, err := hdhiveDirect(cfg, "GET", u, "", nil)
+		if err != nil {
+			continue
+		}
+		if (status == 301 || status == 302 || status == 307 || status == 308) && resp != nil {
+			if loc := resp.Header.Get("Location"); loc != "" {
+				if !strings.HasPrefix(loc, "http") {
+					loc = cfg.BaseURL + loc
+				}
+				status, body, _, err = hdhiveDirect(cfg, "GET", loc, "", nil)
+				if err != nil {
+					continue
+				}
+			}
+		}
+		lastRaw = fmt.Sprintf("HTTP %d: %s", status, truncateStr(body, 200))
+		if status == 401 && (strings.Contains(body, "signature") || strings.Contains(body, "签名")) {
+			sigRequired = true
+			continue
+		}
+		if status >= 400 {
+			continue
+		}
+		if items := hdhiveParseResourceListJSON([]byte(body)); items != nil {
+			return items, body, false
+		}
+	}
+	if sigRequired {
+		log.Printf("[影巢] ○ 资源接口要求请求签名（missing_signature），直连 JSON 不可用")
+	} else if lastRaw != "" {
+		log.Printf("[影巢] ○ 资源 JSON 接口未解析出列表，最后响应: %s", lastRaw)
+	}
+	return nil, "", sigRequired
+}
+
 // HdhiveResources GET /hdhive/resources?media_type=movie|tv&tmdb_id=123
 func (h *Handler) HdhiveResources(c *gin.Context) {
 	cfg := loadHdhiveCfg()
@@ -970,6 +1111,18 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 tmdb_id"})
 		return
 	}
+	// 优先直连页面背后的资源 JSON 接口
+	if items, raw, sigRequired := h.hdhiveFetchResourcesJSON(cfg, mediaType, tmdbID); items != nil {
+		sort.Slice(items, func(i, j int) bool { return hdhiveResourceLess(items[i], items[j]) })
+		c.JSON(http.StatusOK, gin.H{"data": items, "source": "api"})
+		return
+	} else if sigRequired {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢资源接口要求请求签名（站点安全层），暂时无法直连，请把日志发开发者"})
+		return
+	} else if raw != "" {
+		log.Printf("[影巢] ○ 资源 JSON 直连失败样例: %s", truncateStr(raw, 200))
+	}
+
 	pageHTML, finalURL, err := h.hdhivePage(cfg, "/tmdb/"+mediaType+"/"+url.PathEscape(tmdbID))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
