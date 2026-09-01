@@ -528,22 +528,48 @@ func (h *Handler) hdhiveServerActionLogin(cfg *hdhiveCfg) (bool, string) {
 }
 
 // hdhiveCheckLogin 校验登录态（GET /api/customer/user/info）
+// hdhiveCheckLogin 校验登录态：优先用户信息接口（响应壳多版本兼容），
+// 接口不存在时退化为个人页跳转探测（未登录访问 /user 会被重定向到 /login）
 func (h *Handler) hdhiveCheckLogin(cfg *hdhiveCfg) (bool, map[string]any) {
-	if len(cfg.Cookies) == 0 {
+	if cfg.Cookies["token"] == "" {
 		return false, nil
 	}
+	// 1. 用户信息接口（success/state 两种壳、平铺数据都兼容）
 	status, body, _, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/api/customer/user/info", "", nil)
-	if err != nil || status >= 400 || hdhiveIsCFBlock(status, body) {
-		return false, nil
+	if err == nil && status < 400 && !hdhiveIsCFBlock(status, body) {
+		var out struct {
+			Success *bool          `json:"success"`
+			State   *bool          `json:"state"`
+			Data    map[string]any `json:"data"`
+		}
+		if json.Unmarshal([]byte(body), &out) == nil {
+			ok := (out.Success != nil && *out.Success) || (out.State != nil && *out.State)
+			if ok && out.Data != nil {
+				return true, out.Data
+			}
+		}
+		// 无壳平铺返回：出现明显用户字段即认为有效
+		var flat map[string]any
+		if json.Unmarshal([]byte(body), &flat) == nil {
+			for _, k := range []string{"id", "user_id", "username", "nickname", "email"} {
+				if _, exist := flat[k]; exist {
+					return true, flat
+				}
+			}
+		}
 	}
-	var out struct {
-		Success bool           `json:"success"`
-		Data    map[string]any `json:"data"`
+	// 2. 个人页跳转探测：未登录会被站点重定向到 /login
+	status, body, resp, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/user", "", nil)
+	if err == nil && !hdhiveIsCFBlock(status, body) {
+		loc := ""
+		if resp != nil {
+			loc = resp.Header.Get("Location")
+		}
+		if status < 400 && !strings.Contains(loc, "/login") {
+			return true, nil
+		}
 	}
-	if json.Unmarshal([]byte(body), &out) != nil || !out.Success || out.Data == nil {
-		return false, nil
-	}
-	return true, out.Data
+	return false, nil
 }
 
 // HdhiveLogin POST /hdhive/login {username?, password?}（空则用已保存配置）
@@ -631,21 +657,21 @@ func (h *Handler) HdhiveLogin(c *gin.Context) {
 		return
 	}
 
-	// 校验登录态并缓存账号信息
+	// 校验登录态并缓存账号信息。校验接口可能随站点改版不可用：
+	// Server Action 已发下 token 会话即视为登录成功，不因校验失败而阻断
 	ok, user := h.hdhiveCheckLogin(cfg)
-	if !ok {
-		hdhiveSave(cfg)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "登录后校验失败：Cookie 未生效（站点可能改版或账号受限），请重试"})
-		return
-	}
 	cfg.LoginAt = time.Now().Format("2006-01-02 15:04")
 	if user != nil {
 		b, _ := json.Marshal(user)
 		cfg.UserJSON = string(b)
 	}
 	hdhiveSave(cfg)
-	log.Printf("[影巢] ✓ 账号 %s 登录成功", cfg.Username)
-	c.JSON(http.StatusOK, gin.H{"message": "登录成功", "user": user, "login_at": cfg.LoginAt})
+	log.Printf("[影巢] ✓ 账号 %s 登录成功（会话校验 %v）", cfg.Username, ok)
+	msg := "登录成功"
+	if !ok {
+		msg = "登录成功（会话已保存。账号信息接口暂不可用，不影响搜索与转存）"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": msg, "user": user, "login_at": cfg.LoginAt, "verified": ok})
 }
 
 // HdhiveLogout POST /hdhive/logout → 清除会话
@@ -664,6 +690,10 @@ func (h *Handler) HdhiveLogout(c *gin.Context) {
 func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 	cfg := loadHdhiveCfg()
 	loggedIn, user := h.hdhiveCheckLogin(cfg)
+	if !loggedIn {
+		// 校验接口可能改版：持有 token 会话即视为已登录（搜索/转存以实际会话为准）
+		loggedIn = cfg.Cookies["token"] != ""
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"base_url":     cfg.BaseURL,
 		"username":     cfg.Username,
