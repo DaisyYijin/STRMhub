@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,10 +117,10 @@ func (h *Handler) WecomCallback(c *gin.Context) {
 	// 5 秒内必须应答：指令异步执行 + 异步回复
 	switch {
 	case msg.MsgType == "text":
-		go h.wecomHandleCommand(strings.TrimSpace(msg.Content))
+		go h.wecomHandleCommand(msg.FromUser, strings.TrimSpace(msg.Content))
 	case msg.MsgType == "event" && msg.Event == "click":
 		// 聊天底栏菜单按钮（wecomMenuCreate 创建）→ key 即指令文本
-		go h.wecomHandleCommand(strings.TrimSpace(msg.EventKey))
+		go h.wecomHandleCommand(msg.FromUser, strings.TrimSpace(msg.EventKey))
 	}
 	c.String(http.StatusOK, "success")
 }
@@ -206,7 +207,7 @@ func WecomMenuAutoEnsure() {
 }
 
 // wecomHandleCommand 指令路由（异步执行，结果用应用消息推回）
-func (h *Handler) wecomHandleCommand(text string) {
+func (h *Handler) wecomHandleCommand(user, text string) {
 	if text == "" {
 		return
 	}
@@ -219,6 +220,12 @@ func (h *Handler) wecomHandleCommand(text string) {
 		h.wecomHandleLink(strings.TrimSpace(text), reply)
 		return
 	}
+	// 观影会话中的序号回复（1-2 位纯数字）：选片 / 选种子
+	if len(text) <= 2 && regexpPureDigits.MatchString(text) && wecomGySessionGet(user) != nil {
+		n, _ := strconv.Atoi(text)
+		h.wecomHandleGyPick(user, n, reply)
+		return
+	}
 	switch {
 	case lower == "帮助" || lower == "help" || lower == "?":
 		reply(
@@ -226,6 +233,7 @@ func (h *Handler) wecomHandleCommand(text string) {
 			"直接发链接 — 磁力/ed2k/HTTP 提交离线下载；115 分享链接（连同提取码一起发）自动转存并整理入库",
 			"状态 — 任务状态 + 转存目录 + 离线任务",
 			"搜索 <片名> — TMDB 搜片",
+			"观影 <片名> — TMDB 选片 → 观影搜资源（大小/做种/中字）→ 回序号离线下载",
 			"整理 / 同步 / 补全 — 手动触发整理、增量同步、画质补全",
 		)
 
@@ -304,6 +312,17 @@ func (h *Handler) wecomHandleCommand(text string) {
 			lines = append(lines, r)
 		}
 		reply(lines...)
+
+	case strings.HasPrefix(text, "观影"), strings.HasPrefix(lower, "gy "):
+		kw := strings.TrimSpace(strings.TrimPrefix(text, "观影"))
+		if strings.HasPrefix(lower, "gy ") {
+			kw = strings.TrimSpace(text[3:])
+		}
+		if kw == "" {
+			reply("用法：观影 <片名>，例如：观影 蜘蛛侠")
+			return
+		}
+		h.wecomHandleGySearch(user, kw, reply)
 
 	case lower == "检查更新":
 		go func() {

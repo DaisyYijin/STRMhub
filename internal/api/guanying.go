@@ -594,45 +594,76 @@ func gyAutoLogin(cfg *gyCfg) error {
 // GySearch GET /guanying/search?query=xxx → 解析种子搜索结果（type=4）。
 // 注意用裸请求（不带导航头）：站点对导航请求回完整渲染页，对 XHR/裸请求
 // 回「Loading...」壳——壳里内嵌的 _obj.search 就是本页全部数据（JSON）
+// gySearchTorrents 搜索观影种子（会话失效自动重登一次）。
+// 返回种子列表和原始页面（调试用）
+func gySearchTorrents(query, zy string) ([]gin.H, string, error) {
+	cfg := loadGyCfg()
+	client := gyEnsureClient(cfg)
+	searchPath := "/search?q=" + url.QueryEscape(query) + "&type=4"
+	if zy != "" {
+		searchPath += "&ziyuan=" + url.QueryEscape(zy)
+	}
+	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, searchPath, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("连接观影失败: %w（站点换域名时请更新站点地址）", err)
+	}
+	if gyIsNoLogin(body) {
+		if err := gyAutoLogin(cfg); err != nil {
+			return nil, body, fmt.Errorf("观影需要登录（站点设置里填写账号密码，或登录已失效）: %w", err)
+		}
+		client = gyEnsureClient(cfg)
+		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, searchPath, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("重登后连接观影失败: %w", err)
+		}
+		if gyIsNoLogin(body) {
+			return nil, body, fmt.Errorf("重登后仍未通过（账号可能被封或需要验证码），请检查账号")
+		}
+	}
+	return gyExtractTorrents(body), body, nil
+}
+
+// gyFetchMagnet 种子详情页提取磁力链接（会话失效自动重登一次）
+func gyFetchMagnet(path string) (string, error) {
+	cfg := loadGyCfg()
+	client := gyEnsureClient(cfg)
+	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, path, nil)
+	if err != nil {
+		return "", fmt.Errorf("连接观影失败: %w", err)
+	}
+	if gyIsNoLogin(body) {
+		if err := gyAutoLogin(cfg); err != nil {
+			return "", fmt.Errorf("登录已失效: %w", err)
+		}
+		client = gyEnsureClient(cfg)
+		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, path, nil)
+		if err != nil {
+			return "", fmt.Errorf("重登后连接观影失败: %w", err)
+		}
+	}
+	if m := reGyMagnet.FindStringSubmatch(body); m != nil {
+		return m[0], nil
+	}
+	log.Printf("[观影] ✗ 详情页未找到磁力链接（path=%s, len=%d）", path, len(body))
+	return "", fmt.Errorf("详情页未找到磁力链接（站点可能已改版，请把这条日志发给开发者）")
+}
+
 func (h *Handler) GySearch(c *gin.Context) {
 	q := strings.TrimSpace(c.Query("query"))
 	if q == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入影视名称"})
 		return
 	}
-	cfg := loadGyCfg()
-	client := gyEnsureClient(cfg)
 	zy := strings.TrimSpace(c.Query("zy")) // 资源分类：空=全部，中字720P/4K/原盘…
-	searchPath := "/search?q=" + url.QueryEscape(q) + "&type=4"
-	if zy != "" {
-		searchPath += "&ziyuan=" + url.QueryEscape(zy)
-	}
-	fetchSearch := func() (string, error) {
-		return gyDo(client, cfg.BaseURL, http.MethodGet, searchPath, nil)
-	}
-	body, err := fetchSearch()
+	items, body, err := gySearchTorrents(q, zy)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error() + "（站点换域名时请更新站点地址）"})
+		if strings.Contains(err.Error(), "观影需要登录") || strings.Contains(err.Error(), "重登后仍未通过") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	// 会话失效 → 自动重登一次
-	if gyIsNoLogin(body) {
-		if err := gyAutoLogin(cfg); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "观影需要登录（站点设置里填写账号密码，或登录已失效）: " + err.Error()})
-			return
-		}
-		client = gyEnsureClient(cfg)
-		body, err = fetchSearch()
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
-			return
-		}
-		if gyIsNoLogin(body) {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "重登后仍未通过（账号可能被封或需要验证码），请检查账号"})
-			return
-		}
-	}
-	items := gyExtractTorrents(body)
 	// 0 条时附带页面特征：前端显示出来，方便远程定位（空壳/受限/正常页一眼区分）
 	debug := gin.H{}
 	if len(items) == 0 {
@@ -671,42 +702,25 @@ func (h *Handler) GyResources(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少条目路径"})
 		return
 	}
-	cfg := loadGyCfg()
-	client := gyEnsureClient(cfg)
-	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
+	magnet, err := gyFetchMagnet(p)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "连接观影失败: " + err.Error()})
+		if strings.Contains(err.Error(), "登录已失效") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		}
 		return
-	}
-	if gyIsNoLogin(body) {
-		if err := gyAutoLogin(cfg); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已失效: " + err.Error()})
-			return
-		}
-		client = gyEnsureClient(cfg)
-		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, p, nil)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "重登后连接观影失败: " + err.Error()})
-			return
-		}
-	}
-	magnet := ""
-	if m := reGyMagnet.FindStringSubmatch(body); m != nil {
-		magnet = m[0]
 	}
 	title := ""
-	if objStr, ok := gyObjJSON(body, "d"); ok {
-		var d struct {
-			Title string `json:"title"`
+	if body, berr := gyDo(gyEnsureClient(loadGyCfg()), loadGyCfg().BaseURL, http.MethodGet, p, nil); berr == nil {
+		if objStr, ok := gyObjJSON(body, "d"); ok {
+			var d struct {
+				Title string `json:"title"`
+			}
+			if json.Unmarshal([]byte(objStr), &d) == nil {
+				title = d.Title
+			}
 		}
-		if json.Unmarshal([]byte(objStr), &d) == nil {
-			title = d.Title
-		}
-	}
-	if magnet == "" {
-		log.Printf("[观影] ✗ 详情页未找到磁力链接（path=%s, len=%d）", p, len(body))
-		c.JSON(http.StatusBadGateway, gin.H{"error": "详情页未找到磁力链接（站点可能已改版，请把这条日志发给开发者）"})
-		return
 	}
 	log.Printf("[观影] ▣ 提取到磁力链接（%s）", truncateStr(title, 40))
 	c.JSON(http.StatusOK, gin.H{"magnet": magnet, "title": title})

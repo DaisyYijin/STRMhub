@@ -175,7 +175,7 @@ func (h *Handler) OneBotEvent(c *gin.Context) {
 		if admin == "" || sender == admin {
 			text := strings.TrimSpace(ev.RawMessage)
 			if text != "" {
-				go h.wecomHandleCommand(text) // 与企微机器人同一套路由
+				go h.wecomHandleCommand(sender, text) // 与企微机器人同一套路由（sender 作会话隔离键）
 			}
 		}
 	}
