@@ -145,7 +145,7 @@ function showPage(id) {
     loadConfigs();
     updateStrmExample();
   }
-  if (id === 'config-accounts') loadAccount();
+  if (id === 'config-accounts') { loadAccount(); ck115LoadPage(); }
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
@@ -3289,4 +3289,74 @@ function buildGyTabs(zy) {
     html += tab(name, name, typeof n === 'number' ? n : '', gyCurZy === name);
   });
   return '<div id="gy-zy-tabs" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">' + html + '</div>';
+}
+// ==================== 115 每日签到 ====================
+// 每日在设定时间窗口内随机时刻自动签到领积分；也可点「立即签到」手动执行。
+
+function setCk115Enabled(v) {
+  document.querySelectorAll('#ck115-switch .seg-item').forEach(el => {
+    el.classList.toggle('active', String(el.dataset.value) === String(v));
+  });
+}
+
+async function ck115LoadPage() {
+  const st = document.getElementById('ck115-status');
+  try {
+    const d = await api('/115checkin/config');
+    setCk115Enabled(!!d.enabled);
+    document.getElementById('ck115-range').value = d.time_range || '06:00-09:00';
+    if (st) {
+      let html = '';
+      if (!d.enabled) html = '未开启';
+      else if (d.signed_today) html = '<span style="color:var(--success)">✓ 今日已签到</span>'
+        + (d.next_run ? ' · 下次 ' + esc(d.next_run) : '');
+      else html = '今日未签到' + (d.next_run ? ' · 计划 ' + esc(d.next_run) + ' 执行' : '');
+      if (d.last_result) {
+        html += '<br>上次：' + esc(d.last_result) + (d.last_result_at ? '（' + esc(d.last_result_at) + '）' : '');
+      }
+      if (d.status_error) {
+        html += '<br><span style="color:var(--text-3)">状态查询：' + esc(d.status_error) + '</span>';
+      }
+      st.innerHTML = html;
+      st.style.color = '';
+    }
+  } catch (e) {
+    if (st) st.textContent = '✗ ' + e.message;
+  }
+}
+
+async function ck115Save(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    const enableEl = document.querySelector('#ck115-switch .seg-item.active');
+    await api('/115checkin/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        enabled: enableEl ? enableEl.dataset.value === 'true' : false,
+        time_range: document.getElementById('ck115-range').value.trim() || '06:00-09:00',
+      }),
+    });
+    toast('保存成功');
+    await ck115LoadPage();
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function ck115Run(btn) {
+  const st = document.getElementById('ck115-status');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '签到中…';
+  try {
+    const d = await api('/115checkin/run', { method: 'POST' });
+    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '签到成功'); }
+    toast(d.message || '签到成功');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }

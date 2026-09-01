@@ -166,6 +166,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动转存目录守望者（下载完成后 ~1 分钟自动整理）
 	StartTransferWatcher(h)
 
+	// 启动 115 每日签到调度器（配置时间窗口内随机执行）
+	Start115CheckinScheduler(h)
+
 	// 启动离线任务监视器（完成即触发整理；失败告警——磁力不是百分百成功）
 	StartOfflineTaskMonitor(h)
 
@@ -367,6 +370,11 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
+
+		// 115 每日签到（定时窗口随机执行 + 手动签到）
+		protected.GET("/115checkin/config", h.Checkin115GetConfig)
+		protected.POST("/115checkin/config", h.Checkin115SaveConfig)
+		protected.POST("/115checkin/run", h.Checkin115Run)
 
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
