@@ -2857,7 +2857,6 @@ async function hdhiveRevoke(btn) {
 // 站点为 CSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
 // 会话 Cookie 持久化（失效自动重登）。种子搜索 → 磁力提交 115 离线下载，
 // 完成后自动整理入库。
-let gyStatusLoaded = false;
 
 async function gyLoadPage() {
   try {
@@ -2865,26 +2864,33 @@ async function gyLoadPage() {
     document.getElementById('gy-base').value = d.base_url || '';
     document.getElementById('gy-username').value = d.username || '';
     document.getElementById('gy-password').value = d.password || '';
-    gyRenderStatus(d.logged_in, d.has_cookies);
+    gyRenderAuth(d.logged_in);
   } catch (e) { console.error('[观影] 配置回填失败:', e.message); }
 }
 
-function gyRenderStatus(loggedIn, hasCookies) {
+let gyLoggedIn = false;
+
+function gyRenderAuth(loggedIn) {
+  gyLoggedIn = loggedIn;
+  const btn = document.getElementById('gy-auth-btn');
   const el = document.getElementById('gy-login-status');
-  const outBtn = document.getElementById('gy-logout-btn');
-  if (!el) return;
-  if (loggedIn) {
-    el.textContent = '● 已登录';
-    el.style.color = 'var(--success)';
-    if (outBtn) outBtn.style.display = '';
-  } else if (hasCookies) {
-    el.textContent = '○ 会话失效，请重新登录';
-    el.style.color = '#b26a00';
-    if (outBtn) outBtn.style.display = 'none';
+  if (btn) {
+    btn.textContent = loggedIn ? '退出登录' : '登录';
+    btn.classList.toggle('btn-primary', !loggedIn);
+    btn.classList.toggle('btn-warning', loggedIn);
+  }
+  if (el) {
+    el.textContent = loggedIn ? '● 已登录' : '● 未登录';
+    el.style.color = loggedIn ? 'var(--success)' : 'var(--text-3)';
+  }
+}
+
+// 登录/退出共用一个按钮，按当前状态分发
+function gyAuthClick(btn) {
+  if (gyLoggedIn) {
+    gyLogout(btn);
   } else {
-    el.textContent = '● 未登录';
-    el.style.color = 'var(--text-3)';
-    if (outBtn) outBtn.style.display = 'none';
+    gyLogin(btn);
   }
 }
 
@@ -2922,31 +2928,35 @@ async function gyLogin(btn) {
   const username = document.getElementById('gy-username').value.trim();
   const password = document.getElementById('gy-password').value;
   if (!username || !password) { toast('请填写观影账号和密码'); return; }
-  const orig = btn.textContent;
   btn.disabled = true;
-  // PoW 反爬验证需要几秒计算，提示延长等待
-  btn.textContent = '登录中（站点反爬验证约需数秒）…';
+  btn.textContent = '登录中';
   try {
     const d = await api('/guanying/login', {
       method: 'POST',
       body: JSON.stringify({ base_url: document.getElementById('gy-base').value.trim(), username, password }),
     });
     toast(d.message || '登录成功');
-    gyRenderStatus(true, true);
+    gyRenderAuth(true);
   } catch (e) {
     toast(e.message);
+    gyRenderAuth(false);
   } finally {
     btn.disabled = false;
-    btn.textContent = orig;
   }
 }
 
 async function gyLogout(btn) {
+  btn.disabled = true;
+  btn.textContent = '退出中';
   try {
     await api('/guanying/logout', { method: 'POST' });
     toast('已退出登录');
-    gyRenderStatus(false, false);
-  } catch (e) { toast(e.message); }
+    gyRenderAuth(false);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function gyModalOpen(html, title) {
