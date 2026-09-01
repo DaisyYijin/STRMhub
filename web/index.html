@@ -1089,10 +1089,10 @@ av:
         <div class="rule-card rule-card-active">
           <div class="card-status-badge"><span class="status-dot animated"></span></div>
           <div class="rule-header">
-            <div class="rule-title">📅 115 每日签到</div>
+            <div class="rule-title"><span class="icon">✓</span>115 每日签到</div>
             <div class="rule-status"><span class="status-text active">可用</span></div>
           </div>
-          <div class="rule-content"><p>自动完成 115 每日签到领积分（连续签到有加成）。每天在设定时间窗口内随机时刻执行，贴近真人操作；失败自动重试 3 次，结果推送企微/TG 通知。需先在「配置 → 115账号」完成扫码登录。</p></div>
+          <div class="rule-content"><p>按 cron 计划自动签到领积分，结果推送企微/TG。需先在「115账号」扫码登录。</p></div>
           <div class="plugin-preview" id="ck115-result" style="display:none"></div>
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" onclick="ck115Config()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
@@ -1103,10 +1103,10 @@ av:
         <div class="rule-card rule-card-active">
           <div class="card-status-badge"><span class="status-dot animated"></span></div>
           <div class="rule-header">
-            <div class="rule-title">🎬 一键创建 Emby 媒体库</div>
+            <div class="rule-title"><span class="icon">▣</span>一键创建 Emby 媒体库</div>
             <div class="rule-status"><span class="status-text active">可用</span></div>
           </div>
-          <div class="rule-content"><p>扫描本地媒体库的分类目录（如 /媒体库/电影/国产剧），每个二级子目录建成一个同名 Emby 媒体库（库名=子目录名）。默认中文元数据、NFO 与图片保存到媒体文件夹，已存在的同名库自动跳过。</p></div>
+          <div class="rule-content"><p>把媒体库分类目录下的每个二级子目录一键建成同名 Emby 媒体库，已存在的自动跳过。</p></div>
           <div class="plugin-preview" id="emby-lib-result" style="display:none"></div>
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" onclick="embyLibConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
@@ -1117,10 +1117,10 @@ av:
         <div class="rule-card">
           <div class="card-status-badge inactive"><span class="status-dot"></span></div>
           <div class="rule-header">
-            <div class="rule-title">🗂️ ALIST 同步</div>
+            <div class="rule-title"><span class="icon">⇄</span>ALIST 同步</div>
             <div class="rule-status"><span class="status-text">规划中</span></div>
           </div>
-          <div class="rule-content"><p>将 ALIST 网盘文件同步到本地生成 strm 文件，接入更多网盘来源（需关闭 ALIST 的签名，共两处）。</p></div>
+          <div class="rule-content"><p>将 ALIST 网盘文件同步到本地生成 STRM，接入更多网盘来源。</p></div>
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" disabled><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
             <button class="action-button run-button" disabled><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
@@ -1130,10 +1130,10 @@ av:
         <div class="rule-card">
           <div class="card-status-badge inactive"><span class="status-dot"></span></div>
           <div class="rule-header">
-            <div class="rule-title">🧹 115 文件夹清空</div>
+            <div class="rule-title"><span class="icon">✕</span>115 文件夹清空</div>
             <div class="rule-status"><span class="status-text">规划中</span></div>
           </div>
-          <div class="rule-content"><p>一键清空 115 指定文件夹（配合分享同步使用，清空转存目录等待下一批）。</p></div>
+          <div class="rule-content"><p>一键清空 115 指定文件夹，配合分享同步使用。</p></div>
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" disabled><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
             <button class="action-button run-button" disabled><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
@@ -1150,7 +1150,8 @@ av:
   <div class="modal" style="max-width:480px">
     <h3>115 每日签到</h3>
     <div class="form-row"><div class="label">自动签到<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后每天自动签到领积分（连续签到有加成，积分可在 115 App 积分中心使用）。</span></i></div><div class="control"><div class="segmented-control" id="ck115-switch"><div class="seg-item" data-value="false" onclick="setCk115Enabled(false)">关闭</div><div class="seg-item" data-value="true" onclick="setCk115Enabled(true)">开启</div></div></div></div>
-    <div class="form-row"><div class="label">执行窗口<i class="help-tip" tabindex="0">?<span class="tip-bubble">每天在这个时间范围内随机选一个时刻执行签到（服务器本地时间），贴近真人操作。格式 HH:MM-HH:MM，默认 06:00-09:00。失败自动重试 3 次，结果推送企微/TG 通知。</span></i></div><div class="control"><input type="text" id="ck115-range" placeholder="06:00-09:00"></div></div>
+    <div class="form-row"><div class="label">执行计划<i class="help-tip" tabindex="0">?<span class="tip-bubble">5 段式 cron：分 时 日 月 周。例：0 8 * * * = 每天 08:00；30 7 * * 1-5 = 工作日 07:30。到点自动签到，失败自动重试 3 次，结果推送企微/TG 通知。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="ck115-cron" placeholder="0 8 * * *" style="flex:1" onblur="ck115Preview()"><button class="btn btn-outline" onclick="ck115Preview()">预览</button></div></div></div>
+    <div id="ck115-next" style="font-size:12px;color:var(--text-3);margin:-4px 0 8px"></div>
     <div id="ck115-status" style="font-size:13px;color:var(--text-3);line-height:1.7"></div>
     <div class="actions">
       <button class="btn btn-outline" onclick="closeCk115Modal()">取消</button>

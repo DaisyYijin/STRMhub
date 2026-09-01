@@ -9,9 +9,8 @@ package api
 //   奖励：每日签到得积分（连续签到有加成），入口在 115 App「积分中心」。
 //   注意：该接口按 Cookie 通道走（与全站同款统一 UA，保持会话一致性）。
 //
-// 调度：每日在配置的时间窗口（默认 06:00-09:00）内随机一个时刻执行，
-// 失败自动在剩余窗口内重试；结果推送企微/TG 通知。对齐 MoviePilot
-// p115strmhelper 的 p115_checkin 调度策略。
+// 调度：cron 表达式（与增量同步同一套解析），到点执行；签到内部失败重试
+// 3 次（间隔 3 秒），结果推送企微/TG 通知。
 
 import (
 	"crypto/sha1"
@@ -19,10 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,23 +27,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// randIntN [0,n) 随机整数（n<=0 返回 0）
-func randIntN(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return rand.Intn(n)
-}
-
 const sign115API = "https://proapi.115.com/android/2.0/user/points_sign"
+
+const checkin115DefaultCron = "0 8 * * *"
 
 // 签到配置（setting key "115checkin"）
 type checkin115Cfg struct {
 	Enabled      bool   `json:"enabled"`
-	TimeRange    string `json:"time_range"`    // HH:MM-HH:MM 随机窗口
-	LastDone     string `json:"last_done"`     // 最近签到成功的日期 yyyy-mm-dd
-	NextRun      int64  `json:"next_run"`      // 下次执行时刻（unix 秒）
-	LastResult   string `json:"last_result"`   // 最近一次执行结果文案
+	Cron         string `json:"cron"`           // 执行计划（5 段 cron）
+	LastRun      string `json:"last_run"`       // 最近一次触发的分钟（去重用，yyyy-mm-dd hh:mm）
+	LastDone     string `json:"last_done"`      // 最近签到成功的日期 yyyy-mm-dd
+	LastResult   string `json:"last_result"`    // 最近一次执行结果文案
 	LastResultAt string `json:"last_result_at"` // 最近一次执行时间
 }
 
@@ -63,12 +54,12 @@ func loadCheckin115Cfg() *checkin115Cfg {
 	if checkin115V != nil && time.Since(checkin115At) < 10*time.Second {
 		return checkin115V
 	}
-	cfg := &checkin115Cfg{TimeRange: "06:00-09:00"}
+	cfg := &checkin115Cfg{Cron: checkin115DefaultCron}
 	if v := settingValueCompat("115checkin"); v != "" {
 		json.Unmarshal([]byte(v), cfg)
 	}
-	if cfg.TimeRange == "" {
-		cfg.TimeRange = "06:00-09:00"
+	if strings.TrimSpace(cfg.Cron) == "" {
+		cfg.Cron = checkin115DefaultCron
 	}
 	checkin115V = cfg
 	checkin115At = time.Now()
@@ -90,54 +81,9 @@ func saveCheckin115Cfg(cfg *checkin115Cfg) error {
 	return nil
 }
 
-var reCheckinWindow = regexp.MustCompile(`^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$`)
-
-// parseCheckinWindow 解析 HH:MM-HH:MM 为当日时、分（非法回落 06:00-09:00）
-func parseCheckinWindow(s string) (h1, m1, h2, m2 int) {
-	h1, m1, h2, m2 = 6, 0, 9, 0
-	m := reCheckinWindow.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return
-	}
-	fmt.Sscanf(m[1], "%d", &h1)
-	fmt.Sscanf(m[2], "%d", &m1)
-	fmt.Sscanf(m[3], "%d", &h2)
-	fmt.Sscanf(m[4], "%d", &m2)
-	return
-}
-
-// checkinRandEpoch 在指定日期的窗口内随机一个时刻（unix 秒）
-func checkinRandEpoch(d time.Time, h1, m1, h2, m2 int) int64 {
-	start := time.Date(d.Year(), d.Month(), d.Day(), h1, m1, 0, 0, time.Local)
-	end := time.Date(d.Year(), d.Month(), d.Day(), h2, m2, 0, 0, time.Local)
-	if !end.After(start) {
-		end = start.Add(30 * time.Minute)
-	}
-	span := end.Unix() - start.Unix()
-	return start.Unix() + int64(randIntN(int(span+1)))
-}
-
-// pickCheckinNextRun 依据当前时刻选下次执行点：当日窗口未结束 → 剩余窗口内
-// 随机；否则明天窗口内随机
-func pickCheckinNextRun(now time.Time, timeRange string) int64 {
-	h1, m1, h2, m2 := parseCheckinWindow(timeRange)
-	if s := time.Date(now.Year(), now.Month(), now.Day(), h1, m1, 0, 0, time.Local); now.Before(s) {
-		return checkinRandEpoch(now, h1, m1, h2, m2)
-	}
-	if e := time.Date(now.Year(), now.Month(), now.Day(), h2, m2, 0, 0, time.Local); now.Before(e) {
-		start := time.Date(now.Year(), now.Month(), now.Day(), h1, m1, 0, 0, time.Local)
-		if start.Before(now) {
-			start = now
-		}
-		end := e
-		span := int(end.Unix()-start.Unix()) + 1
-		if span < 1 {
-			span = 1
-		}
-		return start.Unix() + int64(randIntN(span))
-	}
-	tomorrow := now.AddDate(0, 0, 1)
-	return checkinRandEpoch(tomorrow, h1, m1, h2, m2)
+// checkin115CronValid 校验 cron 表达式（借助下次执行时间解析，解析不出即无效）
+func checkin115CronValid(expr string) bool {
+	return !nextCronTime(expr, time.Now()).IsZero()
 }
 
 // sign115Status 查询今日签到状态（is_sign_today: 1=已签）
@@ -179,7 +125,6 @@ func (h *Handler) run115CheckinOnce(notify bool) (bool, string) {
 	if signed, err := sign115Status(cookie); err == nil && signed {
 		msg := "今日已签到，无需重复签到"
 		log.Printf("[115签到] ○ %s", msg)
-		h.saveCheckinResult(true, msg)
 		return true, msg
 	}
 
@@ -234,7 +179,6 @@ func (h *Handler) run115CheckinOnce(notify bool) (bool, string) {
 	} else {
 		log.Printf("[115签到] ✗ %s", msg)
 	}
-	h.saveCheckinResult(ok, msg)
 	if notify {
 		title := "115 签到失败"
 		if ok {
@@ -245,19 +189,9 @@ func (h *Handler) run115CheckinOnce(notify bool) (bool, string) {
 	return ok, msg
 }
 
-func (h *Handler) saveCheckinResult(ok bool, msg string) {
-	cfg := loadCheckin115Cfg()
-	cfg.LastResult = msg
-	cfg.LastResultAt = time.Now().Format("01-02 15:04")
-	if ok {
-		cfg.LastDone = time.Now().Format("2006-01-02")
-	}
-	_ = saveCheckin115Cfg(cfg)
-}
-
 // ==================== 调度器 ====================
 
-// Start115CheckinScheduler 分钟级 tick：到点执行每日签到（窗口内随机时刻）
+// Start115CheckinScheduler 分钟级 tick：cron 命中时执行每日签到
 func Start115CheckinScheduler(h *Handler) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -271,7 +205,7 @@ func Start115CheckinScheduler(h *Handler) {
 			h.checkinTick()
 		}
 	}()
-	log.Println("[调度] 115 签到调度器已启动（每日时间窗口内随机执行）")
+	log.Println("[调度] 115 签到调度器已启动（cron 触发）")
 }
 
 func (h *Handler) checkinTick() {
@@ -280,40 +214,21 @@ func (h *Handler) checkinTick() {
 		return
 	}
 	now := time.Now()
-	today := now.Format("2006-01-02")
-
-	if cfg.LastDone == today {
-		// 今天已签：确保下次执行点已安排在明天窗口
-		if cfg.NextRun > now.Unix() {
-			nr := time.Unix(cfg.NextRun, 0)
-			if nr.Format("2006-01-02") != today {
-				return
-			}
-		}
-		cfg.NextRun = pickCheckinNextRun(now.AddDate(0, 0, 1), cfg.TimeRange)
-		_ = saveCheckin115Cfg(cfg)
+	minute := now.Format("2006-01-02 15:04")
+	if cfg.LastRun == minute {
+		return // 本分钟已触发过
+	}
+	if !CronMatch(cfg.Cron, now) {
 		return
 	}
-	if cfg.NextRun == 0 {
-		cfg.NextRun = pickCheckinNextRun(now, cfg.TimeRange)
-		_ = saveCheckin115Cfg(cfg)
-		log.Printf("[115签到] ▶ 已安排下次执行：%s", time.Unix(cfg.NextRun, 0).Format("01-02 15:04"))
-		return
-	}
-	if now.Unix() < cfg.NextRun {
-		return
-	}
-
-	ok, _ := h.run115CheckinOnce(true)
-	cfg = loadCheckin115Cfg()
-	if ok {
-		cfg.LastDone = today
-		cfg.NextRun = pickCheckinNextRun(now.AddDate(0, 0, 1), cfg.TimeRange)
-	} else {
-		// 失败：当日剩余窗口内随机重试；窗口已过则明天
-		cfg.NextRun = pickCheckinNextRun(now, cfg.TimeRange)
-	}
+	cfg.LastRun = minute
 	_ = saveCheckin115Cfg(cfg)
+	ok, _ := h.run115CheckinOnce(true)
+	if ok {
+		cfg = loadCheckin115Cfg()
+		cfg.LastDone = now.Format("2006-01-02")
+		_ = saveCheckin115Cfg(cfg)
+	}
 }
 
 // ==================== HTTP 接口 ====================
@@ -333,14 +248,14 @@ func (h *Handler) Checkin115GetConfig(c *gin.Context) {
 		statusErr = "未绑定 115 账号"
 	}
 	next := ""
-	if cfg.NextRun > 0 {
-		next = time.Unix(cfg.NextRun, 0).Format("01-02 15:04")
+	if t := nextCronTime(cfg.Cron, time.Now()); !t.IsZero() {
+		next = t.Format("01-02 15:04")
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":        cfg.Enabled,
-		"time_range":     cfg.TimeRange,
-		"last_done":      cfg.LastDone,
+		"cron":           cfg.Cron,
 		"next_run":       next,
+		"last_done":      cfg.LastDone,
 		"last_result":    cfg.LastResult,
 		"last_result_at": cfg.LastResultAt,
 		"signed_today":   signedToday,
@@ -348,31 +263,32 @@ func (h *Handler) Checkin115GetConfig(c *gin.Context) {
 	})
 }
 
-// Checkin115SaveConfig POST /115checkin/config {enabled, time_range}
+// Checkin115SaveConfig POST /115checkin/config {enabled, cron}
 func (h *Handler) Checkin115SaveConfig(c *gin.Context) {
 	var req struct {
-		Enabled   bool   `json:"enabled"`
-		TimeRange string `json:"time_range"`
+		Enabled bool   `json:"enabled"`
+		Cron    string `json:"cron"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	if !reCheckinWindow.MatchString(strings.TrimSpace(req.TimeRange)) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "时间窗口格式应为 HH:MM-HH:MM（如 06:00-09:00）"})
+	cronExpr := strings.TrimSpace(req.Cron)
+	if cronExpr == "" {
+		cronExpr = checkin115DefaultCron
+	}
+	if !checkin115CronValid(cronExpr) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cron 表达式无效（5 段式：分 时 日 月 周，如 0 8 * * *）"})
 		return
 	}
 	cfg := loadCheckin115Cfg()
 	cfg.Enabled = req.Enabled
-	cfg.TimeRange = strings.TrimSpace(req.TimeRange)
-	if cfg.Enabled && cfg.NextRun == 0 {
-		cfg.NextRun = pickCheckinNextRun(time.Now(), cfg.TimeRange)
-	}
+	cfg.Cron = cronExpr
 	if err := saveCheckin115Cfg(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
 		return
 	}
-	log.Printf("[配置] 115 签到：%v，窗口 %s", cfg.Enabled, cfg.TimeRange)
+	log.Printf("[配置] 115 签到：%v，cron %s", cfg.Enabled, cfg.Cron)
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }
 

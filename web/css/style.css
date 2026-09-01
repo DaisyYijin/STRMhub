@@ -493,6 +493,7 @@ tr:hover td { background: var(--fill-1); }
 .rule-header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--fill-2); background-color: #fafafa; }
 .rule-title { font-size: 15px; font-weight: 600; color: var(--text-1); position: relative; padding-left: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 15px); }
 .rule-card-active .rule-title { color: var(--primary); }
+.rule-title .icon { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-style: normal; margin-right: 6px; flex-shrink: 0; }
 .rule-card-active .rule-title::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 3px; background-color: var(--primary); border-radius: 4px; }
 .rule-status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .status-text { font-size: 13px; font-weight: 500; color: var(--text-3); padding: 3px 5px; border-radius: 4px; background-color: var(--fill-2); box-shadow: 0 1px 2px rgba(0,0,0,.05); letter-spacing: .5px; white-space: nowrap; min-width: 60px; text-align: center; }
@@ -510,7 +511,7 @@ tr:hover td { background: var(--fill-1); }
 .action-button:hover:not(:disabled) { background-color: #edf2fc; color: var(--primary); border-color: #d6e4ff; box-shadow: 0 2px 6px rgba(22,93,255,.1); }
 .rule-card-active .action-button.config-button, .rule-card-active .action-button.run-button { background-color: #f0f6ff; border: 1px solid #d6e4ff; color: var(--primary); }
 .action-button:disabled { opacity: .55; cursor: not-allowed; }
-.action-button .btn-icon { font-size: 13px; transition: all .3s ease; }
+.action-button .btn-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; font-style: normal; line-height: 1; transition: all .3s ease; }
 .action-button:hover:not(:disabled) .btn-icon.config-icon { transform: rotate(30deg); display: inline-block; }
 .action-button:hover:not(:disabled) .btn-icon.run-icon { transform: translateX(2px); display: inline-block; }
 

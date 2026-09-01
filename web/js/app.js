@@ -3320,13 +3320,13 @@ async function ck115LoadPage() {
   try {
     const d = await api('/115checkin/config');
     setCk115Enabled(!!d.enabled);
-    document.getElementById('ck115-range').value = d.time_range || '06:00-09:00';
+    document.getElementById('ck115-cron').value = d.cron || '0 8 * * *';
+    ck115Preview();
     if (st) {
       let html = '';
       if (!d.enabled) html = '未开启';
-      else if (d.signed_today) html = '<span style="color:var(--success)">✓ 今日已签到</span>'
-        + (d.next_run ? ' · 下次 ' + esc(d.next_run) : '');
-      else html = '今日未签到' + (d.next_run ? ' · 计划 ' + esc(d.next_run) + ' 执行' : '');
+      else if (d.signed_today) html = '<span style="color:var(--success)">✓ 今日已签到</span>';
+      else html = '今日未签到';
       if (d.last_result) {
         html += '<br>上次：' + esc(d.last_result) + (d.last_result_at ? '（' + esc(d.last_result_at) + '）' : '');
       }
@@ -3341,6 +3341,22 @@ async function ck115LoadPage() {
   }
 }
 
+// cron 下次执行时间预览（复用同步页的预览接口）
+async function ck115Preview() {
+  const box = document.getElementById('ck115-next');
+  if (!box) return;
+  const expr = document.getElementById('ck115-cron').value.trim() || '0 8 * * *';
+  try {
+    const d = await api('/sync/cron-preview', {
+      method: 'POST',
+      body: JSON.stringify({ cron: expr }),
+    });
+    box.textContent = '下次执行：' + (d.next || []).join('、');
+  } catch (e) {
+    box.textContent = e.message;
+  }
+}
+
 async function ck115Save(btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
@@ -3350,7 +3366,7 @@ async function ck115Save(btn) {
       method: 'POST',
       body: JSON.stringify({
         enabled: enableEl ? enableEl.dataset.value === 'true' : false,
-        time_range: document.getElementById('ck115-range').value.trim() || '06:00-09:00',
+        cron: document.getElementById('ck115-cron').value.trim() || '0 8 * * *',
       }),
     });
     toast('保存成功');
