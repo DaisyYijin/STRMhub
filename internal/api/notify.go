@@ -94,7 +94,7 @@ type QQOfficialConfig struct {
 	Enabled   any    `json:"enabled"`
 	AppID     string `json:"app_id"`
 	Secret    string `json:"secret"`
-	GroupID   string `json:"group_id"`  // 群 ID（group_openid）
+	GroupID   string `json:"group_id"`    // 群 ID（group_openid）
 	LastMsgID string `json:"last_msg_id"` // 最近收到的消息 id（被动回复用，可选）
 }
 
@@ -519,7 +519,7 @@ func sendWecom(cfg WecomConfig, msg string) error {
 		return fmt.Errorf("%s", sendResult.ErrMsg)
 	}
 
-	log.Printf("企业微信消息发送成功: %s", msg)
+	log.Printf("[通知] ✓ 企微消息已发送（%d 字，首行: %s）", len(msg), truncateStr(firstLine(msg), 40))
 	return nil
 }
 
@@ -559,7 +559,7 @@ func sendTelegram(cfg TGConfig, msg string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	log.Printf("Telegram 消息发送成功: %s", msg)
+	log.Printf("[通知] ✓ TG 消息已发送（%d 字，首行: %s）", len(msg), truncateStr(firstLine(msg), 40))
 	return nil
 }
 
@@ -640,4 +640,12 @@ func parseProxyURL(proxyURL string) (func(*http.Request) (*url.URL, error), erro
 func mustJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// firstLine 取文本首行（日志摘要用，避免多行长消息刷屏）
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
