@@ -893,11 +893,6 @@ av:
         <div class="form-row"><div class="label">API请求间隔<i class="help-tip" tabindex="0">?<span class="tip-bubble">设置 API 请求间隔可以减少风控概率。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="acc-interval" value="3.0" step="0.5" min="0.5" style="max-width:120px"><div class="input-suffix">秒</div></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveAccount()">保存配置</button> <button class="btn btn-warning" onclick="resetAccount()">重置配置</button></div></div>
       </div>
-      <div class="card">
-        <div class="form-row"><div class="label">每日签到<i class="help-tip" tabindex="0">?<span class="tip-bubble">自动完成 115 每日签到领积分（连续签到有加成，积分可在 115 App 积分中心使用）。在设定时间窗口内随机时刻执行，更贴近真人操作；失败自动重试 3 次，结果推送企微/TG 通知。</span></i></div><div class="control"><div class="segmented-control" id="ck115-switch"><div class="seg-item" data-value="false" onclick="setCk115Enabled(false)">关闭</div><div class="seg-item" data-value="true" onclick="setCk115Enabled(true)">开启</div></div></div></div>
-        <div class="form-row"><div class="label">执行窗口<i class="help-tip" tabindex="0">?<span class="tip-bubble">每天在这个时间范围内随机选一个时刻执行签到（服务器本地时间）。格式 HH:MM-HH:MM，默认 06:00-09:00。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="ck115-range" placeholder="06:00-09:00" class="inline-input" style="max-width:160px"><button class="btn btn-outline" onclick="ck115Run(this)">立即签到</button></div></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="ck115Save(this)">保存配置</button> <span id="ck115-status" style="font-size:13px;color:var(--text-3);align-self:center;margin-left:6px">加载中…</span></div></div>
-      </div>
       </div>
 
       <!-- 123 账号 -->
@@ -1087,9 +1082,23 @@ av:
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
       <div class="plugin-content-header">
-        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 3 个插件 · 1 个可用</span></div>
+        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 4 个插件 · 2 个可用</span></div>
       </div>
       <div class="rule-container">
+        <!-- 卡片：115 每日签到（可用） -->
+        <div class="rule-card rule-card-active">
+          <div class="card-status-badge"><span class="status-dot animated"></span></div>
+          <div class="rule-header">
+            <div class="rule-title">📅 115 每日签到</div>
+            <div class="rule-status"><span class="status-text active">可用</span></div>
+          </div>
+          <div class="rule-content"><p>自动完成 115 每日签到领积分（连续签到有加成）。每天在设定时间窗口内随机时刻执行，贴近真人操作；失败自动重试 3 次，结果推送企微/TG 通知。需先在「配置 → 115账号」完成扫码登录。</p></div>
+          <div class="plugin-preview" id="ck115-result" style="display:none"></div>
+          <div class="rule-footer"><div class="button-group">
+            <button class="action-button config-button" onclick="ck115Config()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
+            <button class="action-button run-button" onclick="ck115Run(this)"><span class="btn-icon run-icon">▶</span><span>立即签到</span></button>
+          </div></div>
+        </div>
         <!-- 卡片：一键创建 Emby 媒体库（可用） -->
         <div class="rule-card rule-card-active">
           <div class="card-status-badge"><span class="status-dot animated"></span></div>
@@ -1132,6 +1141,20 @@ av:
         </div>
       </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 115 签到配置弹窗 -->
+<div class="modal-mask" id="ck115-modal" style="display:none">
+  <div class="modal" style="max-width:480px">
+    <h3>115 每日签到</h3>
+    <div class="form-row"><div class="label">自动签到<i class="help-tip" tabindex="0">?<span class="tip-bubble">开启后每天自动签到领积分（连续签到有加成，积分可在 115 App 积分中心使用）。</span></i></div><div class="control"><div class="segmented-control" id="ck115-switch"><div class="seg-item" data-value="false" onclick="setCk115Enabled(false)">关闭</div><div class="seg-item" data-value="true" onclick="setCk115Enabled(true)">开启</div></div></div></div>
+    <div class="form-row"><div class="label">执行窗口<i class="help-tip" tabindex="0">?<span class="tip-bubble">每天在这个时间范围内随机选一个时刻执行签到（服务器本地时间），贴近真人操作。格式 HH:MM-HH:MM，默认 06:00-09:00。失败自动重试 3 次，结果推送企微/TG 通知。</span></i></div><div class="control"><input type="text" id="ck115-range" placeholder="06:00-09:00"></div></div>
+    <div id="ck115-status" style="font-size:13px;color:var(--text-3);line-height:1.7"></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="closeCk115Modal()">取消</button>
+      <button class="btn btn-primary" onclick="ck115Save(this)">保存</button>
     </div>
   </div>
 </div>

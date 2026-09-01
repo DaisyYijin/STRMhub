@@ -145,7 +145,8 @@ function showPage(id) {
     loadConfigs();
     updateStrmExample();
   }
-  if (id === 'config-accounts') { loadAccount(); ck115LoadPage(); }
+  if (id === 'config-accounts') loadAccount();
+  if (id === 'config-extension') ck115LoadPage();
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
@@ -3290,8 +3291,16 @@ function buildGyTabs(zy) {
   });
   return '<div id="gy-zy-tabs" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">' + html + '</div>';
 }
-// ==================== 115 每日签到 ====================
+// ==================== 115 每日签到（扩展功能插件） ====================
 // 每日在设定时间窗口内随机时刻自动签到领积分；也可点「立即签到」手动执行。
+
+function ck115Config() {
+  document.getElementById('ck115-modal').style.display = 'flex';
+  ck115LoadPage();
+}
+function closeCk115Modal() {
+  document.getElementById('ck115-modal').style.display = 'none';
+}
 
 function setCk115Enabled(v) {
   document.querySelectorAll('#ck115-switch .seg-item').forEach(el => {
@@ -3345,16 +3354,23 @@ async function ck115Save(btn) {
 
 async function ck115Run(btn) {
   const st = document.getElementById('ck115-status');
+  const card = document.getElementById('ck115-result');
   const orig = btn.textContent;
   btn.disabled = true;
   btn.textContent = '签到中…';
+  const show = (ok, text) => {
+    const cls = ok ? 'var(--success)' : '#e74c3c';
+    const line = '<span style="color:' + cls + '">' + (ok ? '✓ ' : '✗ ') + esc(text) + '</span>'
+      + '<span style="color:var(--text-3)"> · ' + new Date().toLocaleTimeString() + '</span>';
+    if (card) { card.style.display = 'block'; card.innerHTML = line; }
+    if (st) { st.style.color = cls; st.textContent = (ok ? '✓ ' : '✗ ') + text; }
+  };
   try {
     const d = await api('/115checkin/run', { method: 'POST' });
-    if (st) { st.style.color = 'var(--success)'; st.textContent = '✓ ' + (d.message || '签到成功'); }
+    show(true, d.message || '签到成功');
     toast(d.message || '签到成功');
   } catch (e) {
-    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
-    toast(e.message);
+    show(false, e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
