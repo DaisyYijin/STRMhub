@@ -276,6 +276,72 @@ func NotifyMessageRich(title, content, posterURL, linkURL string) {
 	}
 }
 
+// NewsArticle 图文卡片单篇
+type NewsArticle struct {
+	Title  string
+	Desc   string
+	PicURL string
+	Link   string
+}
+
+// NotifyMessageNews 多篇图文消息（企微 news 最多 8 篇）；TG 端退化为纯文本列表
+func NotifyMessageNews(articles []NewsArticle) {
+	if len(articles) == 0 {
+		return
+	}
+	cfg, err := loadMessageConfig()
+	if err != nil {
+		return
+	}
+	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
+		if len(articles) > 8 {
+			articles = articles[:8]
+		}
+		go sendWecomNewsArticles(cfg.Wecom, articles)
+	}
+}
+
+// sendWecomNewsMulti 一条 news 消息带多篇图文
+func sendWecomNewsArticles(cfg WecomConfig, articles []NewsArticle) error {
+	token, err := wecomAccessToken(cfg)
+	if err != nil {
+		return err
+	}
+	list := make([]map[string]string, 0, len(articles))
+	for _, a := range articles {
+		link := a.Link
+		if link == "" {
+			link = "https://github.com/DaisyYijin/STRMhub"
+		}
+		list = append(list, map[string]string{
+			"title":       truncateStr(a.Title, 90),
+			"description": truncateStr(a.Desc, 200),
+			"picurl":      a.PicURL,
+			"url":         link,
+		})
+	}
+	payload := map[string]interface{}{
+		"touser":  "@all",
+		"msgtype": "news",
+		"agentid": cfg.AgentID,
+		"news":    map[string]interface{}{"articles": list},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	client := &http.Client{Timeout: 20 * time.Second}
+	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s", cfg.apiBase(), token)
+	req, err := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 // sanitizeWecomErr 企微错误脱敏：URL 里的 access_token / corpsecret 打码后再进日志
 func sanitizeWecomErr(err error) string {
 	if err == nil {

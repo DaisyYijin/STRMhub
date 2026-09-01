@@ -20,10 +20,12 @@ import (
 )
 
 type wecomTmdbHit struct {
-	ID    int
-	Type  string // movie / tv
-	Title string
-	Year  string
+	ID     int
+	Type   string // movie / tv
+	Title  string
+	Year   string
+	Vote   float64
+	Poster string // TMDB poster_path（/xx.jpg）
 }
 
 type wecomGySession struct {
@@ -70,14 +72,16 @@ func (h *Handler) wecomTmdbMulti(q string) ([]wecomTmdbHit, error) {
 		return nil, err
 	}
 	type hit struct {
-		ID    int    `json:"id"`
-		Type  string `json:"media_type"`
-		Title string `json:"title"`
-		Name  string `json:"name"`
-		Date  string `json:"release_date"`
-		First string `json:"first_air_date"`
+		ID     int     `json:"id"`
+		Type   string  `json:"media_type"`
+		Title  string  `json:"title"`
+		Name   string  `json:"name"`
+		Date   string  `json:"release_date"`
+		First  string  `json:"first_air_date"`
+		Vote   float64 `json:"vote_average"`
+		Poster string  `json:"poster_path"`
 	}
-	toHit := func(id int, kind, title, name, date, first string) wecomTmdbHit {
+	toHit := func(id int, kind, title, name, date, first string, vote float64, poster string) wecomTmdbHit {
 		t, d := title, date
 		if t == "" {
 			t = name
@@ -89,7 +93,7 @@ func (h *Handler) wecomTmdbMulti(q string) ([]wecomTmdbHit, error) {
 		if len(d) >= 4 {
 			year = d[:4]
 		}
-		return wecomTmdbHit{ID: id, Type: kind, Title: t, Year: year}
+		return wecomTmdbHit{ID: id, Type: kind, Title: t, Year: year, Vote: vote, Poster: poster}
 	}
 	if regexpPureDigits.MatchString(q) {
 		for _, kind := range []string{"movie", "tv"} {
@@ -101,7 +105,7 @@ func (h *Handler) wecomTmdbMulti(q string) ([]wecomTmdbHit, error) {
 			if json.Unmarshal(body, &d) != nil || d.ID == 0 {
 				continue
 			}
-			return []wecomTmdbHit{toHit(d.ID, kind, d.Title, d.Name, d.Date, d.First)}, nil
+			return []wecomTmdbHit{toHit(d.ID, kind, d.Title, d.Name, d.Date, d.First, d.Vote, d.Poster)}, nil
 		}
 		return nil, nil
 	}
@@ -120,7 +124,7 @@ func (h *Handler) wecomTmdbMulti(q string) ([]wecomTmdbHit, error) {
 		if it.Type != "movie" && it.Type != "tv" {
 			continue // multi-search 会混入 person
 		}
-		out = append(out, toHit(it.ID, it.Type, it.Title, it.Name, it.Date, it.First))
+		out = append(out, toHit(it.ID, it.Type, it.Title, it.Name, it.Date, it.First, it.Vote, it.Poster))
 		if len(out) >= 6 {
 			break
 		}
@@ -151,6 +155,96 @@ func gyBotTags(title string) string {
 	return "[" + strings.Join(tags, "·") + "]"
 }
 
+func voteSuffix(v float64) string {
+	if v > 0 {
+		return fmt.Sprintf(" · %.1f分", v)
+	}
+	return ""
+}
+
+// gyBotBucket 种子主分类桶（用于分组展示）
+func gyBotBucket(title string) string {
+	lower := strings.ToLower(title)
+	has := func(ss ...string) bool {
+		for _, s := range ss {
+			if strings.Contains(lower, s) {
+				return true
+			}
+		}
+		return false
+	}
+	zh := has("中字", "简体", "繁体", "chs", "cht")
+	uhd := has("4k", "2160")
+	fhd := has("1080")
+	remux := has("原盘", "remux")
+	switch {
+	case zh && uhd:
+		return "中字 4K"
+	case zh && fhd:
+		return "中字 1080P"
+	case zh:
+		return "中字"
+	case remux:
+		return "原盘"
+	case uhd:
+		return "4K"
+	case fhd:
+		return "1080P"
+	}
+	return "其他"
+}
+
+var gyBotBucketOrder = []string{"中字 4K", "中字 1080P", "中字", "原盘", "4K", "1080P", "其他"}
+
+// gyBotGroupedList 分组输出种子列表（编号为全局连续，回复序号即可）
+func gyBotGroupedList(torrents []gin.H) []string {
+	var lines []string
+	n := 0
+	for _, bucket := range gyBotBucketOrder {
+		var idx []int
+		for i, t := range torrents {
+			title, _ := t["title"].(string)
+			if gyBotBucket(title) == bucket {
+				idx = append(idx, i)
+			}
+		}
+		if len(idx) == 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("【%s】共 %d 条", bucket, len(idx)))
+		for _, i := range idx {
+			n++
+			t := torrents[i]
+			title, _ := t["title"].(string)
+			size, _ := t["size"].(string)
+			seeds, _ := t["seeds"].(string)
+			tm, _ := t["time"].(string)
+			line := fmt.Sprintf("%d. %s", n, truncateStr(title, 58))
+			var meta []string
+			if size != "" {
+				meta = append(meta, size)
+			}
+			if seeds != "" {
+				meta = append(meta, "做种 "+seeds)
+			}
+			if tm != "" {
+				meta = append(meta, tm)
+			}
+			if len(meta) > 0 {
+				line += "\n     " + strings.Join(meta, " | ")
+			}
+			lines = append(lines, line)
+		}
+	}
+	if n < len(torrents) {
+		for i := n; i < len(torrents); i++ {
+			title, _ := torrents[i]["title"].(string)
+			lines = append(lines, fmt.Sprintf("%d. %s", i+1, truncateStr(title, 58)))
+		}
+	}
+	return lines
+}
+
 // wecomHandleGySearch 「观影 <片名>」：TMDB 搜索并下发选单
 func (h *Handler) wecomHandleGySearch(user, keyword string, reply func(...string)) {
 	movies, err := h.wecomTmdbMulti(keyword)
@@ -162,17 +256,35 @@ func (h *Handler) wecomHandleGySearch(user, keyword string, reply func(...string
 		reply("TMDB 未找到「" + keyword + "」")
 		return
 	}
-	lines := []string{fmt.Sprintf("TMDB 搜索「%s」，回复序号选片：", keyword)}
-	for i, m := range movies {
-		typ := "电影"
-		if m.Type == "tv" {
-			typ = "剧集"
+	typName := func(kind string) string {
+		if kind == "tv" {
+			return "剧集"
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s (%s) [%s]", i+1, m.Title, m.Year, typ))
+		return "电影"
+	}
+	lines := []string{fmt.Sprintf("TMDB 搜索「%s」，回复序号选片：", keyword)}
+	var cards []NewsArticle
+	for i, m := range movies {
+		meta := fmt.Sprintf("(%s) [%s]", m.Year, typName(m.Type))
+		if m.Vote > 0 {
+			meta += fmt.Sprintf(" %.1f分", m.Vote)
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s %s", i+1, m.Title, meta))
+		a := NewsArticle{
+			Title: fmt.Sprintf("%d. %s (%s)", i+1, m.Title, m.Year),
+			Desc:  typName(m.Type) + voteSuffix(m.Vote),
+			Link:  fmt.Sprintf("https://www.themoviedb.org/%s/%d", m.Type, m.ID),
+		}
+		if m.Poster != "" {
+			a.PicURL = tmdbImageBase() + "/t/p/w300" + m.Poster
+		}
+		cards = append(cards, a)
 	}
 	lines = append(lines, "（回复 1-"+strconv.Itoa(len(movies))+" 选择，5 分钟内有效）")
 	wecomGySessionSet(user, &wecomGySession{Stage: "movie", Keyword: keyword, Movies: movies, At: time.Now()})
 	reply(lines...)
+	// 图文海报卡片（企微 news 多图；TG 端不发送避免刷屏）
+	NotifyMessageNews(cards)
 }
 
 // wecomHandleGyPick 会话进行中收到序号：按阶段分流（选片 → 选种子 → 离线）
@@ -200,28 +312,8 @@ func (h *Handler) wecomHandleGyPick(user string, n int, reply func(...string)) {
 			reply("观影站没有找到「" + m.Title + "」的资源，可重新「观影 <其他片名>」")
 			return
 		}
-		lines := []string{fmt.Sprintf("「%s」观影资源 %d 条，回复序号提交 115 离线：", m.Title, len(torrents))}
-		for i, t := range torrents {
-			title, _ := t["title"].(string)
-			size, _ := t["size"].(string)
-			seeds, _ := t["seeds"].(string)
-			tm, _ := t["time"].(string)
-			line := fmt.Sprintf("%d. %s %s", i+1, gyBotTags(title), truncateStr(title, 60))
-			var meta []string
-			if size != "" {
-				meta = append(meta, size)
-			}
-			if seeds != "" {
-				meta = append(meta, "做种 "+seeds)
-			}
-			if tm != "" {
-				meta = append(meta, tm)
-			}
-			if len(meta) > 0 {
-				line += "\n    " + strings.Join(meta, " | ")
-			}
-			lines = append(lines, line)
-		}
+		lines := []string{fmt.Sprintf("「%s」观影资源 %d 条（序号连续，回复序号提交 115 离线）：", m.Title, len(torrents))}
+		lines = append(lines, gyBotGroupedList(torrents)...)
 		s.Stage = "resource"
 		s.Keyword = m.Title
 		s.Torrents = torrents
