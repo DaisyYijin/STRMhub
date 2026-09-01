@@ -1076,7 +1076,7 @@ av:
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
       <div class="plugin-content-header">
-        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 5 个插件 · 3 个可用</span></div>
+        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 6 个插件 · 4 个可用</span></div>
       </div>
       <div class="rule-container">
         <!-- 卡片：115 每日签到（可用） -->
@@ -1105,6 +1105,19 @@ av:
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" onclick="embyLibConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
             <button class="action-button run-button" id="emby-lib-run-btn" onclick="embyLibRun()"><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
+          </div></div>
+        </div>
+        <!-- 卡片：123 云盘（可用） -->
+        <div class="rule-card rule-card-active">
+          <div class="card-status-badge"><span class="status-dot animated"></span></div>
+          <div class="rule-header">
+            <div class="rule-title"><span class="icon">▤</span>123 云盘</div>
+            <div class="rule-status"><span class="status-text active">可用</span></div>
+          </div>
+          <div class="rule-content"><p>官方开放平台接入：扫描 123 网盘目录生成 STRM，播放走 302 直链。需在 123 开放平台申请凭证。</p></div>
+          <div class="rule-footer"><div class="button-group">
+            <button class="action-button config-button" onclick="pan123Config()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
+            <button class="action-button run-button" onclick="pan123ScanRun(this)"><span class="btn-icon run-icon">▶</span><span>立即扫描</span></button>
           </div></div>
         </div>
         <!-- 卡片：TG 频道搜索（可用） -->
@@ -1148,6 +1161,23 @@ av:
         </div>
       </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 123 云盘配置弹窗 -->
+<div class="modal-mask" id="pan123-modal" style="display:none">
+  <div class="modal" style="max-width:520px">
+    <h3>123 云盘</h3>
+    <div class="form-row"><div class="label">ClientID<i class="help-tip" tabindex="0">?<span class="tip-bubble">在 123 云盘网页端「设置 → 开放平台」申请，审核通过后在开发者平台创建应用获得。凭证仅保存在本机配置。</span></i></div><div class="control"><input type="text" id="pan123-client-id" placeholder="开放平台 ClientID"></div></div>
+    <div class="form-row"><div class="label">ClientSecret</div><div class="control"><input type="password" id="pan123-client-secret" placeholder="开放平台 ClientSecret"></div></div>
+    <div class="form-row"><div class="label">连接测试</div><div class="control"><div class="form-inline-group"><button class="btn btn-outline" onclick="pan123Test(this)">测试连接</button><span id="pan123-test-result" style="font-size:12.5px"></span></div></div></div>
+    <div class="form-row"><div class="label">扫描目录 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">在 123 网盘里右键目标文件夹 → 开启「直链空间」，文件夹 ID 显示在浏览器地址栏末尾。根目录（0）不支持直链，必须用开启直链空间的子目录。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="pan123-target" placeholder="如 123456" style="flex:1"><button class="btn btn-outline" onclick="pan123CheckDir(this)">校验</button></div><div style="font-size:12px;color:var(--text-3);margin-top:4px" id="pan123-dir-result"></div></div></div>
+    <div class="form-row"><div class="label">STRM 输出目录</div><div class="control"><div class="form-inline-group"><input type="text" id="pan123-local" readonly placeholder="选择本地目录" style="flex:1"><button class="btn btn-outline" onclick="openDirPicker('local','pan123-local')">选择</button></div></div></div>
+    <div style="font-size:12px;color:var(--text-3);line-height:1.7;background:var(--border);border-radius:8px;padding:8px 12px;margin-bottom:8px">播放直链受官方限制：免费账号自用下载流量 1GB/天，超出会报错；域名/命名格式使用「重命名规则」里的全局 STRM 设置。</div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="pan123ModalClose()">取消</button>
+      <button class="btn btn-primary" onclick="pan123Save(this)">保存</button>
     </div>
   </div>
 </div>

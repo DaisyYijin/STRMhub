@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"regexp"
 	"strings"
 	"sync"
@@ -67,6 +68,11 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 	r.GET("/d/:pickcode/*filename", func(c *gin.Context) {
 		handleProxyRedirect(c, db, cfg)
 	})
+
+	// 123 云盘 302 代理: /123/{fileID} 或 /123/{fileID}/{filename}
+	pan123Handler := &Handler{DB: db, Config: cfg}
+	r.GET("/123/:fileID", pan123Handler.handlePan123Redirect)
+	r.GET("/123/:fileID/*filename", pan123Handler.handlePan123Redirect)
 
 	// Emby 反代：客户端访问 http://ip:6086/emby 即可使用 Emby（CMS 9096 同款）
 	registerEmbyProxy(r, db, cfg)
@@ -421,4 +427,37 @@ func cleanExpiredCache() {
 			delete(downloadLinkCache, k)
 		}
 	}
+}
+
+// ==================== 123 云盘 302 代理 ====================
+
+// handlePan123Redirect /123/{fileID}[.ext][/{name}] → 取直链 302。
+// 123 直链为时效签名 URL，不绑定 UA，缓存 5 分钟即可
+func (h *Handler) handlePan123Redirect(c *gin.Context) {
+	fileIDStr := c.Param("fileID")
+	if i := strings.LastIndex(fileIDStr, "."); i > 0 {
+		fileIDStr = fileIDStr[:i]
+	}
+	fileID, err := strconv.ParseInt(fileIDStr, 10, 64)
+	if err != nil {
+		c.String(http.StatusBadRequest, "invalid fileID")
+		return
+	}
+	downloadCacheMu.Lock()
+	cached, ok := downloadLinkCache["p123:"+fileIDStr]
+	downloadCacheMu.Unlock()
+	if ok && time.Now().Before(cached.Expiry) {
+		c.Redirect(http.StatusFound, cached.URL)
+		return
+	}
+	link, err := h.pan123DownloadInfo(fileID)
+	if err != nil {
+		log.Printf("[123盘] ✗ 302 代理取直链失败 fileID=%d: %v", fileID, err)
+		c.String(http.StatusBadGateway, "获取 123 云盘下载链接失败: %v", err)
+		return
+	}
+	downloadCacheMu.Lock()
+	downloadLinkCache["p123:"+fileIDStr] = downloadCacheEntry{URL: link, Expiry: time.Now().Add(5 * time.Minute)}
+	downloadCacheMu.Unlock()
+	c.Redirect(http.StatusFound, link)
 }

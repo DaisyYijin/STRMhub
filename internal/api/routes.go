@@ -382,6 +382,13 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/tgsearch/search", h.TgSearchSearch)
 		protected.POST("/tgsearch/save", h.TgSearchSave)
 
+		// 123 云盘（官方开放平台：clientID/clientSecret 换 token → 扫描生成 STRM）
+		protected.GET("/pan123/config", h.Pan123GetConfig)
+		protected.POST("/pan123/config", h.Pan123SaveConfig)
+		protected.POST("/pan123/test", h.Pan123Test)
+		protected.POST("/pan123/checkdir", h.Pan123CheckDir)
+		protected.POST("/pan123/scan", h.Pan123Scan)
+
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
 		protected.POST("/hdhive/config", h.HdhiveSaveConfig)

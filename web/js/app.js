@@ -1484,6 +1484,91 @@ async function tgSaveLink(el) {
   }
 }
 
+// ==================== 123 云盘（官方开放平台） ====================
+function pan123ModalClose() { document.getElementById('pan123-modal').style.display = 'none'; }
+
+async function pan123Config() {
+  document.getElementById('pan123-modal').style.display = 'flex';
+  try {
+    const d = await api('/pan123/config');
+    const c = d.data || {};
+    setVal('pan123-client-id', c.client_id || '');
+    setVal('pan123-client-secret', c.client_secret || '');
+    setVal('pan123-target', c.target_id || '');
+    setVal('pan123-local', c.local_path || '');
+  } catch (e) { /* 首次为空 */ }
+}
+
+async function pan123Save(btn) {
+  const body = {
+    client_id: val('pan123-client-id').trim(),
+    client_secret: val('pan123-client-secret').trim(),
+    target_id: val('pan123-target').trim(),
+    local_path: val('pan123-local').trim(),
+  };
+  if (!body.client_id || !body.client_secret) { toast('请先填写 clientID/clientSecret'); return; }
+  btn.disabled = true;
+  try {
+    await api('/pan123/config', { method: 'POST', body: JSON.stringify(body) });
+    toast('配置已保存');
+    pan123ModalClose();
+  } catch (e) { toast('保存失败：' + e.message); }
+  btn.disabled = false;
+}
+
+async function pan123Test(btn) {
+  // 先保存再测试：测试用的是服务端已保存的凭证
+  const saveBtn = btn;
+  const body = {
+    client_id: val('pan123-client-id').trim(),
+    client_secret: val('pan123-client-secret').trim(),
+    target_id: val('pan123-target').trim(),
+    local_path: val('pan123-local').trim(),
+  };
+  if (!body.client_id || !body.client_secret) { toast('请先填写 clientID/clientSecret'); return; }
+  const result = document.getElementById('pan123-test-result');
+  saveBtn.disabled = true;
+  result.textContent = '测试中…';
+  result.style.color = 'var(--text-3)';
+  try {
+    await api('/pan123/config', { method: 'POST', body: JSON.stringify(body) });
+    const d = await api('/pan123/test', { method: 'POST' });
+    result.textContent = '✓ ' + (d.message || '连接成功');
+    result.style.color = 'var(--ok, #1f8a4c)';
+  } catch (e) {
+    result.textContent = '✗ ' + e.message;
+    result.style.color = 'var(--danger)';
+  }
+  saveBtn.disabled = false;
+}
+
+async function pan123CheckDir(btn) {
+  const id = val('pan123-target').trim();
+  if (id === '') { toast('请填写目录 ID'); return; }
+  const result = document.getElementById('pan123-dir-result');
+  btn.disabled = true;
+  result.textContent = '校验中…';
+  try {
+    const d = await api('/pan123/checkdir', { method: 'POST', body: JSON.stringify({ id }) });
+    result.textContent = '✓ ' + (d.message || '目录有效');
+    result.style.color = 'var(--ok, #1f8a4c)';
+  } catch (e) {
+    result.textContent = '✗ ' + e.message;
+    result.style.color = 'var(--danger)';
+  }
+  btn.disabled = false;
+}
+
+async function pan123ScanRun(btn) {
+  if (!confirm('开始扫描 123 云盘并生成 STRM？')) return;
+  btn.disabled = true;
+  try {
+    const d = await api('/pan123/scan', { method: 'POST' });
+    toast(d.message || '扫描已开始');
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+
 // ==================== GPT 测试连接 ====================
 async function testGPT() {
   const url = val('org-gpt-url');
