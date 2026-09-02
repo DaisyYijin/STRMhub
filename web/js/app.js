@@ -2519,7 +2519,7 @@ async function loadDashboard() {
     if (recent.length) {
       rb.innerHTML = recent.map(m =>
         '<div class="dash-recent-item">'
-        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy" onerror="this.style.opacity=0">' : '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">')
+        + (m.poster ? '<img src="/api/poster' + esc(m.poster) + '" loading="lazy" onerror="this.style.opacity=0">' : '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">')
         + '<div class="t">' + esc(m.title) + ' <span style="color:var(--text-3)">' + esc(m.year || '') + '</span><div style="font-size:11.5px;color:var(--text-3)">' + esc(m.category || m.type || '') + '</div></div>'
         + '<div class="m">' + esc(m.at) + '</div></div>').join('');
     } else {
@@ -2548,7 +2548,7 @@ async function loadDashboard() {
     if (em.libraries && em.libraries.length) {
       cats = em.libraries.map(l => ({
         name: l.name, count: l.count,
-        posters: (l.collage || []).map(p => '/embyimg?path=' + encodeURIComponent(p) + '&maxWidth=200'),
+        posters: (l.collage || []).map(p => '/api/embyimg?path=' + encodeURIComponent(p) + '&maxWidth=200'),
       }));
     }
     const cb = document.getElementById('dash-cats');
@@ -2573,12 +2573,12 @@ async function loadDashboard() {
     if (em.recent && em.recent.length) {
       pb.innerHTML = em.recent.map(m =>
         '<div class="dash-poster" title="' + esc(m.name + ' ' + (m.year || '')) + '（点击打开观影门户）" onclick="openPortal()">'
-        + '<img src="/embyimg?path=' + encodeURIComponent('Items/' + m.id + '/Images/Primary') + '&maxWidth=200" loading="lazy">'
+        + '<img src="/api/embyimg?path=' + encodeURIComponent('Items/' + m.id + '/Images/Primary') + '&maxWidth=200" loading="lazy">'
         + '<div class="p-title">' + esc(m.name) + '</div></div>').join('');
     } else if (recent.length) {
       pb.innerHTML = recent.map(m =>
         '<div class="dash-poster" title="' + esc(m.title + ' ' + (m.year || '')) + '">'
-        + (m.poster ? '<img src="/poster' + esc(m.poster) + '" loading="lazy">'
+        + (m.poster ? '<img src="/api/poster' + esc(m.poster) + '" loading="lazy">'
                     : '<div class="p-none">🎬</div>')
         + '<div class="p-title">' + esc(m.title) + '</div></div>').join('');
     } else {
