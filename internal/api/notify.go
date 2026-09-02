@@ -237,8 +237,10 @@ func NotifyMessage(title, content string) {
 	}
 
 	fullMsg := title
-	if content != "" {
+	if content != "" && title != "" {
 		fullMsg = fmt.Sprintf("%s\n%s", title, content)
+	} else if content != "" {
+		fullMsg = content
 	}
 
 	// 企业微信
@@ -284,21 +286,24 @@ type NewsArticle struct {
 	Link   string
 }
 
-// NotifyMessageNews 多篇图文消息（企微 news 最多 8 篇）；TG 端退化为纯文本列表
-func NotifyMessageNews(articles []NewsArticle) {
+// NotifyMessageNews 多篇图文消息（企微 news 最多 8 篇）。
+// 返回是否已按图文发送（企微未配置时返回 false，调用方可回退纯文本）
+func NotifyMessageNews(articles []NewsArticle) bool {
 	if len(articles) == 0 {
-		return
+		return false
 	}
 	cfg, err := loadMessageConfig()
 	if err != nil {
-		return
+		return false
 	}
 	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
 		if len(articles) > 8 {
 			articles = articles[:8]
 		}
 		go sendWecomNewsArticles(cfg.Wecom, articles)
+		return true
 	}
+	return false
 }
 
 // sendWecomNewsMulti 一条 news 消息带多篇图文

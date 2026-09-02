@@ -338,9 +338,10 @@ func (h *Handler) wecomHandleGySearch(user, keyword string, reply func(...string
 	}
 	lines = append(lines, "（回复 1-"+strconv.Itoa(len(movies))+" 选择，5 分钟内有效）")
 	wecomGySessionSet(user, &wecomGySession{Stage: "movie", Keyword: keyword, Movies: movies, At: time.Now()})
-	reply(lines...)
-	// 图文海报卡片（企微 news 多图；TG 端不发送避免刷屏）
-	NotifyMessageNews(cards)
+	// 只发图文海报卡片（标题带序号）；企微未配置图文时回退纯文本列表
+	if !NotifyMessageNews(cards) {
+		reply(lines...)
+	}
 }
 
 // wecomHandleGyPick 会话进行中收到序号：按阶段分流（选片 → 选种子 → 离线）

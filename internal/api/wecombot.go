@@ -212,7 +212,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		return
 	}
 	reply := func(lines ...string) {
-		NotifyMessage("🤖 StrmHub", strings.Join(lines, "\n"))
+		NotifyMessage("", strings.Join(lines, "\n"))
 	}
 	lower := strings.ToLower(text)
 	// 直接发链接（无需"下载"前缀）：磁力/ed2k/http/115分享 一键触发
@@ -328,18 +328,18 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		go func() {
 			latest, ferr := fetchLatestSHA(true)
 			if ferr != "" || latest == "" {
-				NotifyMessage("🤖 StrmHub", "✗ 无法获取最新版本信息（GitHub 不可达），请稍后再试")
+				NotifyMessage("", "✗ 无法获取最新版本信息（GitHub 不可达），请稍后再试")
 				return
 			}
 			if strings.HasPrefix(latest, buildVersion[:7]) {
-				NotifyMessage("🤖 StrmHub", "✓ 当前 v"+shortSha(buildVersion)+" 已是最新版本")
+				NotifyMessage("", "✓ 当前 v"+shortSha(buildVersion)+" 已是最新版本")
 				return
 			}
 			switch imageBuildState(latest) {
 			case "building":
-				NotifyMessage("🤖 StrmHub", "⏳ 新版本 v"+shortSha(latest)+" 镜像构建中，完成后会再通知")
+				NotifyMessage("", "⏳ 新版本 v"+shortSha(latest)+" 镜像构建中，完成后会再通知")
 			case "failed":
-				NotifyMessage("🤖 StrmHub", "✗ 新版本 v"+shortSha(latest)+" 构建失败，请到 GitHub Actions 查看")
+				NotifyMessage("", "✗ 新版本 v"+shortSha(latest)+" 构建失败，请到 GitHub Actions 查看")
 			default:
 				commits := fetchCommitsBetween(buildVersion, latest)
 				var b strings.Builder
@@ -352,27 +352,27 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 					fmt.Fprintf(&b, "\n• %s %s", shortSha(cm.Sha), truncateStr(cm.Message, 50))
 				}
 				b.WriteString("\n\n点「更 新」菜单可直接执行更新")
-				NotifyMessage("🤖 StrmHub", b.String())
+				NotifyMessage("", b.String())
 			}
 		}()
 
 	case lower == "执行更新" || lower == "更新":
 		go func() {
 			if running, tname, _, _ := TaskStatus(); running {
-				NotifyMessage("🤖 StrmHub", "○ 暂不能更新：正在执行「"+tname+"」，完成后会通知")
+				NotifyMessage("", "○ 暂不能更新：正在执行「"+tname+"」，完成后会通知")
 				return
 			}
 			code, payload := h.applyUpdateFlow()
 			if code >= 400 {
 				if e, ok := payload["error"].(string); ok {
-					NotifyMessage("🤖 StrmHub", "✗ 更新失败："+e)
+					NotifyMessage("", "✗ 更新失败："+e)
 				} else {
-					NotifyMessage("🤖 StrmHub", "✗ 更新失败，请查看服务日志")
+					NotifyMessage("", "✗ 更新失败，请查看服务日志")
 				}
 				return
 			}
 			if msg, ok := payload["message"].(string); ok {
-				NotifyMessage("🤖 StrmHub", msg)
+				NotifyMessage("", msg)
 			}
 		}()
 
@@ -381,7 +381,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		go func() {
 			cands, err := h.scanLibCandidates()
 			if err != nil {
-				NotifyMessage("🤖 StrmHub", "✗ 建库扫描失败: "+err.Error())
+				NotifyMessage("", "✗ 建库扫描失败: "+err.Error())
 				return
 			}
 			var items []embyLibCandidate
@@ -391,7 +391,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 				}
 			}
 			if len(items) == 0 {
-				NotifyMessage("🤖 StrmHub", "没有需要创建的媒体库（Emby 里都已存在）")
+				NotifyMessage("", "没有需要创建的媒体库（Emby 里都已存在）")
 				return
 			}
 			created, skipped := h.embyLibrariesCreateItems(items)
@@ -399,7 +399,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 			if len(skipped) > 0 {
 				msg += fmt.Sprintf("，跳过 %d 个", len(skipped))
 			}
-			NotifyMessage("🤖 StrmHub", msg)
+			NotifyMessage("", msg)
 		}()
 
 	case lower == "整理123" || lower == "123":
@@ -415,9 +415,9 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		}
 		go func() {
 			if _, _, err := h.executeEnrichScan(); err != nil {
-				NotifyMessage("🤖 StrmHub", "✗ 补全扫描失败: "+err.Error())
+				NotifyMessage("", "✗ 补全扫描失败: "+err.Error())
 			} else {
-				NotifyMessage("🤖 StrmHub", "✓ 补全扫描完成，任务已入队（详见日志）")
+				NotifyMessage("", "✓ 补全扫描完成，任务已入队（详见日志）")
 			}
 		}()
 		reply("已开始扫描媒体库，缺画质信息的文件将入队探测。")
@@ -428,16 +428,16 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 			// 必须取任务互斥锁：此前直接调执行函数，可与全量同步/定时任务
 			// 并发搬动同一棵 115 目录树
 			if !fullSyncMu.TryLock() {
-				NotifyMessage("🤖 StrmHub", "○ 整理未开始：已有任务运行中")
+				NotifyMessage("", "○ 整理未开始：已有任务运行中")
 				return
 			}
 			defer fullSyncMu.Unlock()
 			beginTask("企微指令-整理")
 			defer endTask()
 			if _, _, err := h.executeOrganize(false); err != nil {
-				NotifyMessage("🤖 StrmHub", "✗ 整理失败: "+err.Error())
+				NotifyMessage("", "✗ 整理失败: "+err.Error())
 			} else {
-				NotifyMessage("🤖 StrmHub", "✓ 整理完成（详见日志）")
+				NotifyMessage("", "✓ 整理完成（详见日志）")
 			}
 		}()
 
@@ -446,7 +446,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		go func() {
 			// 同上：增量同步与全量共用事件流与本地树，必须互斥
 			if !fullSyncMu.TryLock() {
-				NotifyMessage("🤖 StrmHub", "○ 增量同步未开始：已有任务运行中")
+				NotifyMessage("", "○ 增量同步未开始：已有任务运行中")
 				return
 			}
 			defer fullSyncMu.Unlock()
@@ -454,9 +454,9 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 			defer endTask()
 			p := h.incrParamsFromConfig()
 			if _, err := h.executeIncrementalSync(p); err != nil {
-				NotifyMessage("🤖 StrmHub", "✗ 增量同步失败: "+err.Error())
+				NotifyMessage("", "✗ 增量同步失败: "+err.Error())
 			} else {
-				NotifyMessage("🤖 StrmHub", "✓ 增量同步完成（详见日志）")
+				NotifyMessage("", "✓ 增量同步完成（详见日志）")
 			}
 		}()
 
@@ -482,14 +482,14 @@ func (h *Handler) wecomHandleLink(link string, reply func(lines ...string)) {
 		go func() {
 			msg, ok, fail, err := h.shareReceiveCore(shareURL, code, "", organize)
 			if err != nil {
-				NotifyMessage("🤖 StrmHub", "✗ 转存失败: "+err.Error())
+				NotifyMessage("", "✗ 转存失败: "+err.Error())
 				return
 			}
 			if ok == 0 && fail == 0 {
-				NotifyMessage("🤖 StrmHub", "分享为空，未转存任何内容")
+				NotifyMessage("", "分享为空，未转存任何内容")
 				return
 			}
-			NotifyMessage("🤖 StrmHub", "✓ "+msg+"（整理入库已自动触发）")
+			NotifyMessage("", "✓ "+msg+"（整理入库已自动触发）")
 		}()
 		return
 	}
