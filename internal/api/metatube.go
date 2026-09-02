@@ -253,16 +253,22 @@ func metatubeFetchCached(num string) *model.AVMeta {
 		saveAVMeta(&model.AVMeta{Num: key, Status: "not_found", UpdatedAt: time.Now()})
 		return nil
 	}
-	// 取第一个命中（provider 优先级由服务端排序）拉详情
-	sum := hits[0]
-	detail := sum
+	// 取第一个命中（provider 优先级由服务端排序）
+	return metatubeBuildMeta(cfg, key, hits[0])
+}
+
+// metatubeBuildMeta 从搜索摘要拉详情、构建 AVMeta 并落缓存。
+// num 必须是归一化番号（缓存主键）
+func metatubeBuildMeta(cfg MetatubeConfig, key string, sum metatubeMovie) *model.AVMeta {
+	sum2 := sum
 	detailPath := fmt.Sprintf("/v1/movies/%s/%s", url.PathEscape(sum.Provider), url.PathEscape(sum.ID))
 	if detailBody, err := metatubeGetRaw(cfg, detailPath); err != nil {
 		log.Printf("[MetaTube] ✗ 详情 %s/%s 失败: %v", sum.Provider, sum.ID, err)
 		// 详情失败就用搜索摘要（标题/封面通常已含）
 	} else if d, perr := metatubeParseMovie(detailBody); perr == nil {
-		detail = *d
+		sum2 = *d
 	}
+	detail := sum2
 	if detail.Provider == "" {
 		detail.Provider = sum.Provider
 	}
@@ -299,6 +305,45 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	// 面板显示走 /av: 代理（服务端抓取+缓存），不受内网/防盗链影响
 	saveAVMeta(meta)
 	return meta
+}
+
+// metatubeSearchTitle 标题关键词搜索（无番号 AV 的兜底识别）：
+// 命中条目必须带合法番号，构建元数据落缓存后返回。
+// 返回值第二个为展示形态番号（源站原样，如 HMN-898——缓存键是归一化形态，
+// 重命名模板需要横杠形态，两者分开）。
+// 匹配质量依赖源站搜索排序——日志会打印匹配来源，错误匹配可人工发现
+func metatubeSearchTitle(title string) (*model.AVMeta, string) {
+	if !metatubeEnabled() || title == "" {
+		return nil, ""
+	}
+	if !metatubeScrapeMu.TryLock() {
+		return nil, ""
+	}
+	defer metatubeScrapeMu.Unlock()
+	cfg := loadMetatubeCfg()
+	rawBody, err := metatubeGetRaw(cfg, "/v1/movies/search?q="+url.QueryEscape(title))
+	if err != nil {
+		log.Printf("[MetaTube] ✗ 标题搜索 %q 失败: %v", truncateStr(title, 40), err)
+		return nil, ""
+	}
+	hits, err := metatubeParseMovies(rawBody)
+	if err != nil {
+		return nil, ""
+	}
+	for _, h := range hits {
+		num := strings.TrimSpace(h.Number)
+		if num == "" || strings.TrimSpace(h.Title) == "" || strings.TrimSpace(h.Provider) == "" {
+			continue
+		}
+		meta := metatubeBuildMeta(cfg, normalizeAVNum(num), h)
+		if meta == nil || meta.Status != "ok" {
+			continue
+		}
+		log.Printf("[MetaTube] ✓ 标题匹配: %q → %s《%s》（来源 %s）",
+			truncateStr(title, 40), num, truncateStr(meta.Title, 40), meta.Provider)
+		return meta, num
+	}
+	return nil, ""
 }
 
 // avTrimNumZeros 番号数字段去前导零（JUVR-00303 → JUVR-303）

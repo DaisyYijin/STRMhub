@@ -261,3 +261,40 @@ func TestMetatubePaddedNumRetry(t *testing.T) {
 		t.Fatalf("补零番号应通过去零变体重试命中: %+v", meta)
 	}
 }
+
+func TestMetatubeSearchTitle(t *testing.T) {
+	// 无番号 AV：标题关键词搜索命中 → 按命中番号落缓存并返回展示形态番号
+	if _, err := model.InitDB("file:mt_titlesearch?mode=memory&cache=shared"); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/movies/search", func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("search hit q=%q", r.URL.Query().Get("q"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"t9","number":"HMNX-0098","title":"题名検索ヒット作","provider":"javdb","cover_url":"http://c/t.jpg","release_date":"2025-01-02","actors":["演员T"]}]}`))
+	})
+	mux.HandleFunc("/v1/movies/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"t9","number":"HMNX-0098","title":"题名検索ヒット作（详情）","provider":"javdb","release_date":"2025-01-02"}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		model.DB.Where("key = ?", "metatube").Delete(&model.Setting{})
+		model.DB.Where("1 = 1").Delete(&model.AVMeta{})
+	})
+	saveSettingRow(t, "metatube", `{"url":"`+srv.URL+`","token":"","enabled":true}`)
+
+	t.Logf("enabled=%v", metatubeEnabled())
+	meta, display := metatubeSearchTitle("题名検索ヒット作")
+	if meta == nil || meta.Status != "ok" {
+		t.Fatalf("标题搜索应命中: %+v", meta)
+	}
+	if display != "HMNX-0098" {
+		t.Errorf("展示番号应为源站原样: %q", display)
+	}
+	// 缓存键 = 归一化番号，后续按番号查询直接命中
+	if again := metatubeFetchCached("HMNX-0098"); again == nil || again.Title != "题名検索ヒット作（详情）" {
+		t.Errorf("按番号查询应命中同一缓存: %+v", again)
+	}
+}

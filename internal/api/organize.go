@@ -1399,6 +1399,17 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 				onLog(fmt.Sprintf("○ %s/ - TMDB 暂时不可达（%v），留在待整理目录下轮重试", dir.Name, err))
 				return results
 			}
+			// 无番号 AV 的标题兜底：TMDB 未命中时用目录名/标题搜 MetaTube，
+			// 命中则按命中番号走 AV 流程（元数据已落缓存，直接复用）
+			avMedia, avNumDisplay := metatubeSearchTitle(dir.Name)
+			if avMedia == nil && parsed.Title != "" && parsed.Title != dir.Name {
+				avMedia, avNumDisplay = metatubeSearchTitle(parsed.Title)
+			}
+			if avMedia != nil && avMedia.Status == "ok" && avNumDisplay != "" {
+				onLog(fmt.Sprintf("✦ MetaTube 标题匹配: %q → 番号 %s，按 AV 入库", dir.Name, avNumDisplay))
+				media2 := &TmdbMedia{Title: avNumDisplay, MediaType: "av"}
+				return processAVDirectory(ops, cfg, media2, dir, files, onLog, results)
+			}
 			moveQuietly(ops, cfg.Redundant, []string{dir.Fid}, dir.Name+"/", onLog)
 			onLog(fmt.Sprintf("○ %s/ - TMDB 未找到匹配，已移到冗余", dir.Name))
 			return results
