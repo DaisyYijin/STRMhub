@@ -143,15 +143,15 @@ func wecomMenuCreate(cfg WecomConfig) error {
 	}
 	menu := map[string]interface{}{
 		"button": []btn{
-			{Name: "自动整理", SubButton: []btn{
-				{Type: "click", Name: "115 网盘", Key: "整理"},
-				{Type: "click", Name: "123 网盘", Key: "整理123"},
+			{Name: "常用操作", SubButton: []btn{
+				{Type: "click", Name: "立即整理", Key: "整理"},
 				{Type: "click", Name: "增量同步", Key: "同步"},
+				{Type: "click", Name: "画质补全", Key: "补全"},
+				{Type: "click", Name: "任务状态", Key: "状态"},
 			}},
 			{Name: "插件功能", SubButton: []btn{
 				{Type: "click", Name: "创建 Emby 媒体库", Key: "建库"},
-				{Type: "click", Name: "ALIST 同步", Key: "alist"},
-				{Type: "click", Name: "115 文件夹清空", Key: "清空115"},
+				{Type: "click", Name: "使用帮助", Key: "帮助"},
 			}},
 			{Name: "更 新", SubButton: []btn{
 				{Type: "click", Name: "检查更新", Key: "检查更新"},

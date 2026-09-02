@@ -658,29 +658,38 @@ func gySearchTorrents(query, zy string) ([]gin.H, string, error) {
 	return gyExtractTorrents(body), body, nil
 }
 
-// gyFetchMagnet 种子详情页提取磁力链接（会话失效自动重登一次）
-func gyFetchMagnet(path string) (string, error) {
+// gyFetchMagnet 种子详情页提取磁力链接与标题（一次请求；会话失效自动重登一次）
+func gyFetchMagnet(path string) (string, string, error) {
 	cfg := loadGyCfg()
 	client := gyEnsureClient(cfg)
 	body, err := gyDo(client, cfg.BaseURL, http.MethodGet, path, nil)
 	if err != nil {
-		return "", fmt.Errorf("连接观影失败: %w", err)
+		return "", "", fmt.Errorf("连接观影失败: %w", err)
 	}
 	if gyIsNoLogin(body) {
 		if err := gyAutoLogin(cfg); err != nil {
-			return "", fmt.Errorf("登录已失效: %w", err)
+			return "", "", fmt.Errorf("登录已失效: %w", err)
 		}
 		client = gyEnsureClient(cfg)
 		body, err = gyDo(client, cfg.BaseURL, http.MethodGet, path, nil)
 		if err != nil {
-			return "", fmt.Errorf("重登后连接观影失败: %w", err)
+			return "", "", fmt.Errorf("重登后连接观影失败: %w", err)
+		}
+	}
+	title := ""
+	if objStr, ok := gyObjJSON(body, "d"); ok {
+		var d struct {
+			Title string `json:"title"`
+		}
+		if json.Unmarshal([]byte(objStr), &d) == nil {
+			title = d.Title
 		}
 	}
 	if m := reGyMagnet.FindStringSubmatch(body); m != nil {
-		return m[0], nil
+		return m[0], title, nil
 	}
 	log.Printf("[观影] ✗ 详情页未找到磁力链接（path=%s, len=%d）", path, len(body))
-	return "", fmt.Errorf("详情页未找到磁力链接（站点可能已改版，请把这条日志发给开发者）")
+	return "", "", fmt.Errorf("详情页未找到磁力链接（站点可能已改版，请把这条日志发给开发者）")
 }
 
 func (h *Handler) GySearch(c *gin.Context) {
@@ -737,7 +746,7 @@ func (h *Handler) GyResources(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少条目路径"})
 		return
 	}
-	magnet, err := gyFetchMagnet(p)
+	magnet, title, err := gyFetchMagnet(p)
 	if err != nil {
 		if strings.Contains(err.Error(), "登录已失效") {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
@@ -745,17 +754,6 @@ func (h *Handler) GyResources(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		}
 		return
-	}
-	title := ""
-	if body, berr := gyDo(gyEnsureClient(loadGyCfg()), loadGyCfg().BaseURL, http.MethodGet, p, nil); berr == nil {
-		if objStr, ok := gyObjJSON(body, "d"); ok {
-			var d struct {
-				Title string `json:"title"`
-			}
-			if json.Unmarshal([]byte(objStr), &d) == nil {
-				title = d.Title
-			}
-		}
 	}
 	log.Printf("[观影] ▣ 提取到磁力链接（%s）", truncateStr(title, 40))
 	c.JSON(http.StatusOK, gin.H{"magnet": magnet, "title": title})

@@ -503,25 +503,8 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 		categories = append(categories, gin.H{"name": cr.Category, "count": cr.Count, "posters": plist})
 	}
 
-	// ---- 后台任务（真实组件状态）----
-	running, taskName, taskSince, taskProgress := TaskStatus()
-	bg := make([]gin.H, 0, 6)
-	bg = append(bg, gin.H{"name": "定时整理+增量", "detail": h.loadIncrCron(), "running": running && strings.Contains(taskName, "定时")})
-	bg = append(bg, gin.H{"name": "转存目录守望", "detail": "每分钟检测转存目录", "running": true})
-	bg = append(bg, gin.H{"name": "离线任务监视", "detail": "每 30 秒轮询 115 离线列表", "running": true})
-	bg = append(bg, gin.H{"name": "元数据回传", "detail": "Emby 图片/NFO 回传 115", "running": true})
-	var enrichPending int64
-	h.DB.Model(&model.MediaEnrich{}).Where("status = ?", "pending").Count(&enrichPending)
-	bg = append(bg, gin.H{"name": "画质补全队列", "detail": fmt.Sprintf("待处理 %d", enrichPending), "running": enrichPending > 0})
-	bg = append(bg, gin.H{"name": "门户海报回填", "detail": "补全入库记录的海报信息", "running": false})
-
-	// ---- 当前任务 ----
-	task := gin.H{"running": running}
-	if running {
-		task["name"] = taskName
-		task["elapsed"] = time.Since(taskSince).Truncate(time.Second).String()
-		task["progress"] = taskProgress
-	}
+	// ---- 后台任务/当前任务卡片已下线，不再组装（任务状态走「任务日志」页）----
+	_, _, _, _ = TaskStatus()
 
 	// ---- 系统状态（内存/CPU）----
 	sys := gin.H{}
@@ -558,8 +541,6 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 		"weekly":         weekly,
 		"week_total":     weekTotal,
 		"categories":     categories,
-		"bg_tasks":       bg,
-		"task":           task,
 		"sys":            sys,
 		"pending_events": pendingEvents,
 	})
@@ -576,41 +557,68 @@ func saveProxyConfigToDB(h *Handler, proxyURL string) {
 }
 
 
-// StartPosterBackfill 旧数据回填：poster_path 字段上线之前的入库记录没有海报，
-// 启动后按 tmdb_id 从 TMDB 补拉存回数据库，仪表盘海报墙/分类卡才有图
+// StartPosterBackfill 旧数据回填：poster_path 字段上线之前的入库记录没有海报
+//（评分/简介同理）。启动后先跑一轮，之后每 6 小时复查——TMDB 短暂不可通
+// 不会导致永久缺数，直到清零为止。仅在缺数据的行存在时才请求 TMDB。
 func StartPosterBackfill(h *Handler) {
-	go func() {
-		time.Sleep(20 * time.Second) // 等数据库与网络就绪
+	run := func() {
 		var rows []model.MediaLibrary
-		if err := h.DB.Where("poster_path = '' AND tmdb_id <> 0 AND media_type IN ?", []string{"movie", "tv"}).Find(&rows).Error; err != nil {
-			return
-		}
-		if len(rows) == 0 {
+		// 缺海报 或 缺评分 的都补（封面生成「按评分」策略依赖 vote_average）
+		if err := h.DB.Where("tmdb_id <> 0 AND media_type IN ? AND (poster_path = '' OR vote_average = 0)",
+			[]string{"movie", "tv"}).Find(&rows).Error; err != nil || len(rows) == 0 {
 			return
 		}
 		tc, err := loadTmdbClient()
 		if err != nil {
-			return // TMDB 未配置，跳过回填
+			return // TMDB 未配置，跳过
 		}
 		fixed := 0
 		for _, m := range rows {
 			body, err := tc.get(fmt.Sprintf("/%s/%d", m.MediaType, m.TmdbID), nil)
 			if err != nil {
-				continue
+				continue // 单条失败下轮再试
 			}
 			var d struct {
-				PosterPath string `json:"poster_path"`
+				PosterPath  string  `json:"poster_path"`
+				VoteAverage float64 `json:"vote_average"`
+				Overview    string  `json:"overview"`
 			}
-			if json.Unmarshal(body, &d) != nil || d.PosterPath == "" {
+			if json.Unmarshal(body, &d) != nil {
 				continue
 			}
-			if err := h.DB.Model(&model.MediaLibrary{}).Where("id = ?", m.ID).Update("poster_path", d.PosterPath).Error; err == nil {
-				fixed++
+			upd := map[string]any{}
+			if d.PosterPath != "" && m.PosterPath == "" {
+				upd["poster_path"] = d.PosterPath
+			}
+			if d.VoteAverage > 0 && m.VoteAverage == 0 {
+				upd["vote_average"] = d.VoteAverage
+			}
+			if d.Overview != "" && m.Overview == "" {
+				upd["overview"] = truncateStr(d.Overview, 500)
+			}
+			if len(upd) > 0 {
+				if err := h.DB.Model(&model.MediaLibrary{}).Where("id = ?", m.ID).Updates(upd).Error; err == nil {
+					fixed++
+				}
 			}
 			time.Sleep(120 * time.Millisecond) // TMDB 限速保护
 		}
 		if fixed > 0 {
-			log.Printf("[海报回填] ✓ 补齐 %d 条旧记录的 TMDB 海报", fixed)
+			log.Printf("[海报回填] ✓ 本轮补齐 %d 条旧记录（海报/评分/简介）", fixed)
+		}
+	}
+	go func() {
+		time.Sleep(20 * time.Second) // 等数据库与网络就绪
+		run()
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				run()
+			case <-stopCh:
+				return
+			}
 		}
 	}()
 }

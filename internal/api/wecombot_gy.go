@@ -383,7 +383,7 @@ func (h *Handler) wecomHandleGyPick(user string, n int, reply func(...string)) {
 		path, _ := s.Torrents[n-1]["path"].(string)
 		title, _ := s.Torrents[n-1]["title"].(string)
 		reply("⏳ 提取磁力链接中…")
-		magnet, err := gyFetchMagnet(path)
+		magnet, _, err := gyFetchMagnet(path)
 		if err != nil {
 			reply("✗ " + err.Error())
 			return

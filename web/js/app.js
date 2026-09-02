@@ -82,13 +82,13 @@ const PAGE_TITLES = {
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
   'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
-  'media-transfer': ['影视转存', '影巢资源 / 观影种子 / 115 离线'],
+  'media-transfer': ['影视转存', '观影种子搜索 / 115 离线下载'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
   'dashboard': ['总览面板', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
   'config-message': ['消息配置', '企业微信与 TG 机器人'],
-  'config-extension': ['扩展功能', 'ALIST 同步等插件'],
+  'config-extension': ['扩展功能', '签到 / TG 搜索 / 封面生成等插件'],
   'tgsub': ['订阅管理', 'TG 频道关键词订阅 / 命中通知 / 自动转存'],
   'logs': ['实时日志', '同步与整理操作的服务端与本地日志'],
 };
@@ -164,7 +164,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') { loadHdhivePage(); gyLoadPage(); }
+  if (id === 'media-transfer') gyLoadPage(); // 影巢已暂停（待开发），不再加载其配置
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -2781,7 +2781,7 @@ async function loadDashboard() {
     } else {
       pb.innerHTML = '<div class="dash-empty">暂无入库</div>';
     }
-  } catch (e) {}
+  } catch (e) { console.error('[仪表盘] 加载失败:', e); }
 }
 
 function setTxt(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }

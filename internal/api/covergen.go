@@ -392,16 +392,16 @@ func (h *Handler) coverPushEmby(name string, pngData []byte) {
 	}
 }
 
-// runCoverGen 生成全部媒体库封面；返回（生成数、库名列表、错误）
-func (h *Handler) runCoverGen() (int, []string, error) {
+// runCoverGen 生成全部媒体库封面；返回（生成数、库名列表、跳过的库名、错误）
+func (h *Handler) runCoverGen() (int, []string, []string, error) {
 	cfg := h.loadCoverGenCfg()
 	libs := h.coverCollectLibs(cfg)
 	if len(libs) == 0 {
-		return 0, nil, fmt.Errorf("没有可用的媒体库分类（先完成整理入库，或检查黑名单）")
+		return 0, nil, nil, fmt.Errorf("没有可用的媒体库分类（先完成整理入库，或检查黑名单）")
 	}
 	outDir := coverOutDir(h.Config.DataDir)
 	_ = os.MkdirAll(outDir, 0o777)
-	done := []string{}
+	done, skipped := []string{}, []string{}
 	for _, lib := range libs {
 		var imgs []image.Image
 		for _, it := range lib.Items {
@@ -414,6 +414,7 @@ func (h *Handler) runCoverGen() (int, []string, error) {
 		}
 		if len(imgs) < 3 {
 			log.Printf("[封面生成] ○ %s：可用海报不足 3 张，跳过", lib.Name)
+			skipped = append(skipped, lib.Name)
 			continue
 		}
 		data, err := h.coverRender(lib.Name, imgs)
@@ -426,7 +427,7 @@ func (h *Handler) runCoverGen() (int, []string, error) {
 		h.coverPushEmby(lib.Name, data)
 		done = append(done, lib.Name)
 	}
-	return len(done), done, nil
+	return len(done), done, skipped, nil
 }
 
 // ==================== 调度与处理器 ====================
@@ -454,12 +455,12 @@ func StartCoverGenScheduler(h *Handler) {
 			coverGenLastRun = key
 			go func() {
 				defer func() { recover() }()
-				n, names, err := h.runCoverGen()
+				n, names, skipped, err := h.runCoverGen()
 				if err != nil {
 					NotifyMessage("", "▣ 媒体库封面生成失败: "+err.Error())
 					return
 				}
-				NotifyMessage("", fmt.Sprintf("▣ 媒体库封面已生成：%d 个\n%s", n, strings.Join(names, "、")))
+				NotifyMessage("", coverGenResultText(n, names, skipped))
 			}()
 		}
 	}()
@@ -486,14 +487,23 @@ func (h *Handler) CoverGenSaveConfig(c *gin.Context) {
 func (h *Handler) CoverGenRun(c *gin.Context) {
 	go func() {
 		defer func() { recover() }()
-		n, names, err := h.runCoverGen()
+		n, names, skipped, err := h.runCoverGen()
 		if err != nil {
 			NotifyMessage("", "▣ 媒体库封面生成失败: "+err.Error())
 			return
 		}
-		NotifyMessage("", fmt.Sprintf("▣ 媒体库封面已生成：%d 个\n%s\n可在「媒体库海报 → 查看封面」预览", n, strings.Join(names, "、")))
+		NotifyMessage("", coverGenResultText(n, names, skipped)+"\n可在「扩展功能 → 媒体库海报」预览")
 	}()
 	c.JSON(http.StatusOK, gin.H{"message": "封面生成已开始，完成后通知"})
+}
+
+// coverGenResultText 生成结果文案（跳过的库点名原因）
+func coverGenResultText(n int, names, skipped []string) string {
+	b := fmt.Sprintf("▣ 媒体库封面已生成：%d 个\n%s", n, strings.Join(names, "、"))
+	if len(skipped) > 0 {
+		b += fmt.Sprintf("\n\n○ 跳过 %d 个（可用海报不足 3 张，多为旧数据待回填）：\n%s", len(skipped), strings.Join(skipped, "、"))
+	}
+	return b
 }
 
 // CoverGenList GET /covergen/list：已生成的封面清单

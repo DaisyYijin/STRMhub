@@ -141,8 +141,13 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 				libNames += lib.Name
 			}
 			if refreshed > 0 {
-				// 入库通知（Emby-notify 卡的消费方）：刷新已提交 = 内容即将入库
-				go NotifyMessage("🎬 媒体入库", "已刷新媒体库：" + libNames)
+				// 配置了 Emby webhook 入库通知时，入库卡片（带海报）会随后到达，
+				// 这里只记日志避免双重通知；未配置 webhook 时才发这条提示
+				if h.embyWebhookConfigured() {
+					log.Printf("Emby 已提交刷新（%s）；webhook 入库通知已配置，跳过本条消息", libNames)
+				} else {
+					go NotifyMessage("🎬 媒体入库", "已刷新媒体库：" + libNames)
+				}
 				return
 			}
 			log.Printf("Emby 按库刷新：变更路径未命中任何媒体库（%s），回退路径通知", embyPath)
@@ -388,4 +393,15 @@ func (h *Handler) TestEmbyConnection(c *gin.Context) {
 		"version":       info.Version,
 		"library_count": libraryCount,
 	})
+}
+
+// embyWebhookConfigured 是否配置了 Emby webhook 入库通知（emby-notify 卡）
+func (h *Handler) embyWebhookConfigured() bool {
+	var cfg struct {
+		Webhook string `json:"webhook"`
+	}
+	if json.Unmarshal([]byte(h.getSettingValue("emby-notify")), &cfg) != nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Webhook) != ""
 }

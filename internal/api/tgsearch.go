@@ -120,7 +120,15 @@ func (h *Handler) TgSearchSearch(c *gin.Context) {
 		}
 	}
 	if len(channels) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在配置里填写频道（每行一个）"})
+		// 未配置频道 → 回退订阅管理的订阅源（单一频道来源，避免三处配置打架）
+		for _, s := range h.loadTgSubCfg().Sources {
+			if ch := tgSubParseChannel(s.URL); ch != "" {
+				channels = append(channels, ch)
+			}
+		}
+	}
+	if len(channels) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在「订阅管理」添加订阅源，或在 TG 搜索配置里填写频道（每行一个）"})
 		return
 	}
 

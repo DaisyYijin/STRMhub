@@ -184,7 +184,7 @@ type MediaEnrich struct {
 	FileID    string    `json:"file_id" gorm:"index;size:64"`            // 115 文件 id
 	PickCode  string    `json:"pick_code" gorm:"size:64"`                // 直链探测用
 	FileName  string    `json:"file_name" gorm:"size:255"`               // 当前文件名
-	Status    string    `json:"status" gorm:"size:20;default:"pending"`  // pending/done/failed/skipped
+	Status    string    `json:"status" gorm:"size:20;default:pending"`  // pending/done/failed/skipped
 	Message   string    `json:"message" gorm:"size:255"`                 // 结果说明
 	Attempts  int       `json:"attempts"`                                // 重试次数
 	CreatedAt time.Time `json:"created_at"`

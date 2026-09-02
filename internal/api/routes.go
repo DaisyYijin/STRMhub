@@ -310,6 +310,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/embyimg", func(c *gin.Context) { h.EmbyImageProxy(c) })
 		// TMDB 海报代理（影视转存选片弹窗；<img> 标签带不了登录态，须挂公开路由）
 		r.GET("/tmdb/img", h.TmdbImg)
+		// 封面预览（img 加载，无鉴权；仅读本地生成的封面文件）
+		r.GET("/covergen/preview", h.CoverGenPreview)
 		// QQ OneBot 事件回调（NapCat 等推送事件；token 鉴权，私聊管理 QQ 触发指令）
 		r.POST("/onebot/event", h.OneBotEvent)
 
@@ -400,7 +402,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/covergen/config", h.CoverGenSaveConfig)
 		protected.POST("/covergen/run", h.CoverGenRun)
 		protected.GET("/covergen/list", h.CoverGenList)
-		protected.GET("/covergen/preview", h.CoverGenPreview)
 
 		// TG 关键词订阅（频道轮询 → 水位去重 → 命中通知/自动转存）
 		protected.GET("/tgsub/config", h.TgSubGetConfig)

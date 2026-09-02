@@ -104,6 +104,7 @@ func (h *Handler) tgSubCheck(silent bool) {
 		return
 	}
 	changed := false
+	seenMsg := map[string]bool{} // 单轮全局去重：同一消息命中多个关键词只处理一次
 	for i := range cfg.Items {
 		item := &cfg.Items[i]
 		channels := item.Channels
@@ -131,7 +132,11 @@ func (h *Handler) tgSubCheck(silent bool) {
 					maxID = it.MsgID
 				}
 				if it.MsgID > item.LastID {
-					hits = append(hits, it)
+					key := fmt.Sprintf("%s/%d", it.Channel, it.MsgID)
+					if !seenMsg[key] {
+						seenMsg[key] = true
+						hits = append(hits, it)
+					}
 				}
 			}
 			time.Sleep(800 * time.Millisecond) // 频道间节流
@@ -170,7 +175,12 @@ func (h *Handler) tgSubCheck(silent bool) {
 // tgSubAutoSave 自动入库：115 分享走转存，磁力/ed2k 提交离线下载
 func (h *Handler) tgSubAutoSave(link, pass string) {
 	if is115ShareLink(link) {
-		msg, ok, fail, err := h.shareReceiveCore(link, pass, h.shareFolderCid(), true)
+		// 转存目录与 TG 频道搜索插件保持一致：其配置目录优先，回退分享接收目录
+		target := h.loadTgSearchCfg().Target
+		if strings.TrimSpace(target) == "" {
+			target = h.shareFolderCid()
+		}
+		msg, ok, fail, err := h.shareReceiveCore(link, pass, target, true)
 		if err != nil {
 			log.Printf("[TG订阅] ✗ 自动转存失败: %v", err)
 			return
@@ -189,13 +199,28 @@ func (h *Handler) tgSubAutoSave(link, pass string) {
 
 // ==================== 调度与处理器 ====================
 
-var tgSubLastRun time.Time
+var (
+	tgSubLastRunMu sync.Mutex
+	tgSubLastRun   time.Time
+)
+
+func tgSubMarkRun() {
+	tgSubLastRunMu.Lock()
+	tgSubLastRun = time.Now()
+	tgSubLastRunMu.Unlock()
+}
+
+func tgSubSinceLastRun() time.Duration {
+	tgSubLastRunMu.Lock()
+	defer tgSubLastRunMu.Unlock()
+	return time.Since(tgSubLastRun)
+}
 
 func StartTgSubScheduler(h *Handler) {
 	go func() {
 		time.Sleep(40 * time.Second)
 		h.tgSubCheck(true) // 首轮只建水位
-		tgSubLastRun = time.Now()
+		tgSubMarkRun()
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
@@ -209,10 +234,10 @@ func StartTgSubScheduler(h *Handler) {
 			if interval < 5 {
 				interval = 5
 			}
-			if time.Since(tgSubLastRun) < time.Duration(interval)*time.Minute {
+			if tgSubSinceLastRun() < time.Duration(interval)*time.Minute {
 				continue
 			}
-			tgSubLastRun = time.Now()
+			tgSubMarkRun()
 			go h.tgSubCheck(false)
 		}
 	}()
@@ -270,7 +295,7 @@ func (h *Handler) TgSubSaveConfig(c *gin.Context) {
 
 // TgSubRun POST /tgsub/run：立即检查一轮（新消息会通知）
 func (h *Handler) TgSubRun(c *gin.Context) {
-	tgSubLastRun = time.Now()
+	tgSubMarkRun()
 	go h.tgSubCheck(false)
 	c.JSON(http.StatusOK, gin.H{"message": "检查已开始，命中会推送通知"})
 }
