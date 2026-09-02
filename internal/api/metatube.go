@@ -244,6 +244,9 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	if detail.ID == "" {
 		detail.ID = sum.ID
 	}
+	if detail.CoverURL == "" {
+		detail.CoverURL = sum.CoverURL // 详情缺封面时回退搜索摘要
+	}
 	year := ""
 	if d := detail.ReleaseDate; len(d) >= 4 {
 		year = d[:4]
