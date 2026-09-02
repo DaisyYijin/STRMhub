@@ -291,7 +291,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	var resp *http.Response
 	var err error
 	for _, ep := range []string{
-		"https://proapi.115.com/android/2.0/u.file/download",
+		"https://proapi.115.com/android/2.0/ufile/download",
 		"https://pro.api.115.com/android/2.0/ufile/download",
 	} {
 		body, resp, err = post115FormResp(ep, form, cookie, signUA, 15*time.Second)
