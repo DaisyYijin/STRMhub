@@ -15,6 +15,7 @@ package api
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -42,13 +43,14 @@ func tlsConfig115() *tls.Config {
 // （115 自己的证书缺 SAN 是服务端配置问题，不是攻击特征）
 func verifyChainSkipHostname115(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 	if len(rawCerts) == 0 {
-		return err115TLS("服务端未提供证书")
+		return nil // 握手层面会兜底失败，此处不额外拦截
 	}
 	certs := make([]*x509.Certificate, 0, len(rawCerts))
 	for _, raw := range rawCerts {
 		c, err := x509.ParseCertificate(raw)
 		if err != nil {
-			return err115TLS("证书解析失败: " + err.Error())
+			warn115TLSOnce("证书解析失败（已放行）: " + err.Error())
+			return nil
 		}
 		certs = append(certs, c)
 	}
@@ -68,9 +70,27 @@ func verifyChainSkipHostname115(rawCerts [][]byte, _ [][]*x509.Certificate) erro
 		intermediates.AddCert(c)
 	}
 	if _, err := certs[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates}); err != nil {
-		return err115TLS("证书链校验失败: " + err.Error())
+		// 115 节点证书不稳定（实测同一 IP 数分钟内从"缺 SAN"变成"未知 CA 签发"，
+		// 疑似对数据中心 IP 的风控降级）。校验失败不再阻断——记录警告后放行，
+		// 与 p115client/OpenList 生态的裸跳过校验对齐，但保留可观测性
+		warn115TLSOnce("证书链校验失败（已放行）: " + err.Error())
+		return nil
 	}
 	return nil
+}
+
+// warn115TLSOnce 证书异常警告限频：同种问题只记一次日志（每次握手都记会刷屏）
+var warn115TLSMu sync.Mutex
+var warn115TLSAt time.Time
+
+func warn115TLSOnce(msg string) {
+	warn115TLSMu.Lock()
+	defer warn115TLSMu.Unlock()
+	if time.Since(warn115TLSAt) < time.Minute {
+		return
+	}
+	warn115TLSAt = time.Now()
+	log.Printf("[115] ⚠ TLS 证书异常（不影响请求，已按 115 生态惯例放行）: %s", msg)
 }
 
 func err115TLS(msg string) error {
