@@ -339,12 +339,24 @@ func (h *Handler) MetatubeCheck(c *gin.Context) {
 		return
 	}
 	start := time.Now()
+	// 第一段：/v1/providers（公开端点）验证地址可达
 	var providers struct {
 		MovieProviders json.RawMessage `json:"movie_providers"`
 		ActorProviders json.RawMessage `json:"actor_providers"`
 	}
 	if err := metatubeGet(cfg, "/v1/providers", &providers); err != nil {
-		c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": truncateStr(err.Error(), 160)})
+		c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "服务器不可达: " + truncateStr(err.Error(), 150)})
+		return
+	}
+	// 第二段：/v1/movies/search（token 保护端点）验证 token 真实有效。
+	// providers 不校验 token，只测它会出现"随便填 token 也成功"的假象
+	var probe []metatubeMovie
+	if err := metatubeGet(cfg, "/v1/movies/search?q=test", &probe); err != nil {
+		if strings.Contains(err.Error(), "401") {
+			c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "Token 错误：服务器已开启认证，请填写部署时设置的 MT_TOKEN"})
+		} else {
+			c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "搜索接口异常: " + truncateStr(err.Error(), 150)})
+		}
 		return
 	}
 	n := len(metatubeJSONStrings(providers.MovieProviders)) + len(metatubeJSONStrings(providers.ActorProviders))
