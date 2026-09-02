@@ -117,8 +117,9 @@ func metatubeActorNames(raw json.RawMessage) []string {
 
 var metatubeClient = &nethttp.Client{Timeout: 15 * time.Second}
 
-// metatubeGet 调用 metatube-server（自动带上 token），解析 JSON 到 out
-func metatubeGet(cfg MetatubeConfig, apiPath string, out any) error {
+// metatubeGetRaw 调用 metatube-server（自动带上 token）返回原始响应体。
+// 认证双保险：URL ?token= 参数 + Authorization: Bearer 头都带上
+func metatubeGetRaw(cfg MetatubeConfig, apiPath string) ([]byte, error) {
 	u := cfg.URL + apiPath
 	if cfg.Token != "" {
 		sep := "?"
@@ -129,21 +130,68 @@ func metatubeGet(cfg MetatubeConfig, apiPath string, out any) error {
 	}
 	req, err := nethttp.NewRequest(nethttp.MethodGet, u, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	}
 	resp, err := metatubeClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != nethttp.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 120))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 120))
+	}
+	return body, nil
+}
+
+// metatubeGet 调用 metatube-server 并解析 JSON 到 out
+func metatubeGet(cfg MetatubeConfig, apiPath string, out any) error {
+	body, err := metatubeGetRaw(cfg, apiPath)
+	if err != nil {
+		return err
 	}
 	return json.Unmarshal(body, out)
+}
+
+// metatubeParseMovies 搜索结果兼容解析：新版返回 {"result":[…]} 包裹对象，
+// 旧版/其他部署可能返回裸数组，两种都认
+func metatubeParseMovies(raw []byte) ([]metatubeMovie, error) {
+	var arr []metatubeMovie
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return arr, nil
+	}
+	var wrapper struct {
+		Result []metatubeMovie `json:"result"`
+		Data   []metatubeMovie `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err == nil {
+		if len(wrapper.Result) > 0 {
+			return wrapper.Result, nil
+		}
+		return wrapper.Data, nil
+	}
+	return nil, fmt.Errorf("响应格式无法解析: %s", truncateStr(string(raw), 80))
+}
+
+// metatubeParseMovie 详情兼容解析：详情为对象本体；万一被 {"result":{…}}
+// 包裹（字段全空时尝试解包），也能取出
+func metatubeParseMovie(raw []byte) (*metatubeMovie, error) {
+	var m metatubeMovie
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	if m.Title == "" && m.CoverURL == "" && m.ID == "" {
+		var wrapper struct {
+			Result *metatubeMovie `json:"result"`
+		}
+		if json.Unmarshal(raw, &wrapper) == nil && wrapper.Result != nil {
+			return wrapper.Result, nil
+		}
+	}
+	return &m, nil
 }
 
 // metatubeScrapeMu 批量整理时防止并发重复刮削同一批番号（双引擎竞态）
@@ -179,9 +227,14 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	defer metatubeScrapeMu.Unlock()
 
 	cfg := loadMetatubeCfg()
-	var hits []metatubeMovie
-	if err := metatubeGet(cfg, "/v1/movies/search?q="+url.QueryEscape(num), &hits); err != nil {
+	rawBody, err := metatubeGetRaw(cfg, "/v1/movies/search?q="+url.QueryEscape(num))
+	if err != nil {
 		log.Printf("[MetaTube] ✗ 搜索 %s 失败: %v", num, err)
+		return nil
+	}
+	hits, err := metatubeParseMovies(rawBody)
+	if err != nil {
+		log.Printf("[MetaTube] ✗ 搜索 %s 响应解析失败: %v", num, err)
 		return nil
 	}
 	if len(hits) == 0 {
@@ -190,11 +243,13 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	}
 	// 取第一个命中（provider 优先级由服务端排序）拉详情
 	sum := hits[0]
-	var detail metatubeMovie
+	detail := sum
 	detailPath := fmt.Sprintf("/v1/movies/%s/%s", url.PathEscape(sum.Provider), url.PathEscape(sum.ID))
-	if err := metatubeGet(cfg, detailPath, &detail); err != nil {
+	if detailBody, err := metatubeGetRaw(cfg, detailPath); err != nil {
 		log.Printf("[MetaTube] ✗ 详情 %s/%s 失败: %v", sum.Provider, sum.ID, err)
-		detail = sum // 详情失败就用搜索摘要（标题/封面通常已含）
+		// 详情失败就用搜索摘要（标题/封面通常已含）
+	} else if d, perr := metatubeParseMovie(detailBody); perr == nil {
+		detail = *d
 	}
 	year := ""
 	if d := detail.ReleaseDate; len(d) >= 4 {
@@ -350,13 +405,17 @@ func (h *Handler) MetatubeCheck(c *gin.Context) {
 	}
 	// 第二段：/v1/movies/search（token 保护端点）验证 token 真实有效。
 	// providers 不校验 token，只测它会出现"随便填 token 也成功"的假象
-	var probe []metatubeMovie
-	if err := metatubeGet(cfg, "/v1/movies/search?q=test", &probe); err != nil {
+	probeBody, err := metatubeGetRaw(cfg, "/v1/movies/search?q=test")
+	if err != nil {
 		if strings.Contains(err.Error(), "401") {
 			c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "Token 错误：服务器已开启认证，请填写部署时设置的 MT_TOKEN"})
 		} else {
 			c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "搜索接口异常: " + truncateStr(err.Error(), 150)})
 		}
+		return
+	}
+	if _, err := metatubeParseMovies(probeBody); err != nil {
+		c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "搜索接口响应格式异常: " + truncateStr(err.Error(), 150)})
 		return
 	}
 	n := len(metatubeJSONStrings(providers.MovieProviders)) + len(metatubeJSONStrings(providers.ActorProviders))

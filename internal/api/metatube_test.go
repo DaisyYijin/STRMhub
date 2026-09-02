@@ -101,6 +101,27 @@ func TestMetatubeFetchCachedFlow(t *testing.T) {
 	}
 }
 
+func TestMetatubeWrapperFormat(t *testing.T) {
+	// 新版 metatube-server 搜索返回 {"result":[…]} 包裹对象
+	search := `{"result":[{"provider":"javdb","id":"xyz","title":"包装格式作品","title_number":"GGG-111","cover_url":"http://c/x.jpg","release_date":"2024-02-03"}],"took":1.2}`
+	detail := `{"provider":"javdb","id":"xyz","title":"包装格式作品 详情","description":"简介","release_date":"2024-02-03","runtime":100,"actors":[{"name":"演员C"}],"genres":["剧情"]}`
+	metatubeTestSetup(t, "mt_wrapper", search, detail)
+
+	meta := metatubeFetchCached("GGG-111")
+	if meta == nil || meta.Status != "ok" {
+		t.Fatalf("包裹格式搜索应命中: %+v", meta)
+	}
+	if meta.Title != "包装格式作品 详情" {
+		t.Errorf("详情标题错误: %q", meta.Title)
+	}
+	if meta.Year != "2024" {
+		t.Errorf("年份错误: %q", meta.Year)
+	}
+	if actors := avMetaActors(meta); len(actors) != 1 || actors[0] != "演员C" {
+		t.Errorf("演员解析错误: %v", actors)
+	}
+}
+
 func TestMetatubeNotFoundTTL(t *testing.T) {
 	_, hits := metatubeTestSetup(t, "mt_notfound", `[]`, `{}`)
 	if meta := metatubeFetchCached("XYZ-999"); meta != nil {
