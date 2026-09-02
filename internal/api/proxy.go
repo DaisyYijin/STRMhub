@@ -7,8 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strconv"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -153,7 +153,7 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 // streamVia 服务端中转拉流：取直链并转发字节流。
 // 仅用于不发 User-Agent 的播放器（302 对它们无效），透传 Range 支持拖动。
 // 签发 UA 用浏览器 UA（ua115Download）：实测浏览器 UA 拿到的直链免 Cookie
-//（f=1/2 型）；ua115Unified 拿到的是 f=3 型（强绑 Set-Cookie，矩阵也过不去）。
+// （f=1/2 型）；ua115Unified 拿到的是 f=3 型（强绑 Set-Cookie，矩阵也过不去）。
 // 仍保留 Cookie 组合矩阵兜底，且免 Cookie 组合优先（快，避免播放器超时）
 func streamVia(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string) {
 	rawURL, hdrs, err := proxyDownloadURLFull(db, cfg, pickcode, ua115Download)
@@ -281,12 +281,30 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 		signUA = ua115Download // 默认浏览器 UA（附属文件下载等自有场景）
 	}
 	// ---- 首选：App 加密接口（用签发 UA 请求，直链即绑定该 UA）----
-	appErr := "未尝试"
+	// 双端点轮询：proapi.115.com（p115client/OpenList 同款）与
+	// pro.api.115.com（openStrm 同款）是独立风控的两台主机——实测一个
+	// 被 410/证书降级时另一个常可用
+	appErr := ""
 	payload, _ := json.Marshal(map[string]string{"pick_code": pickcode})
 	form := url.Values{"data": {encrypt115(payload)}}
-	body, resp, err := post115FormResp("https://pro.api.115.com/android/2.0/ufile/download", form, cookie, signUA, 15*time.Second)
+	var body []byte
+	var resp *http.Response
+	var err error
+	for _, ep := range []string{
+		"https://proapi.115.com/android/2.0/u.file/download",
+		"https://pro.api.115.com/android/2.0/ufile/download",
+	} {
+		body, resp, err = post115FormResp(ep, form, cookie, signUA, 15*time.Second)
+		if err == nil {
+			break
+		}
+		appErr += ep + " 请求失败: " + err.Error() + "；"
+	}
+	if appErr == "" {
+		appErr = "未尝试"
+	}
 	if err != nil {
-		appErr = "请求失败: " + err.Error()
+		// 双端点全失败：appErr 已含各自原因，走 webapi 回退
 	} else {
 		var env struct {
 			State   json.RawMessage `json:"state"`
@@ -346,7 +364,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	}
 
 	var result struct {
-		State bool   `json:"state"`
+		State bool `json:"state"`
 		URL   struct {
 			URL string `json:"url"`
 		} `json:"url"`
@@ -358,12 +376,19 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	if err := json.Unmarshal(body, &result); err == nil {
 		if !result.State {
 			var e struct {
-				Error string `json:"error"`
+				Error  string `json:"error"`
+				ErrNo  int    `json:"errno"`
+				ErrNo2 int    `json:"errNo"`
 			}
 			_ = json.Unmarshal(body, &e)
 			msg := e.Error
 			if msg == "" {
 				msg = "未知错误"
+			}
+			if e.ErrNo != 0 {
+				msg += fmt.Sprintf("（errno=%d）", e.ErrNo)
+			} else if e.ErrNo2 != 0 {
+				msg += fmt.Sprintf("（errNo=%d）", e.ErrNo2)
 			}
 			return "", nil, fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: 拒绝: %s", appErr, msg)
 		}
