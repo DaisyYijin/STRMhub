@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,9 +27,53 @@ type TgSubItem struct {
 	LastHit  string `json:"last_hit"` // 最近一次命中时间
 }
 
+// TgSubSource 订阅源（频道）
+type TgSubSource struct {
+	ID       int64  `json:"id"`
+	Type     string `json:"type"`     // tg
+	Name     string `json:"name"`
+	URL      string `json:"url"`      // https://t.me/xxx 或 @xxx
+	Priority int    `json:"priority"` // 越大越优先，默认 10
+	Note     string `json:"note"`
+}
+
 type tgSubCfg struct {
-	Items       []TgSubItem `json:"items"`
-	IntervalMin int         `json:"interval_min"` // 检查间隔（分钟），最小 5，默认 30
+	Sources     []TgSubSource `json:"sources"`
+	Items       []TgSubItem   `json:"items"`
+	IntervalMin int           `json:"interval_min"` // 检查间隔（分钟），最小 5，默认 30
+}
+
+// tgSubParseChannel 从链接/@名/裸名解析频道名（https://t.me/xxx → xxx）
+func tgSubParseChannel(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "t.me/"); i >= 0 {
+		s = s[i+5:]
+		s = strings.TrimPrefix(s, "s/")
+	}
+	s = strings.TrimPrefix(s, "@")
+	if j := strings.IndexAny(s, "?#/"); j >= 0 {
+		s = s[:j]
+	}
+	return strings.TrimSpace(s)
+}
+
+// tgSubSourceChannels 订阅源频道列表（按优先级从高到低）
+func tgSubSourceChannels(cfg tgSubCfg) []string {
+	srcs := append([]TgSubSource(nil), cfg.Sources...)
+	sort.Slice(srcs, func(i, j int) bool { return srcs[i].Priority > srcs[j].Priority })
+	var out []string
+	for _, s := range srcs {
+		if s.Type != "" && s.Type != "tg" {
+			continue
+		}
+		if ch := tgSubParseChannel(s.URL); ch != "" {
+			out = append(out, ch)
+		}
+	}
+	return out
 }
 
 func (h *Handler) loadTgSubCfg() tgSubCfg {
@@ -63,7 +108,11 @@ func (h *Handler) tgSubCheck(silent bool) {
 		item := &cfg.Items[i]
 		channels := item.Channels
 		if strings.TrimSpace(channels) == "" {
-			channels = h.loadTgSearchCfg().Channels // 默认用 TG 搜索的全局频道
+			// 默认检查全部订阅源（按优先级），没有订阅源时回退 TG 搜索全局频道
+			channels = strings.Join(tgSubSourceChannels(cfg), "\n")
+			if strings.TrimSpace(channels) == "" {
+				channels = h.loadTgSearchCfg().Channels
+			}
 		}
 		firstRun := item.LastID == 0
 		var maxID int64
@@ -185,8 +234,8 @@ func (h *Handler) TgSubSaveConfig(c *gin.Context) {
 	if req.IntervalMin < 5 {
 		req.IntervalMin = 5
 	}
-	// 新条目分配 ID（LastID 保持 0 → 下轮只建水位，不轰炸历史）
-	var maxID int64 = 1
+	// 新条目/新订阅源分配 ID（LastID 保持 0 → 下轮只建水位，不轰炸历史）
+	var maxID, maxSrcID int64 = 1, 1
 	for _, it := range req.Items {
 		if it.ID > maxID {
 			maxID = it.ID
@@ -196,6 +245,23 @@ func (h *Handler) TgSubSaveConfig(c *gin.Context) {
 		if req.Items[i].ID == 0 {
 			maxID++
 			req.Items[i].ID = maxID
+		}
+	}
+	for _, s := range req.Sources {
+		if s.ID > maxSrcID {
+			maxSrcID = s.ID
+		}
+	}
+	for i := range req.Sources {
+		if req.Sources[i].ID == 0 {
+			maxSrcID++
+			req.Sources[i].ID = maxSrcID
+			if req.Sources[i].Priority == 0 {
+				req.Sources[i].Priority = 10
+			}
+			if req.Sources[i].Type == "" {
+				req.Sources[i].Type = "tg"
+			}
 		}
 	}
 	h.saveTgSubCfg(req)

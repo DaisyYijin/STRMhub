@@ -1698,46 +1698,88 @@ async function coverGenLoadList() {
 
 // ==================== TG 订阅管理 ====================
 async function tgSubLoadPage() {
-  await tgSubRenderList();
-  try {
-    const d = await api('/tgsub/config');
-    setVal('tgsub-interval', (d.data || {}).interval_min || 30);
-  } catch (e) { /* 忽略 */ }
+  await tgSubRenderAll();
 }
 
-async function tgSubRenderList() {
-  const box = document.getElementById('tgsub-list');
-  try {
-    const d = await api('/tgsub/config');
-    const items = (d.data || {}).items || [];
-    if (!items.length) { box.innerHTML = '<div class="dash-empty">还没有订阅，添加一个关键词开始追更</div>'; return; }
-    box.innerHTML = items.map(it =>
-      '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
-      + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(it.keyword) + '</b>'
-      + '<div style="font-size:11.5px;color:var(--text-3)">' + (it.channels ? esc(String(it.channels).split('\n').join(' ')) : '全局频道')
-      + (it.auto ? ' · 自动转存' : '') + (it.last_hit ? ' · 最近命中 ' + esc(it.last_hit) : '') + '</div></div>'
-      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubDel(\'' + it.id + '\')">删除</button></div>'
-    ).join('');
-  } catch (e) { box.innerHTML = '<span style="color:var(--danger)">加载失败</span>'; }
+async function tgSubFetchCfg() {
+  const d = await api('/tgsub/config');
+  return d.data || { sources: [], items: [], interval_min: 30 };
 }
 
-async function tgSubPersist(items, intervalMin, btn, doneMsg) {
+async function tgSubPersist(cfg, btn, doneMsg) {
   if (btn) btn.disabled = true;
   try {
-    await api('/tgsub/config', { method: 'POST', body: JSON.stringify({ items: items, interval_min: intervalMin || 30 }) });
+    await api('/tgsub/config', { method: 'POST', body: JSON.stringify(cfg) });
     toast(doneMsg || '已保存');
-    await tgSubRenderList();
+    await tgSubRenderAll();
   } catch (e) { toast('保存失败：' + e.message); }
   if (btn) btn.disabled = false;
+}
+
+// 渲染订阅源 + 关键词订阅两个列表
+async function tgSubRenderAll() {
+  let cfg;
+  try { cfg = await tgSubFetchCfg(); } catch (e) {
+    document.getElementById('tgsub-src-list').innerHTML = '<span style="color:var(--danger)">加载失败</span>';
+    document.getElementById('tgsub-list').innerHTML = '';
+    return;
+  }
+  const srcBox = document.getElementById('tgsub-src-list');
+  const sources = cfg.sources || [];
+  srcBox.innerHTML = sources.length ? sources.map(s =>
+    '<div style="display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
+    + '<span class="login-badge on" style="padding:2px 10px">TG</span>'
+    + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(s.name) + '</b>'
+    + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(s.url) + (s.note ? ' · ' + esc(s.note) : '') + '</div></div>'
+    + '<span style="font-size:11.5px;color:var(--text-3)">优先级 ' + (s.priority || 10) + '</span>'
+      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubSrcDel(\'' + s.id + '\')">删除</button></div>'
+  ).join('') : '<div class="dash-empty">还没有订阅源，点右上角「新增订阅源」添加 TG 频道</div>';
+
+  const box = document.getElementById('tgsub-list');
+  const items = cfg.items || [];
+  box.innerHTML = items.length ? items.map(it =>
+    '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
+    + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(it.keyword) + '</b>'
+      + '<div style="font-size:11.5px;color:var(--text-3)">' + (it.channels ? esc(String(it.channels).split('\n').join(' ')) : '全部订阅源')
+    + (it.auto ? ' · 自动转存' : '') + (it.last_hit ? ' · 最近命中 ' + esc(it.last_hit) : '') + '</div></div>'
+      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubDel(\'' + it.id + '\')">删除</button></div>'
+  ).join('') : '<div class="dash-empty">还没有关键词订阅，在下方添加</div>';
+  const iv = document.getElementById('tgsub-interval');
+  if (iv) iv.value = cfg.interval_min || 30;
+}
+
+function tgSubSrcModal() { document.getElementById('tgsub-src-modal').style.display = 'flex'; }
+function tgSubSrcModalClose() { document.getElementById('tgsub-src-modal').style.display = 'none'; }
+
+async function tgSubSrcAdd(btn) {
+  const name = val('tgsub-src-name').trim();
+  const u = val('tgsub-src-url').trim();
+  if (!name || !u) { toast('订阅名称和地址必填'); return; }
+  const cfg = await tgSubFetchCfg();
+  cfg.sources = cfg.sources || [];
+  cfg.sources.push({
+    type: val('tgsub-src-type') || 'tg',
+    name: name,
+    url: u,
+    priority: parseInt(val('tgsub-src-priority'), 10) || 10,
+    note: val('tgsub-src-note').trim(),
+  });
+  await tgSubPersist(cfg, btn, '订阅源已添加');
+  tgSubSrcModalClose();
+}
+
+async function tgSubSrcDel(id) {
+  const cfg = await tgSubFetchCfg();
+  cfg.sources = (cfg.sources || []).filter(s => String(s.id) !== String(id));
+  await tgSubPersist(cfg, null, '订阅源已删除');
 }
 
 async function tgSubAdd(btn) {
   const kw = val('tgsub-keyword').trim();
   if (!kw) { toast('请填写关键词'); return; }
-  const d = await api('/tgsub/config');
-  const cfg = d.data || {};
-  const items = cfg.items || [];
-  items.push({
+  const cfg = await tgSubFetchCfg();
+  cfg.items = cfg.items || [];
+  cfg.items.push({
     keyword: kw,
     channels: val('tgsub-channels').trim(),
     auto: document.getElementById('tgsub-auto').checked,
@@ -1746,14 +1788,13 @@ async function tgSubAdd(btn) {
   document.getElementById('tgsub-keyword').value = '';
   document.getElementById('tgsub-channels').value = '';
   document.getElementById('tgsub-auto').checked = false;
-  await tgSubPersist(items, cfg.interval_min || 30, btn, '订阅已添加');
+  await tgSubPersist(cfg, btn, '订阅已添加');
 }
 
 async function tgSubDel(id) {
-  const d = await api('/tgsub/config');
-  const cfg = d.data || {};
-  const items = (cfg.items || []).filter(it => String(it.id) !== String(id));
-  await tgSubPersist(items, cfg.interval_min || 30, null, '已删除');
+  const cfg = await tgSubFetchCfg();
+  cfg.items = (cfg.items || []).filter(it => String(it.id) !== String(id));
+  await tgSubPersist(cfg, null, '已删除');
 }
 
 async function tgSubRunNow(btn) {
@@ -1766,9 +1807,9 @@ async function tgSubRunNow(btn) {
 }
 
 async function tgSubSaveInterval(btn) {
-  const d = await api('/tgsub/config');
-  const cfg = d.data || {};
-  await tgSubPersist(cfg.items || [], parseInt(val('tgsub-interval'), 10) || 30, btn, '检查间隔已保存');
+  const cfg = await tgSubFetchCfg();
+  cfg.interval_min = parseInt(val('tgsub-interval'), 10) || 30;
+  await tgSubPersist(cfg, btn, '检查间隔已保存');
 }
 
 // ==================== GPT 测试连接 ====================
