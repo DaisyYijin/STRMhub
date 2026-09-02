@@ -1506,7 +1506,8 @@ async function pan123LoadUI() {
     setVal('pan123-target', c.target_id || '');
     setVal('pan123-local', c.local_path || '/media');
     const st = document.getElementById('pan123-login-status');
-    if (st && c.token) st.textContent = '✓ 已登录（' + (c.token_exp || '') + ' 前有效）';
+    if (st && c.token) renderLoginBadge(st, 'on', (c.token_exp || '') + ' 前有效');
+    else if (st) renderLoginBadge(st, 'off');
   } catch (e) { /* 首次为空 */ }
 }
 
@@ -1519,7 +1520,7 @@ let pan123QrTimer = null;
 
 async function pan123QrLogin() {
   const status = document.getElementById('pan123-login-status');
-  status.textContent = '获取二维码中…';
+  renderLoginBadge(status, 'off', '获取二维码中…');
   try {
     const d = await api('/pan123/qrcode', { method: 'POST' });
     document.getElementById('qrcode-modal').style.display = 'flex';
@@ -1544,7 +1545,7 @@ async function pan123QrLogin() {
           clearInterval(pan123QrTimer);
           document.getElementById('qrcode-status').textContent = '✓ ' + (p.message || '登录成功');
           setTimeout(() => { document.getElementById('qrcode-modal').style.display = 'none'; }, 1200);
-          status.textContent = '✓ 已登录（30 天内有效）';
+          renderLoginBadge(status, 'on', '30 天内有效');
         }
       } catch (e) { /* 网络抖动，继续轮询 */ }
     }, 2500);
@@ -2965,6 +2966,17 @@ async function loadHdhivePage() {
   } catch (e) { console.error('[影巢] 配置回填失败:', e.message); }
 }
 
+// 登录状态徽标（影巢/观影/123 统一）：on=绿 off=灰 warn=橙
+function renderLoginBadge(el, state, sub) {
+  if (!el) return;
+  el.style.color = '';
+  el.style.fontSize = '';
+  const cls = state === 'on' ? 'on' : (state === 'warn' ? 'warn' : 'off');
+  const text = state === 'on' ? '已登录' : (state === 'warn' ? '即将过期' : '未登录');
+  el.innerHTML = '<span class="login-badge ' + cls + '"><span class="dot"></span>' + text
+    + (sub ? ' <span class="sub">' + esc(sub) + '</span>' : '') + '</span>';
+}
+
 function hdRenderLogin(loggedIn, loginAt, user) {
   const btn = document.getElementById('hd-auth-btn');
   const st = document.getElementById('hd-login-status');
@@ -2974,14 +2986,12 @@ function hdRenderLogin(loggedIn, loginAt, user) {
     btn.classList.remove('btn-primary');
     btn.classList.add('btn-warning');
     const nick = user ? (user.nickname || user.username || user.email || '') : '';
-    st.style.color = 'var(--success)';
-    st.textContent = '✓ 已登录' + (nick ? ' · ' + nick : '') + (loginAt ? ' · ' + loginAt : '');
+    renderLoginBadge(st, 'on', [nick, loginAt].filter(Boolean).join(' · '));
   } else {
     btn.textContent = '登录';
     btn.classList.add('btn-primary');
     btn.classList.remove('btn-warning');
-    st.style.color = 'var(--text-3)';
-    st.textContent = '未登录';
+    renderLoginBadge(st, 'off');
   }
 }
 
@@ -3046,7 +3056,7 @@ async function hdLogin(btn) {
   const st = document.getElementById('hd-login-status');
   btn.disabled = true;
   btn.textContent = '登录中…';
-  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '登录中…'; }
+  if (st) { st.innerHTML = '<span class="login-badge off"><span class="dot"></span>登录中…</span>'; }
   try {
     const d = await api('/hdhive/login', {
       method: 'POST',
@@ -3284,8 +3294,8 @@ function gyRenderAuth(loggedIn) {
     btn.classList.toggle('btn-warning', loggedIn);
   }
   if (el) {
-    el.textContent = loggedIn ? '● 已登录' : '● 未登录';
-    el.style.color = loggedIn ? 'var(--success)' : 'var(--text-3)';
+    const user = (document.getElementById('gy-username') || {}).value || '';
+    renderLoginBadge(el, loggedIn ? 'on' : 'off', loggedIn ? user : '');
   }
 }
 
