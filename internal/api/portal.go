@@ -529,30 +529,62 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 		c.File(cacheFile)
 		return
 	}
-	// 服务端拉取（走代理配置）
-	url := tmdbImageBase() + "/t/p/w500" + p
-	client := &http.Client{Timeout: 10 * time.Second}
-	if pu := getProxyURL(); pu != "" {
-		if pr, err := parseProxyURL(pu); err == nil {
-			client.Transport = &http.Transport{Proxy: pr}
+	// 服务端拉取，多级回退：配置图片域名(走代理) → 配置域名直连 → 官方域名直连。
+	// 此前单次失败即静默回占位图，配置了不可达的图片域名时所有海报永远空白
+	buildClient := func(withProxy bool) *http.Client {
+		client := &http.Client{Timeout: 10 * time.Second}
+		if withProxy {
+			if pu := getProxyURL(); pu != "" {
+				if pr, err := parseProxyURL(pu); err == nil {
+					client.Transport = &http.Transport{Proxy: pr}
+				}
+			}
 		}
+		return client
 	}
-	resp, err := client.Get(url)
-	if err == nil {
-		defer resp.Body.Close()
+	candidates := []struct {
+		base      string
+		withProxy bool
+	}{
+		{tmdbImageBase(), true},
+		{tmdbImageBase(), false},
+		{"https://image.tmdb.org", false},
 	}
-	if err != nil || resp.StatusCode != http.StatusOK {
-		// 占位图：1x1 透明像素，避免卡片裂图
+	var data []byte
+	var lastCT string
+	var lastErr string
+	for i, cand := range candidates {
+		if i > 0 && cand.base == candidates[i-1].base && cand.withProxy == candidates[i-1].withProxy {
+			continue
+		}
+		u := cand.base + "/t/p/w500/" + strings.TrimPrefix(p, "/")
+		resp, err := buildClient(cand.withProxy).Get(u)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || len(body) < 100 {
+			lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			continue
+		}
+		data, lastCT = body, resp.Header.Get("Content-Type")
+		break
+	}
+	if len(data) == 0 {
+		// 三条链路都失败：日志写明原因（占位图避免卡片裂图）
+		log.Printf("[海报] ✗ 拉取失败 %s：配置域名与官方域名均不可达，最后错误: %s", p, lastErr)
 		c.Header("Cache-Control", "no-store")
 		c.Data(http.StatusOK, "image/gif", []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"))
 		return
 	}
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if len(data) > 0 {
-		_ = os.WriteFile(cacheFile, data, 0644)
+	_ = os.WriteFile(cacheFile, data, 0644)
+	if lastCT == "" {
+		lastCT = "image/jpeg"
 	}
 	c.Header("Cache-Control", "public, max-age=604800")
-	c.Data(http.StatusOK, resp.Header.Get("Content-Type"), data)
+	c.Data(http.StatusOK, lastCT, data)
 }
 
 // portalSub 字幕文本代理：服务端按 pick_code 取 115 直链拉字幕并加 CORS 头返回
