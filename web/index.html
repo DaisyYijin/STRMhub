@@ -47,6 +47,7 @@
       <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
       <div class="menu-item" data-page="upload-download"><span class="icon">⇅</span><span>上传下载</span></div>
       <div class="menu-item" data-page="media-transfer"><span class="icon">⇣</span><span>影视转存</span></div>
+      <div class="menu-item" data-page="tgsub"><span class="icon">✦</span><span>订阅管理</span></div>
       <div class="menu-item" data-page="config-system"><span class="icon">⚙</span><span>系统配置</span></div>
       <div class="menu-item" data-page="config-message"><span class="icon">✉</span><span>消息配置</span></div>
       <div class="menu-item" data-page="config-extension"><span class="icon">＋</span><span>扩展功能</span></div>
@@ -800,11 +801,6 @@ av:
         </div>
       </div>
 
-      <div style="margin-bottom:14px">
-        <button class="btn btn-outline" onclick="tgSubOpen()">🔔 订阅管理</button>
-        <span style="font-size:12px;color:var(--text-3);margin-left:8px">TG 频道关键词订阅，命中新资源自动通知/转存</span>
-      </div>
-
       <!-- 第二行：最近整理 -->
       <div class="card dash-card">
         <div class="dash-card-title" style="display:flex;justify-content:space-between;align-items:center">最近整理
@@ -1067,6 +1063,28 @@ av:
       </div>
     </div>
 
+    <!-- 订阅管理 -->
+    <div class="page" id="page-tgsub">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="font-weight:600">订阅列表</span>
+          <button class="btn btn-outline" style="margin-left:auto;padding:3px 12px;font-size:12px" onclick="tgSubLoadPage()">刷新</button>
+          <button class="btn btn-success" style="padding:3px 12px;font-size:12px" onclick="tgSubRunNow(this)">立即检查</button>
+        </div>
+        <div id="tgsub-list"></div>
+      </div>
+      <div class="card">
+        <div style="font-weight:600;font-size:13.5px;margin-bottom:10px">新增订阅</div>
+        <div class="form-row"><div class="label">关键词<i class="help-tip" tabindex="0">?<span class="tip-bubble">在订阅频道里检索的关键词（片名/番号），命中新资源会推送通知。</span></i></div><div class="control"><input type="text" id="tgsub-keyword" placeholder="片名 / 番号" class="inline-input"></div></div>
+        <div class="form-row"><div class="label">指定频道<i class="help-tip" tabindex="0">?<span class="tip-bubble">选填。一行一个或逗号分隔；留空则检查「影视转存 → TG 频道搜索」里配置的全局频道。</span></i></div><div class="control"><textarea id="tgsub-channels" class="auto-resize" rows="2" placeholder="留空使用全局频道；如：@channel1&#10;@channel2"></textarea></div></div>
+        <div class="form-row"><div class="label">自动转存<i class="help-tip" tabindex="0">?<span class="tip-bubble">命中新资源时自动入库：115 分享链接直接转存，磁力/ed2k 提交 115 离线下载，完成后自动整理。</span></i></div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-auto"> 命中后自动转存</label></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="tgSubAdd(this)">添加订阅</button></div></div>
+      </div>
+      <div class="card">
+        <div class="form-row"><div class="label">检查间隔<i class="help-tip" tabindex="0">?<span class="tip-bubble">每轮检查所有订阅频道新消息的间隔，最小 5 分钟。TG 接口有频率限制，不建议过短。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="tgsub-interval" value="30" min="5" style="max-width:120px"><div class="input-suffix">分钟</div><button class="btn btn-outline" onclick="tgSubSaveInterval(this)">保存间隔</button></div></div></div>
+      </div>
+    </div>
+
     <!-- 扩展功能（插件中心，参考 CMS 卡片设计：白色圆角容器 + 卡片网格） -->
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
@@ -1196,30 +1214,6 @@ av:
     <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:8px">已生成的封面<button class="btn btn-outline" style="float:right;padding:2px 10px;font-size:12px" onclick="coverGenLoadList()">刷新</button></div>
       <div id="covergen-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:260px;overflow:auto"></div>
-    </div>
-  </div>
-</div>
-
-<!-- TG 订阅管理弹窗 -->
-<div class="modal-mask" id="tgsub-modal" style="display:none">
-  <div class="modal" style="max-width:600px;max-height:88vh;overflow:auto">
-    <h3>TG 订阅管理</h3>
-    <div id="tgsub-list" style="margin-bottom:12px"></div>
-    <div style="border-top:1px solid var(--border);padding-top:10px">
-      <div class="form-row"><div class="label">新增订阅</div><div class="control"><div class="form-inline-group">
-        <input type="text" id="tgsub-keyword" placeholder="关键词（片名/番号）" style="flex:1.2">
-        <input type="text" id="tgsub-channels" placeholder="频道（逗号分隔，留空用全局）" style="flex:1.6">
-      </div></div></div>
-      <div class="form-row"><div class="label"></div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-auto"> 命中后自动转存（115 分享直接转存，磁力提交离线）</label></div></div>
-      <div class="actions" style="padding-top:4px">
-        <button class="btn btn-primary" onclick="tgSubAdd(this)">添加订阅</button>
-        <button class="btn btn-success" onclick="tgSubRunNow(this)">立即检查</button>
-      </div>
-    </div>
-    <div class="form-row" style="margin-top:6px"><div class="label">检查间隔（分钟）</div><div class="control"><input type="number" id="tgsub-interval" value="30" min="5" style="max-width:120px"></div></div>
-    <div class="actions">
-      <button class="btn btn-outline" onclick="tgSubModalClose()">关闭</button>
-      <button class="btn btn-primary" onclick="tgSubSaveInterval(this)">保存间隔</button>
     </div>
   </div>
 </div>

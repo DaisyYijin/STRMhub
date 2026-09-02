@@ -89,6 +89,7 @@ const PAGE_TITLES = {
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
   'config-message': ['消息配置', '企业微信与 TG 机器人'],
   'config-extension': ['扩展功能', 'ALIST 同步等插件'],
+  'tgsub': ['订阅管理', 'TG 频道关键词订阅 / 命中通知 / 自动转存'],
   'logs': ['实时日志', '同步与整理操作的服务端与本地日志'],
 };
 
@@ -105,6 +106,7 @@ const PAGE_PATHS = {
   'config-message': '/message',
   'logs': '/logs',
   'config-extension': '/plugins',
+  'tgsub': '/subscriptions',
 };
 const PATH_PAGES = Object.fromEntries(Object.entries(PAGE_PATHS).map(([p, path]) => [path, p]));
 
@@ -163,6 +165,7 @@ function showPage(id) {
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'media-transfer') { loadHdhivePage(); gyLoadPage(); }
+  if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
   // 恢复上次停留的 Tab（所有含 tab 的页面通用）
@@ -1694,16 +1697,13 @@ async function coverGenLoadList() {
 }
 
 // ==================== TG 订阅管理 ====================
-async function tgSubOpen() {
-  document.getElementById('tgsub-modal').style.display = 'flex';
+async function tgSubLoadPage() {
   await tgSubRenderList();
   try {
     const d = await api('/tgsub/config');
     setVal('tgsub-interval', (d.data || {}).interval_min || 30);
   } catch (e) { /* 忽略 */ }
 }
-
-function tgSubModalClose() { document.getElementById('tgsub-modal').style.display = 'none'; }
 
 async function tgSubRenderList() {
   const box = document.getElementById('tgsub-list');
