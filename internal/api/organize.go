@@ -2772,32 +2772,42 @@ func episodeRangeWithMissing(videoFiles []remoteFile, media *TmdbMedia) (string,
 	return rng, strings.Join(parts, ",")
 }
 
+// avCleanMaker 厂牌展示清洗：JavBus 原始厂牌名常带全角连接符和尾部
+// 分隔符（"KMPVR－彩－"），统一半角并去掉首尾装饰后展示
+func avCleanMaker(s string) string {
+	out := strings.TrimSpace(strings.NewReplacer("－", "-", "‐", "-", "–", "-", "—", "-").Replace(s))
+	return strings.Trim(out, "-_~～ ")
+}
+
 // notifyAVStored AV 入库富通知：MetaTube 封面卡片（企微 news / TG 图片），
 // 内容含 类别/演员/厂牌/文件数与大小——与电影剧集的 notifyMediaStoredFull 同级
 func notifyAVStored(m *model.AVMeta, num, category string, videos []remoteFile) {
-	title := num
-	year := ""
+	title := "✓ 整理成功 " + num
 	line := "类型：AV · 类别：" + category
 	var totalBytes int64
 	for _, v := range videos {
 		totalBytes += v.Size
 	}
 	line += fmt.Sprintf("\n共计：%d 个文件 · %s", len(videos), humanSizeBytes(totalBytes))
+	entry := mediaNotifEntry{Title: title, Line: line}
 	if m != nil && m.Status == "ok" {
 		if m.Title != "" {
-			title = num + " " + m.Title
+			entry.Title = title + " " + m.Title
 		}
-		year = m.Year
+		entry.Year = m.Year
 		if actors := avMetaActors(m); len(actors) > 0 {
-			line += "\n演员：" + strings.Join(actors, "、")
+			entry.Line += "\n演员：" + strings.Join(actors, "、")
 		}
-		if m.Publisher != "" {
-			line += "\n厂牌：" + m.Publisher
+		if maker := avCleanMaker(m.Publisher); maker != "" {
+			entry.Line += "\n厂牌：" + maker
 		}
-	}
-	entry := mediaNotifEntry{Title: title, Year: year, Line: line}
-	if m != nil && m.CoverURL != "" {
-		entry.PosterURL = m.CoverURL // 源站公网封面，企微/TG 可直接抓取
+		if m.CoverURL != "" {
+			entry.PosterURL = m.CoverURL // 源站公网封面
+			// 抓取封面字节：TG 直接上传；企微转存官方图床后 picurl 必然显示
+			if data, err := fetchHTTPBytes(m.CoverURL, 10*time.Second); err == nil && len(data) > 100 {
+				entry.PosterData = data
+			}
+		}
 	}
 	QueueMediaNotif(entry)
 }

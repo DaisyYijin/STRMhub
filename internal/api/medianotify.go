@@ -97,9 +97,12 @@ func sendMediaNotifSingle(cfg *MessageConfig, e mediaNotifEntry) {
 	if e.Year != "" {
 		title += "（" + e.Year + "）"
 	}
-	// 企微 news 卡片（picurl 优先公网 TMDB，其次 Emby 直链）
+	// 企微 news 卡片（封面转存企微图床，失败退回原 URL）
 	if cfg.Wecom.isEnabled() && cfg.Wecom.CorpID != "" && cfg.Wecom.Secret != "" {
-		go sendWecomNews(cfg.Wecom, title, e.Line, pickPicURL(e), e.Link)
+		go func() {
+			pic := wecomPickPic(cfg.Wecom, e)
+			_ = sendWecomNews(cfg.Wecom, title, e.Line, pic, e.Link)
+		}()
 	}
 	// TG：有字节直接上传（内网 Emby 图 TG 服务器拉不到），否则 URL，再退文本
 	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
@@ -178,6 +181,55 @@ func pickPicURL(e mediaNotifEntry) string {
 	return ""
 }
 
+// wecomUploadImg 图片转存企微图床（uploadimg 接口）：源站封面常有防盗链，
+// 企微服务器直接拉 picurl 会失败；先传到企微图床拿公网 URL 再上卡片必然显示
+func wecomUploadImg(cfg WecomConfig, data []byte) (string, error) {
+	token, err := wecomAccessToken(cfg)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("media", "cover.jpg")
+	if err == nil {
+		_, err = fw.Write(data)
+	}
+	if err2 := w.Close(); err == nil {
+		err = err2
+	}
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(fmt.Sprintf("%s/cgi-bin/media/uploadimg?access_token=%s",
+		cfg.apiBase(), token), w.FormDataContentType(), &buf)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var r struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+		URL     string `json:"url"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.ErrCode != 0 || r.URL == "" {
+		return "", fmt.Errorf("uploadimg 失败: %d %s", r.ErrCode, r.ErrMsg)
+	}
+	return r.URL, nil
+}
+
+// wecomPickPic 封面优先转存企微图床（有字节时），失败退回原 URL
+func wecomPickPic(cfg WecomConfig, e mediaNotifEntry) string {
+	if len(e.PosterData) > 0 {
+		if u, err := wecomUploadImg(cfg, e.PosterData); err == nil {
+			return u
+		}
+	}
+	return pickPicURL(e)
+}
+
 // sendWecomNewsMulti 企微多卡片图文（每部一张封面，news 最多 8 条 article）
 func sendWecomNewsMulti(cfg WecomConfig, title string, items []mediaNotifEntry) error {
 	token, err := wecomAccessToken(cfg)
@@ -197,7 +249,7 @@ func sendWecomNewsMulti(cfg WecomConfig, title string, items []mediaNotifEntry) 
 		articles = append(articles, map[string]string{
 			"title":       truncateStr(t, 90),
 			"description": truncateStr(e.Line, 200),
-			"picurl":      pickPicURL(e),
+			"picurl":      wecomPickPic(cfg, e),
 			"url":         link,
 		})
 	}
