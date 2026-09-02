@@ -2293,6 +2293,11 @@ func sanitizeAVFilename(name string) string {
 // avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12 等
 var avNumRegex = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})\b`)
 
+// avNumLooseRe 番号后带发布标记的变体（hmn-898ch = HMN-898 中字版、
+// xxx898uc = 无码版）：数字后紧跟小写标记导致词边界断开，主正则失配。
+// 标记限定为常见后缀白名单，避免 top10mv 之类随机词误判成番号
+var avNumLooseRe = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})(?:ch|uc|c|u|leak)\b`)
+
 // fc2NumRegex 匹配 FC2 番号：FC2-PPV-1234567、FC2_1234567 等（数字 5-8 位）
 var fc2NumRegex = regexp.MustCompile(`(?i)\bfc2[-_]?(?:ppv[-_]?)?(\d{5,8})\b`)
 
@@ -2321,6 +2326,12 @@ func detectAVNumber(dirName, fileName string) string {
 			return "FC2-PPV-" + m[1]
 		}
 		if m := avNumRegex.FindStringSubmatch(s); m != nil {
+			prefix := strings.ToUpper(m[1])
+			if !avExcludedPrefixes[prefix] {
+				return prefix + "-" + m[2]
+			}
+		}
+		if m := avNumLooseRe.FindStringSubmatch(s); m != nil {
 			prefix := strings.ToUpper(m[1])
 			if !avExcludedPrefixes[prefix] {
 				return prefix + "-" + m[2]
