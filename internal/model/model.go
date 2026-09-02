@@ -135,6 +135,7 @@ type MediaLibrary struct {
 	OrigCountry   string    `json:"origin_country" gorm:"size:100"`
 	PosterPath    string    `json:"poster_path" gorm:"size:255"`   // TMDB 海报路径（观影门户）
 	BackdropPath  string    `json:"backdrop_path" gorm:"size:255"` // TMDB 背景图（门户详情页沉浸头图）
+	Genres        string    `json:"genres" gorm:"size:500"`        // TMDB 类型名（逗号分隔，zh-CN）
 	VoteAverage   float64   `json:"vote_average"`
 	Overview      string    `json:"overview" gorm:"type:text"`
 	CreatedAt     time.Time `json:"created_at"`

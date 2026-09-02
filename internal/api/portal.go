@@ -239,6 +239,104 @@ func parseTitleDir(dir string) (title, year string, tmdb int) {
 	return
 }
 
+// langNames / countryNames 常用 TMDB 代码 → 中文名（筛选器展示用，未收录原样显示）
+var langNames = map[string]string{
+	"zh": "中文", "en": "英语", "ja": "日语", "ko": "韩语", "th": "泰语",
+	"fr": "法语", "de": "德语", "ru": "俄语", "es": "西班牙语", "it": "意大利语",
+	"pt": "葡萄牙语", "hi": "印地语", "tl": "菲律宾语", "ar": "阿拉伯语", "sv": "瑞典语",
+	"da": "丹麦语", "no": "挪威语", "nl": "荷兰语", "pl": "波兰语", "tr": "土耳其语",
+	"he": "希伯来语", "fa": "波斯语", "id": "印尼语", "vi": "越南语", "ms": "马来语",
+}
+
+var countryNames = map[string]string{
+	"CN": "中国大陆", "HK": "中国香港", "TW": "中国台湾", "US": "美国", "GB": "英国",
+	"JP": "日本", "KR": "韩国", "FR": "法国", "DE": "德国", "TH": "泰国", "IN": "印度",
+	"ES": "西班牙", "IT": "意大利", "CA": "加拿大", "AU": "澳大利亚", "RU": "俄罗斯",
+	"BR": "巴西", "MX": "墨西哥", "SE": "瑞典", "DK": "丹麦", "NO": "挪威", "NL": "荷兰",
+	"BE": "比利时", "NZ": "新西兰", "IE": "爱尔兰", "SG": "新加坡", "MY": "马来西亚",
+	"PH": "菲律宾", "ID": "印度尼西亚", "VN": "越南", "TR": "土耳其", "PL": "波兰",
+	"CZ": "捷克", "AR": "阿根廷", "ZA": "南非", "IL": "以色列", "IR": "伊朗", "GR": "希腊",
+}
+
+func langName(code string) string {
+	if n, ok := langNames[code]; ok {
+		return n
+	}
+	return code
+}
+
+func countryName(code string) string {
+	if n, ok := countryNames[code]; ok {
+		return n
+	}
+	return code
+}
+
+// portalFacets 聚合某媒体类型的可选筛选值（国家/语言/类型，按条目数降序）。
+// 多值字段（国家/类型）拆开计数
+type facetCounter struct {
+	code, name string
+	n          int
+}
+
+func facetList(m map[string]*facetCounter) []map[string]interface{} {
+	all := make([]facetCounter, 0, len(m))
+	for _, v := range m {
+		all = append(all, *v)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].n > all[j].n })
+	out := make([]map[string]interface{}, 0, len(all))
+	for _, c := range all {
+		out = append(out, map[string]interface{}{"code": c.code, "name": c.name, "count": c.n})
+	}
+	return out
+}
+
+func portalFacets(mt string) (countries, langs, genres []map[string]interface{}) {
+	cCount := map[string]*facetCounter{}
+	lCount := map[string]*facetCounter{}
+	gCount := map[string]*facetCounter{}
+	var mls []model.MediaLibrary
+	model.DB.Where("media_type = ?", mt).Find(&mls)
+	for _, m := range mls {
+		for _, code := range strings.Split(m.OrigCountry, ",") {
+			code = strings.TrimSpace(code)
+			if code == "" {
+				continue
+			}
+			if c, ok := cCount[code]; ok {
+				c.n++
+			} else {
+				cCount[code] = &facetCounter{code: code, name: countryName(code), n: 1}
+			}
+		}
+		for _, code := range strings.Split(m.OrigLanguage, ",") {
+			code = strings.TrimSpace(code)
+			if code == "" {
+				continue
+			}
+			if c, ok := lCount[code]; ok {
+				c.n++
+			} else {
+				lCount[code] = &facetCounter{code: code, name: langName(code), n: 1}
+			}
+		}
+		for _, name := range strings.Split(m.Genres, ",") {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if c, ok := gCount[name]; ok {
+				c.n++
+			} else {
+				gCount[name] = &facetCounter{code: name, name: name, n: 1}
+			}
+		}
+	}
+	return facetList(cCount), facetList(lCount), facetList(gCount)
+	return
+}
+
 // portalNav 分类导航（按台账实际内容聚合）
 func portalNav(c *gin.Context) {
 	entries := portalScanLedger()
@@ -252,13 +350,16 @@ func portalNav(c *gin.Context) {
 		}
 	}
 	nav := map[string][]map[string]interface{}{}
+	facets := map[string]map[string]interface{}{}
 	for _, mt := range []string{"movie", "tv"} {
 		for name, n := range counts[mt] {
 			nav[mt] = append(nav[mt], map[string]interface{}{"name": name, "count": n})
 		}
 		sort.Slice(nav[mt], func(i, j int) bool { return nav[mt][i]["name"].(string) < nav[mt][j]["name"].(string) })
+		cs, ls, gs := portalFacets(mt)
+		facets[mt] = gin.H{"countries": cs, "langs": ls, "genres": gs}
 	}
-	c.JSON(http.StatusOK, gin.H{"nav": nav})
+	c.JSON(http.StatusOK, gin.H{"nav": nav, "facets": facets})
 }
 
 // portalList 媒体列表（全量台账聚合；元数据从整理记录合并）
@@ -278,11 +379,15 @@ func portalList(c *gin.Context) {
 	}
 	cat := c.Query("cat")
 	kw := strings.TrimSpace(c.Query("q"))
+	fCountry := strings.TrimSpace(c.Query("country"))
+	fLang := strings.TrimSpace(c.Query("lang"))
+	fGenre := strings.TrimSpace(c.Query("genre"))
 
 	type enriched struct {
 		e      *portalTitleEntry
 		poster string
 		vote   float64
+		ml     model.MediaLibrary
 	}
 	// 元数据批量合并（避免逐条查库）
 	metaByID := map[int]model.MediaLibrary{}
@@ -310,7 +415,18 @@ func portalList(c *gin.Context) {
 			if ml, ok := metaByID[e.TmdbID]; ok {
 				en.poster = ml.PosterPath
 				en.vote = ml.VoteAverage
+				en.ml = ml
 			}
+		}
+		// 多维筛选：条目无元数据时无法匹配，选中筛选即排除
+		if fCountry != "" && !strings.Contains(","+en.ml.OrigCountry+",", ","+fCountry+",") {
+			continue
+		}
+		if fLang != "" && !strings.Contains(","+en.ml.OrigLanguage+",", ","+fLang+",") {
+			continue
+		}
+		if fGenre != "" && !strings.Contains(","+en.ml.Genres+",", ","+fGenre+",") {
+			continue
 		}
 		entries = append(entries, en)
 	}
@@ -371,8 +487,20 @@ func portalDetail(c *gin.Context) {
 		haveML = ml.PosterPath != ""
 	}
 	poster, vote, overview, backdrop := "", float64(0), "", ""
+	country, langs2, genres := "", "", ""
 	if haveML {
 		poster, vote, overview, backdrop = ml.PosterPath, ml.VoteAverage, ml.Overview, ml.BackdropPath
+		if ml.OrigCountry != "" {
+			var cs []string
+			for _, code := range strings.Split(ml.OrigCountry, ",") {
+				cs = append(cs, countryName(strings.TrimSpace(code)))
+			}
+			country = strings.Join(cs, " / ")
+		}
+		if ml.OrigLanguage != "" {
+			langs2 = langName(strings.Split(ml.OrigLanguage, ",")[0])
+		}
+		genres = ml.Genres
 		if ml.Title != "" {
 			title = ml.Title
 		}
@@ -452,7 +580,8 @@ func portalDetail(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"media": gin.H{"title": title, "year": year, "media_type": mediaType, "category": category,
-			"poster_path": poster, "vote_average": vote, "overview": overview, "backdrop_path": backdrop},
+			"poster_path": poster, "vote_average": vote, "overview": overview, "backdrop_path": backdrop,
+			"country": country, "language": langs2, "genres": genres},
 		"files": files, "subs": subs, "views": views, "related": related,
 	})
 }
@@ -618,7 +747,7 @@ func portalBackfillWorker() {
 			var ml model.MediaLibrary
 			need := true
 			if model.DB.Where("tmdb_id = ? AND media_type = ?", e.TmdbID, e.MediaType).First(&ml).Error == nil {
-				need = ml.PosterPath == "" || ml.Overview == "" || ml.BackdropPath == ""
+				need = ml.PosterPath == "" || ml.Overview == "" || ml.BackdropPath == "" || ml.Genres == ""
 			}
 			if !need {
 				continue
@@ -664,6 +793,11 @@ func portalBackfillTMDB(m *model.MediaLibrary) {
 		BackdropPath string  `json:"backdrop_path"`
 		Overview     string  `json:"overview"`
 		VoteAverage  float64 `json:"vote_average"`
+		Genres       []struct {
+			Name string `json:"name"`
+		} `json:"genres"`
+		OriginalLanguage string   `json:"original_language"`
+		OriginCountry    []string `json:"origin_country"`
 	}
 	if json.Unmarshal(body, &d) != nil {
 		return
@@ -676,6 +810,22 @@ func portalBackfillTMDB(m *model.MediaLibrary) {
 	}
 	if d.Overview != "" {
 		m.Overview = d.Overview
+	}
+	// 类型名（zh-CN，如 动作,科幻）+ 语言/国家：门户多维筛选的数据源
+	if len(d.Genres) > 0 {
+		names := make([]string, 0, len(d.Genres))
+		for _, g := range d.Genres {
+			if g.Name != "" {
+				names = append(names, g.Name)
+			}
+		}
+		m.Genres = strings.Join(names, ",")
+	}
+	if d.OriginalLanguage != "" && m.OrigLanguage == "" {
+		m.OrigLanguage = d.OriginalLanguage
+	}
+	if len(d.OriginCountry) > 0 && m.OrigCountry == "" {
+		m.OrigCountry = strings.Join(d.OriginCountry, ",")
 	}
 	m.VoteAverage = d.VoteAverage
 	model.DB.Save(m)
@@ -1001,6 +1151,7 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
 <script>
 const $=id=>document.getElementById(id);
 let view='home',curType='movie',curCat='',curSort='recent',curPage=1;
+let curCountry='',curLang='',curGenre='';
 let curMedia=null,curFiles=[],curSubs=[],curKey='',curDetail=null,curFileIdx=0,curFileUrl='';
 let curRate=1,progTimer=null,subOff=true,curSubIdx=-1;
 
@@ -1038,6 +1189,8 @@ async function route(){
 async function fetchList(o){
   const u=new URL('/api/portal/list',location);u.searchParams.set('type',o.type||curType);
   if(o.cat)u.searchParams.set('cat',o.cat);if(o.q)u.searchParams.set('q',o.q);
+  if(o.country)u.searchParams.set('country',o.country);if(o.lang)u.searchParams.set('lang',o.lang);
+  if(o.genre)u.searchParams.set('genre',o.genre);
   u.searchParams.set('sort',o.sort||'recent');u.searchParams.set('page',o.page||1);
   return (await fetch(u)).json()
 }
@@ -1108,10 +1261,18 @@ async function renderList(){
     cats.map(x=>'<div class="chip'+(curCat===x.name?' on':'')+'" onclick="goCat(\''+curType+'\',\''+escA(x.name)+'\')">'+x.name+'</div>').join('')+'</div>'+
     '<select onchange="curSort=this.value;curPage=1;renderList()"><option value="recent"'+(curSort==='recent'?' selected':'')+'>最近入库</option><option value="rating"'+(curSort==='rating'?' selected':'')+'>评分最高</option><option value="title"'+(curSort==='title'?' selected':'')+'>名称</option></select></div>';
   h+='<div class="grid" id="lgrid"></div><div class="loadmore" id="more" onclick="loadMore()">加载更多</div>';
+  // 国家/语言/类型多维筛选（facet 来自 /nav，含条目计数）
+  const fc=(nav2.facets||{})[curType]||{};
+  const opt=(list,cur,label)=>'<select onchange="setFacet(\''+label+'\',this.value)"><option value="">'+label+'</option>'+
+    (list||[]).map(x=>'<option value="'+escA(x.code)+'"'+(cur===x.code?' selected':'')+'>'+esc(x.name)+' ('+x.count+')</option>').join('')+'</select>';
+  h+='<div class="filters"><div class="chips">'+opt(fc.countries,curCountry,'国家')+opt(fc.langs,curLang,'语言')+opt(fc.genres,curGenre,'类型')+
+    ((curCountry||curLang||curGenre)?'<div class="chip" onclick="clearFacets()">清除筛选</div>':'')+'</div></div>';
   c.innerHTML=h;
-  paintGrid(await fetchList({cat:curCat,sort:curSort,page:1}))
+  paintGrid(await fetchList({cat:curCat,sort:curSort,page:1,country:curCountry,lang:curLang,genre:curGenre}))
 }
-async function loadMore(){curPage++;paintGrid(await fetchList({cat:curCat,sort:curSort,page:curPage}),true)}
+async function loadMore(){curPage++;paintGrid(await fetchList({cat:curCat,sort:curSort,page:curPage,country:curCountry,lang:curLang,genre:curGenre}),true)}
+function setFacet(label,v){if(label==='国家')curCountry=v;else if(label==='语言')curLang=v;else curGenre=v;curPage=1;renderList()}
+function clearFacets(){curCountry='';curLang='';curGenre='';curPage=1;renderList()}
 function paintGrid(d,append){
   const g=$('lgrid');
   if(!append)g.innerHTML='';
@@ -1146,7 +1307,8 @@ async function renderDetail(key){
   h+='<div class="dinfo">';
   h+='<h2>'+esc(m.title)+(m.year?'（'+m.year+'）':'')+'</h2>';
   h+='<div class="meta">'+(m.media_type==='tv'?'剧集':'电影')+(m.category?' · '+m.category:'')+' · '+(curFiles.length||0)+' 个视频'+((d.views||0)>0?' · '+d.views+' 次观看':'')+'</div>';
-  h+='<div class="badges">'+(m.vote_average>0?'<span>★ '+m.vote_average.toFixed(1)+'</span>':'')+(curSubs.length?'<span>'+curSubs.length+' 个字幕</span>':'')+(m.year?'<span>'+m.year+'</span>':'')+'</div>';
+  h+='<div class="badges">'+(m.vote_average>0?'<span>★ '+m.vote_average.toFixed(1)+'</span>':'')+(m.country?'<span>'+m.country+'</span>':'')+(m.language?'<span>'+m.language+'</span>':'')+
+    (m.genres?m.genres.split(',').map(g=>'<span>'+esc(g)+'</span>').join(''):'')+(curSubs.length?'<span>'+curSubs.length+' 个字幕</span>':'')+(m.year?'<span>'+m.year+'</span>':'')+'</div>';
   h+='<div class="playbtns"><button class="play" onclick="playNow(0)">▶ 播放</button><button class="ghost" onclick="copyLink0()">复制直链</button></div>';
   h+='<div class="ovfull">'+esc(m.overview||'暂无简介')+'</div>';
   h+='</div></div>';
