@@ -88,8 +88,8 @@ func httpGet115Full(api string, query url.Values, cookie, ua string, timeout tim
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	// 115 专属客户端：部分节点证书缺 SAN，容忍主机名不匹配（证书链仍校验）
+	resp, err := client115(timeout).Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -400,8 +400,8 @@ func post115FormResp(api string, form url.Values, cookie, ua string, timeout tim
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	// 115 专属客户端：pro.api 等节点证书缺 SAN，需容忍主机名不匹配（链仍校验）
+	resp, err := client115(timeout).Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
