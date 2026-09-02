@@ -13,7 +13,6 @@ import (
 
 	"strmhub/internal/model"
 
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/mozillazg/go-pinyin"
@@ -24,26 +23,26 @@ import (
 
 // OrganizeResult 整理单个文件的结果
 type OrganizeResult struct {
-	FileName   string `json:"file_name"`
-	Status     string `json:"status"`      // success, skipped, failed, exists
-	TmdbID     int    `json:"tmdb_id"`
-	Title      string `json:"title"`
-	Year       string `json:"year"`
-	MediaType  string `json:"media_type"` // movie, tv
-	Category   string `json:"category"`
-	TargetDir  string `json:"target_dir"`
-	Message    string `json:"message"`
+	FileName  string `json:"file_name"`
+	Status    string `json:"status"` // success, skipped, failed, exists
+	TmdbID    int    `json:"tmdb_id"`
+	Title     string `json:"title"`
+	Year      string `json:"year"`
+	MediaType string `json:"media_type"` // movie, tv
+	Category  string `json:"category"`
+	TargetDir string `json:"target_dir"`
+	Message   string `json:"message"`
 }
 
 // OrgConfig 整理配置（从数据库加载）
 type OrgConfig struct {
-	Pending     string `json:"pending"`    // 待整理目录 cid
-	Library     string `json:"library"`    // 我的影视库 cid（整理后最终归宿）
-	Existing    string `json:"existing"`   // 已存在目录 cid（洗版重复）
-	Redundant   string `json:"redundant"`  // 冗余目录 cid（识别失败等）
+	Pending      string `json:"pending"`   // 待整理目录 cid
+	Library      string `json:"library"`   // 我的影视库 cid（整理后最终归宿）
+	Existing     string `json:"existing"`  // 已存在目录 cid（洗版重复）
+	Redundant    string `json:"redundant"` // 冗余目录 cid（识别失败等）
 	ReplaceRules string `json:"replace_rules"`
-	MinSize     int64  `json:"min_size"`
-	ShareCid    string `json:"-"` // 转存目录 cid（loadOrgConfig 注入；同为工作区根，绝不被当条目处理）
+	MinSize      int64  `json:"min_size"`
+	ShareCid     string `json:"-"` // 转存目录 cid（loadOrgConfig 注入；同为工作区根，绝不被当条目处理）
 }
 
 // renameTpl 全局重命名模板（ensureRenameTpl 加载，两条整理引擎入口都会调用）
@@ -62,9 +61,9 @@ func ensureRenameTpl() {
 	}
 	renameTpl = &RenameConfig{
 		MovieFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		MovieFile: "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
-		TVFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
-		TVFile: "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		MovieFile:   "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
+		TVFolder:    "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
+		TVFile:      "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
 		// AV 命名规范 = 番号 + AV 标题（如 "ABC-123 XXXXXX"），不带画质等附加信息；
 		// 未配置 MetaTube 或识别不到时 <> 块整体省略，退回纯番号
 		AVFolder: "{first_letter}-{num}",
@@ -225,7 +224,7 @@ func renameBeforeMove(ops *pan115Ops, media *TmdbMedia, videoFiles, files []remo
 		return file, file != vf.Name
 	}
 
-	names := map[string]string{} // fid -> 新名
+	names := map[string]string{}         // fid -> 新名
 	videoNewBases := map[string]string{} // 原视频基名 → 新视频基名（字幕跟随用）
 	example := ""
 	for _, vf := range videoFiles {
@@ -446,7 +445,8 @@ func sanitizeName(name string) string {
 
 // extractQualityInfo 从原始文件名提取画质信息（分辨率/来源/编码等）
 // "Animal.Control.S04E01.1080p.NowPlayer.WEB-DL.AAC2.0.H.264-BlackTV.mkv"
-//   → "1080p.WEB-DL.AAC2.0.H.264"
+//
+//	→ "1080p.WEB-DL.AAC2.0.H.264"
 func extractQualityInfo(filename string) string {
 	base := baseName(filename)
 	parts := strings.Split(base, ".")
@@ -657,7 +657,7 @@ func cloudDirHasSHA1(cookie, cid, sha1Want string) bool {
 		return false // 查询失败，不判已存在
 	}
 	var r struct {
-		State bool                      `json:"state"`
+		State bool                     `json:"state"`
 		Data  []map[string]interface{} `json:"data"`
 	}
 	if json.Unmarshal(body, &r) != nil || !r.State {
@@ -692,7 +692,7 @@ func cloudSubDirCids(cookie, cid string) []string {
 		return nil
 	}
 	var r struct {
-		State bool                      `json:"state"`
+		State bool                     `json:"state"`
 		Data  []map[string]interface{} `json:"data"`
 	}
 	if json.Unmarshal(body, &r) != nil || !r.State {
@@ -727,9 +727,9 @@ func cloudDirHasVideos(cookie, absPath string) bool {
 		return true
 	}
 	var r struct {
-		State bool                      `json:"state"`
+		State bool                     `json:"state"`
 		Data  []map[string]interface{} `json:"data"`
-		Count int                       `json:"count"`
+		Count int                      `json:"count"`
 	}
 	if json.Unmarshal(body, &r) != nil {
 		return true
@@ -809,18 +809,18 @@ func recordMedia(media *TmdbMedia, category, targetPath string) {
 		return
 	}
 	record := &model.MediaLibrary{
-		TmdbID:       media.TmdbID,
-		Title:        media.Title,
+		TmdbID:        media.TmdbID,
+		Title:         media.Title,
 		OriginalTitle: media.OriginalTitle,
-		Year:         media.Year,
-		MediaType:    media.MediaType,
-		Category:     category,
-		TargetPath:   targetPath,
-		OrigLanguage: media.OrigLanguage,
-		OrigCountry:  strings.Join(media.OrigCountry, ","),
-		PosterPath:   media.PosterPath,
-		VoteAverage:  media.VoteAverage,
-		Overview:     media.Overview,
+		Year:          media.Year,
+		MediaType:     media.MediaType,
+		Category:      category,
+		TargetPath:    targetPath,
+		OrigLanguage:  media.OrigLanguage,
+		OrigCountry:   strings.Join(media.OrigCountry, ","),
+		PosterPath:    media.PosterPath,
+		VoteAverage:   media.VoteAverage,
+		Overview:      media.Overview,
 	}
 	model.DB.Save(record)
 }
@@ -933,10 +933,10 @@ func listPendingTopLevel(ops *pan115Ops, cid string) ([]dirEntry, error) {
 				fid = fmt.Sprint(d["cid"])
 			}
 			e := dirEntry{
-				Fid:  fid,
-				Name: fmt.Sprint(d["n"]),
+				Fid:   fid,
+				Name:  fmt.Sprint(d["n"]),
 				IsDir: isDir,
-				Cid:  fmt.Sprint(d["cid"]),
+				Cid:   fmt.Sprint(d["cid"]),
 			}
 			sha1 := fmt.Sprint(d["sha"])
 			if sha1 != "<nil>" {
@@ -1265,7 +1265,7 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 	// 分流视频：正片 vs 广告/引流（清洗后无有效内容名、仍含域名、或小于
 	// 最小体积的"视频"是广告载体，不能重命名成正片名混入库）
 	var videoFiles []remoteFile
-	var adFids []string   // 广告/超小视频：循环后合并一次移动（逐个移动每个要过写限流）
+	var adFids []string      // 广告/超小视频：循环后合并一次移动（逐个移动每个要过写限流）
 	var adFiles []remoteFile // 同批文件的指纹登记用
 	minBytes := int64(cfg.MinSize) * 1024 * 1024
 	for _, f := range files {
@@ -1442,7 +1442,6 @@ func processDir(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []R
 			return results
 		}
 	}
-
 
 	// 不存在 → 分类 + 移动到我的影视库
 	category := classifyMedia(media)
@@ -2043,15 +2042,14 @@ func runOrganizeEngineWithConfig(ops *pan115Ops, cfg *OrgConfig, onLog func(stri
 	return results, successCount
 }
 
-
 // ==================== AV 番号识别与处理 ====================
 
 // avCategoryConfig AV 分类配置（与 UI 上的 YAML 对应）
 type avCategoryConfig struct {
-	Name      string   // 分类名 = 网盘目录名（可任意命名，如英文）
-	Prefixes  []string // 自定义番号前缀（可选）
-	Builtin   string   // 内置库绑定："uncensored" / "domestic"（可选）；
-	                     // 未填写时按分类名含"无码"/"国产"自动映射
+	Name     string   // 分类名 = 网盘目录名（可任意命名，如英文）
+	Prefixes []string // 自定义番号前缀（可选）
+	Builtin  string   // 内置库绑定："uncensored" / "domestic"（可选）；
+	// 未填写时按分类名含"无码"/"国产"自动映射
 }
 
 // avBuiltinUncensored 内置无码番号前缀库（常见厂牌；命中即归入名字含
@@ -2098,11 +2096,12 @@ func loadAVCategories() []avCategoryConfig {
 }
 
 // parseAVCategoriesFromYAML 解析分类 YAML 中的 av: 段
-//   av:
-//     无码:
-//       num_prefix: 'FC2,HEYZO'
-//     有码:
-//       num_prefix: ''   ← 空 = 兜底分类
+//
+//	av:
+//	  无码:
+//	    num_prefix: 'FC2,HEYZO'
+//	  有码:
+//	    num_prefix: ''   ← 空 = 兜底分类
 func parseAVCategoriesFromYAML(src string) []avCategoryConfig {
 	var root yaml.Node
 	if yaml.Unmarshal([]byte(src), &root) != nil || len(root.Content) == 0 {
@@ -2296,7 +2295,13 @@ var avNumRegex = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})\b`)
 // avNumLooseRe 番号后带发布标记的变体（hmn-898ch = HMN-898 中字版、
 // xxx898uc = 无码版）：数字后紧跟小写标记导致词边界断开，主正则失配。
 // 标记限定为常见后缀白名单，避免 top10mv 之类随机词误判成番号
-var avNumLooseRe = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})(?:ch|uc|c|u|leak)\b`)
+var avNumLooseRe = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})(?:ch|unc|uc|leak|4k|8k|cd\d?|c\d|u\d|v\d|c|u)?\b`)
+
+// avNumDigitPrefixRe 数字前缀系列（259LUXU-666）：字母段 ≥3 位避免把
+// "1080px265" 这类画质词误判成番号；字母段仍过排除前缀表
+var avNumDigitPrefixRe = regexp.MustCompile(`(?i)\b(\d{2,4}[A-Z]{3,6})-?(\d{2,5})\b`)
+
+var avLettersRe = regexp.MustCompile(`[A-Z]+`)
 
 // fc2NumRegex 匹配 FC2 番号：FC2-PPV-1234567、FC2_1234567 等（数字 5-8 位）
 var fc2NumRegex = regexp.MustCompile(`(?i)\bfc2[-_]?(?:ppv[-_]?)?(\d{5,8})\b`)
@@ -2334,6 +2339,13 @@ func detectAVNumber(dirName, fileName string) string {
 		if m := avNumLooseRe.FindStringSubmatch(s); m != nil {
 			prefix := strings.ToUpper(m[1])
 			if !avExcludedPrefixes[prefix] {
+				return prefix + "-" + m[2]
+			}
+		}
+		if m := avNumDigitPrefixRe.FindStringSubmatch(s); m != nil {
+			prefix := strings.ToUpper(m[1])
+			letters := avLettersRe.FindString(prefix)
+			if letters != "" && !avExcludedPrefixes[letters] {
 				return prefix + "-" + m[2]
 			}
 		}
@@ -2629,7 +2641,6 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	return results
 }
 
-
 // tmdbImageBase TMDB 图片地址（读取 TMDB 配置卡保存的数据库配置，默认官方）
 func tmdbImageBase() string {
 	var cfg model.TmdbConfig
@@ -2878,4 +2889,3 @@ func notifyMediaStoredFull(media *TmdbMedia, oldName, newName, category string, 
 	}
 	QueueMediaNotif(entry)
 }
-

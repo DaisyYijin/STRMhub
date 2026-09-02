@@ -227,3 +227,37 @@ func TestRenameAVMetaVars(t *testing.T) {
 		t.Errorf("无刮削结果应退回番号: %q", got)
 	}
 }
+
+func TestMetatubePaddedNumRetry(t *testing.T) {
+	// 文件名补零识别出的番号（JUVR-00303）搜索失败时，用去零变体（JUVR-303）重试
+	if _, err := model.InitDB("file:mt_padded?mode=memory&cache=shared"); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	var hits int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/movies/search", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("q") == "JUVR-303" {
+			_, _ = w.Write([]byte(`{"data":[{"id":"j1","number":"JUVR-303","title":"去零重试命中","provider":"javbus","release_date":"2024-05-06"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+	mux.HandleFunc("/v1/movies/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"j1","number":"JUVR-303","title":"去零重试命中","provider":"javbus","release_date":"2024-05-06"}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		srv.Close()
+		model.DB.Where("key = ?", "metatube").Delete(&model.Setting{})
+		model.DB.Where("1 = 1").Delete(&model.AVMeta{})
+	})
+	saveSettingRow(t, "metatube", `{"url":"`+srv.URL+`","token":"","enabled":true}`)
+
+	meta := metatubeFetchCached("JUVR-00303")
+	if meta == nil || meta.Status != "ok" || meta.Title != "去零重试命中" {
+		t.Fatalf("补零番号应通过去零变体重试命中: %+v", meta)
+	}
+}

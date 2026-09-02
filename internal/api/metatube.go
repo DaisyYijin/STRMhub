@@ -32,6 +32,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -64,12 +65,12 @@ func metatubeEnabled() bool {
 // metatubeMovie MovieInfo/MovieSearchResult 的实际 JSON 结构（字段名按
 // metatube-sdk-go model 包逐字对齐）
 type metatubeMovie struct {
-	ID      string   `json:"id"`
-	Number  string   `json:"number"` // 番号
-	Title   string   `json:"title"`
-	Summary string   `json:"summary"`
-	Provider string  `json:"provider"`
-	Homepage string  `json:"homepage"`
+	ID       string `json:"id"`
+	Number   string `json:"number"` // 番号
+	Title    string `json:"title"`
+	Summary  string `json:"summary"`
+	Provider string `json:"provider"`
+	Homepage string `json:"homepage"`
 
 	Director string   `json:"director"`
 	Actors   []string `json:"actors"`
@@ -238,6 +239,17 @@ func metatubeFetchCached(num string) *model.AVMeta {
 		return nil
 	}
 	if len(hits) == 0 {
+		// 补零番号（文件名 juvr00303 → 识别为 JUVR-00303）官方番号未必带零，
+		// 去前导零后重试一次（MIDV-001 这类本就带零的先按原样搜，不受影响）
+		if alt := avTrimNumZeros(num); alt != "" && alt != num {
+			if rb, e2 := metatubeGetRaw(cfg, "/v1/movies/search?q="+url.QueryEscape(alt)); e2 == nil {
+				if h2, pe := metatubeParseMovies(rb); pe == nil {
+					hits = h2
+				}
+			}
+		}
+	}
+	if len(hits) == 0 {
 		saveAVMeta(&model.AVMeta{Num: key, Status: "not_found", UpdatedAt: time.Now()})
 		return nil
 	}
@@ -267,10 +279,10 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	meta := &model.AVMeta{
 		Num: key, Status: "ok",
 		Provider: detail.Provider, ProviderID: detail.ID,
-		Title:      strings.TrimSpace(detail.Title),
-		Year:       year, ReleaseDate: detail.ReleaseDate,
-		Runtime:    detail.Runtime, Director: detail.Director, Publisher: detail.Maker,
-		Plot:       detail.Summary, Score: detail.Score,
+		Title: strings.TrimSpace(detail.Title),
+		Year:  year, ReleaseDate: detail.ReleaseDate,
+		Runtime: detail.Runtime, Director: detail.Director, Publisher: detail.Maker,
+		Plot: detail.Summary, Score: detail.Score,
 	}
 	if meta.Title == "" {
 		meta.Title = strings.TrimSpace(detail.Number)
@@ -288,6 +300,13 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	saveAVMeta(meta)
 	return meta
 }
+
+// avTrimNumZeros 番号数字段去前导零（JUVR-00303 → JUVR-303）
+func avTrimNumZeros(num string) string {
+	return avLeadingZerosRe.ReplaceAllString(num, "-$1")
+}
+
+var avLeadingZerosRe = regexp.MustCompile(`-0+(\d)`)
 
 func saveAVMeta(meta *model.AVMeta) {
 	if model.DB == nil {
