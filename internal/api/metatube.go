@@ -1,6 +1,6 @@
 package api
 
-// ==================== MetaTube AV 元数据刮削 ====================
+// ==================== MetaTube AV 番号识别 ====================
 //
 // 对接自部署的 metatube-server（github.com/metatube-community/metatube）：
 //   GET /v1/movies/search?q=<番号>          → []MovieSummary（各刮削源命中列表）
@@ -8,9 +8,10 @@ package api
 //   GET /v1/providers                       → 启用的刮削源（测试连接用）
 // 认证：URL 上带 ?token=（服务端配置了 MT_TOKEN 时必填）。
 //
-// 整理流程接入（processAVDirectory）：番号提取后自动刮削，结果缓存 AVMeta 表，
-// 失败/未配置自动退回纯番号行为；NFO + poster.jpg 写到本地媒体目录供 Emby 读取。
-// 重命名模板可用 {av_title}/{av_year}/{actor}/{actors}（缓存直读，不触发网络）。
+// 定位 = AV 版的 TMDB 识别：整理流程（processAVDirectory）番号提取后自动识别，
+// 结果缓存 AVMeta 表，失败/未配置自动退回纯番号行为。识别结果只用于
+// 重命名模板变量 {av_title}/{av_year}/{actor}/{actors}（缓存直读，不触发网络）
+// 与总览面板展示，不向媒体目录写任何元数据文件。
 
 import (
 	"crypto/sha1"
@@ -213,12 +214,6 @@ func metatubeFetchCached(num string) *model.AVMeta {
 		meta.GenresJSON = string(b)
 	}
 	saveAVMeta(meta)
-	// 封面预取到海报缓存（总览面板 /api/poster/av: 直接命中）
-	if meta.CoverURL != "" {
-		if err := metatubeCacheCover(meta.CoverURL); err != nil {
-			log.Printf("[MetaTube] ○ 封面预取失败（展示时重试）: %v", err)
-		}
-	}
 	return meta
 }
 
@@ -243,36 +238,13 @@ func appDataDir() string {
 	return "/data"
 }
 
-// posterCacheFile 海报磁盘缓存路径——serveTMDBPoster 与 metatubeCacheCover
-// 必须用同一 key 推导，预取的封面才能被代理直接命中
+// posterCacheFile 海报磁盘缓存路径——serveTMDBPoster（总览/封面代理）
+// 与 readPosterCache（媒体库海报插件）必须用同一 key 推导
 func posterCacheFile(dataDir, key string) string {
 	cacheDir := filepath.Join(dataDir, "posters")
 	_ = os.MkdirAll(cacheDir, 0o755)
 	h := sha1.Sum([]byte(key))
 	return filepath.Join(cacheDir, hex.EncodeToString(h[:8])+path.Ext(key))
-}
-
-// metatubeCacheCover 下载封面进海报缓存（已有 7 天内缓存则跳过）
-func metatubeCacheCover(coverURL string) error {
-	if coverURL == "" {
-		return nil
-	}
-	key := "av:" + coverURL
-	cacheFile := posterCacheFile(appDataDir(), key)
-	if st, err := os.Stat(cacheFile); err == nil && st.Size() > 0 && time.Since(st.ModTime()) < 7*24*time.Hour {
-		return nil
-	}
-	resp, err := metatubeClient.Get(coverURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
-	resp.Body.Close()
-	if resp.StatusCode != nethttp.StatusOK || len(body) < 100 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return os.WriteFile(cacheFile, body, 0o644)
 }
 
 // avMetaActors 缓存行 → 演员名列表
@@ -292,98 +264,6 @@ func avMetaGenres(m *model.AVMeta) []string {
 	var list []string
 	_ = json.Unmarshal([]byte(m.GenresJSON), &list)
 	return list
-}
-
-// xmlEscape NFO 是手拼 XML，文本节点里的 & < > 必须转义
-func xmlEscape(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;")
-	return r.Replace(s)
-}
-
-// writeAVMetaFiles 把 NFO + poster.jpg 写到本地媒体目录（整理移动成功后调用）。
-// Emby 优先读本地 NFO（需库设置启用 NFO 读取器），poster.jpg 按命名约定天然识别；
-// 任一步失败只记日志，不影响入库结果
-func writeAVMetaFiles(avDir string, m *model.AVMeta, num string) {
-	if m == nil || m.Status != "ok" {
-		return
-	}
-	localRoot := defaultLocalPath
-	if v := modelSettingValue("full"); v != "" {
-		var full struct {
-			LocalPath string `json:"local_path"`
-		}
-		if json.Unmarshal([]byte(v), &full) == nil && full.LocalPath != "" {
-			localRoot = full.LocalPath
-		}
-	}
-	dir := filepath.Join(localRoot, filepath.FromSlash(avDir))
-	if err := os.MkdirAll(dir, 0o777); err != nil {
-		log.Printf("[MetaTube] ○ 元数据目录创建失败 %s: %v", dir, err)
-		return
-	}
-	// poster.jpg：优先用预取缓存，未命中再拉一次
-	if m.CoverURL != "" {
-		if data := readPosterCache(m.CoverURL); len(data) > 0 {
-			if err := os.WriteFile(filepath.Join(dir, "poster.jpg"), data, 0o666); err != nil {
-				log.Printf("[MetaTube] ○ poster.jpg 写入失败: %v", err)
-			}
-		} else if err := metatubeCacheCover(m.CoverURL); err == nil {
-			if data := readPosterCache(m.CoverURL); len(data) > 0 {
-				_ = os.WriteFile(filepath.Join(dir, "poster.jpg"), data, 0o666)
-			}
-		}
-	}
-	// movie.nfo
-	title := m.Title
-	if title == "" {
-		title = num
-	}
-	display := title
-	if len(avMetaActors(m)) > 0 {
-		display = num + " " + title
-	}
-	actors := avMetaActors(m)
-	genres := avMetaGenres(m)
-	var b strings.Builder
-	b.WriteString("<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<movie>\n")
-	b.WriteString("  <title>" + xmlEscape(display) + "</title>\n")
-	b.WriteString("  <sorttitle>" + xmlEscape(num) + "</sorttitle>\n")
-	if m.OriginalTitle != "" && m.OriginalTitle != title {
-		b.WriteString("  <originaltitle>" + xmlEscape(m.OriginalTitle) + "</originaltitle>\n")
-	}
-	if m.ReleaseDate != "" {
-		b.WriteString("  <premiered>" + xmlEscape(m.ReleaseDate) + "</premiered>\n")
-		b.WriteString("  <releasedate>" + xmlEscape(m.ReleaseDate) + "</releasedate>\n")
-	}
-	if m.Year != "" {
-		b.WriteString("  <year>" + xmlEscape(m.Year) + "</year>\n")
-	}
-	if m.Plot != "" {
-		b.WriteString("  <plot>" + xmlEscape(m.Plot) + "</plot>\n")
-		b.WriteString("  <outline>" + xmlEscape(m.Plot) + "</outline>\n")
-	}
-	if m.Runtime > 0 {
-		b.WriteString(fmt.Sprintf("  <runtime>%d</runtime>\n", m.Runtime))
-	}
-	b.WriteString("  <uniqueid type=\"num\" default=\"true\">" + xmlEscape(num) + "</uniqueid>\n")
-	if m.Publisher != "" {
-		b.WriteString("  <studio>" + xmlEscape(m.Publisher) + "</studio>\n")
-	}
-	if m.Director != "" {
-		b.WriteString("  <director>" + xmlEscape(m.Director) + "</director>\n")
-	}
-	for _, g := range genres {
-		b.WriteString("  <genre>" + xmlEscape(g) + "</genre>\n")
-	}
-	for _, a := range actors {
-		b.WriteString("  <actor>\n    <name>" + xmlEscape(a) + "</name>\n    <role>" + xmlEscape(a) + "</role>\n  </actor>\n")
-	}
-	b.WriteString("</movie>\n")
-	if err := os.WriteFile(filepath.Join(dir, "movie.nfo"), []byte(b.String()), 0o666); err != nil {
-		log.Printf("[MetaTube] ○ movie.nfo 写入失败: %v", err)
-		return
-	}
-	log.Printf("[MetaTube] ✓ 元数据已写入 %s（poster.jpg + movie.nfo）", avDir)
 }
 
 // readPosterCache 读海报缓存（未命中返回 nil）

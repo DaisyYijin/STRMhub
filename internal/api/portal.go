@@ -523,7 +523,7 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 	cacheDir := filepath.Join(dataDir, "posters")
 	_ = os.MkdirAll(cacheDir, 0755)
 	// ---- AV 封面分支（MetaTube 刮削结果，PosterPath = "av:<完整URL>"）----
-	// 直接代理原始 URL（metatubeCacheCover 预取失败时此处兜底重试），缓存规则与 TMDB 相同
+	// 直接代理原始封面 URL（只缓存到 /data/posters，不写媒体目录），规则与 TMDB 相同
 	if strings.HasPrefix(p, "av:") {
 		coverURL := strings.TrimPrefix(p, "av:")
 		if coverURL == "" || !strings.HasPrefix(coverURL, "http") {

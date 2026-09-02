@@ -3,9 +3,6 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -134,33 +131,6 @@ func TestMetatubeDisabled(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(hits); n != 0 {
 		t.Errorf("未启用不应发请求，实际 %d", n)
-	}
-}
-
-func TestWriteAVMetaFiles(t *testing.T) {
-	local := t.TempDir()
-	saveSettingRow(t, "full", `{"local_path":"`+strings.ReplaceAll(local, "\\", "\\\\")+`"}`)
-	meta := &model.AVMeta{
-		Num: "ABC123", Status: "ok", Title: "タイトル/危険文字", Year: "2022",
-		ReleaseDate: "2022-03-04", Plot: "简介 <转义> & 测试", Publisher: "PRESTIGE",
-		ActorsJSON: `["演员A","演员B"]`, GenresJSON: `["剧情"]`,
-	}
-	avDir := "无码/ABC-123"
-	writeAVMetaFiles(avDir, meta, "ABC-123")
-
-	nfo, err := os.ReadFile(filepath.Join(local, "无码", "ABC-123", "movie.nfo"))
-	if err != nil {
-		t.Fatalf("movie.nfo 未写入: %v", err)
-	}
-	s := string(nfo)
-	for _, want := range []string{"<title>ABC-123 タイトル/危険文字</title>", "<year>2022</year>", "<premiered>2022-03-04</premiered>", "简介 &lt;转义&gt; &amp; 测试", "<name>演员A</name>"} {
-		if !strings.Contains(s, want) {
-			t.Errorf("NFO 缺少 %q\n%s", want, s)
-		}
-	}
-	// cover 为空 → 不应产生 poster.jpg 但 NFO 照常
-	if _, err := os.Stat(filepath.Join(local, "无码", "ABC-123", "poster.jpg")); !os.IsNotExist(err) {
-		t.Errorf("cover 为空不应写 poster.jpg")
 	}
 }
 
