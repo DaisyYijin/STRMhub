@@ -65,8 +65,10 @@ func ensureRenameTpl() {
 		MovieFile: "{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
 		TVFolder: "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
 		TVFile: "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
-		AVFolder: "{first_letter}-{title}",
-		AVFile: "{title}<.{resource_pix}><.{resource_type}>{ext}",
+		// AV 命名规范 = 番号 + AV 标题（如 "ABC-123 XXXXXX"），不带画质等附加信息；
+		// 未配置 MetaTube 或识别不到时 <> 块整体省略，退回纯番号
+		AVFolder: "{num}< {av_title}>",
+		AVFile:   "{num}< {av_title}>{ext}",
 	}
 }
 

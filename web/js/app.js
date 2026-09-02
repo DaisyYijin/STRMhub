@@ -1333,11 +1333,19 @@ const RENAME_VARS = {
   '{actor}': '相沢みなみ',
   '{actors}': '相沢みなみ、天使もえ',
 };
+// AV 模板的示例值：{title}/{first_letter} 在 AV 流程 = 番号/首字母，
+// 不能沿用电影样本（钢铁侠），否则示例误导
+const RENAME_VARS_AV = Object.assign({}, RENAME_VARS, {
+  '{title}': 'ABC-123',
+  '{first_letter}': 'A',
+  '{year}': '2022',
+});
 
-function renderRenameExample(rule) {
+function renderRenameExample(rule, vars) {
+  const V = vars || RENAME_VARS;
   let s = rule || '';
   // 按变量名长度降序替换，避免 {season} 先于 {season_episode} 被误替换
-  const keys = Object.keys(RENAME_VARS).sort((a, b) => b.length - a.length);
+  const keys = Object.keys(V).sort((a, b) => b.length - a.length);
   // 第一步：处理 <...> 块语法（块内变量非空则输出块内容，否则丢弃整个块）
   // 支持 <{name}...>、<?{name}...>、<...{var}...> 等形式
   // 简化处理：遍历替换 <...> 块
@@ -1354,7 +1362,7 @@ function renderRenameExample(rule) {
     for (const k of keys) {
       if (blockContent.includes(k)) {
         hasNonEmpty = true;
-        rendered = rendered.split(k).join(RENAME_VARS[k]);
+        rendered = rendered.split(k).join(V[k]);
       }
     }
     // 块内有变量且至少一个被替换 → 输出替换后的内容；否则丢弃
@@ -1362,7 +1370,7 @@ function renderRenameExample(rule) {
   } while (s !== prev);
   // 第二步：替换裸 {变量名}
   for (const k of keys) {
-    s = s.split(k).join(RENAME_VARS[k]);
+    s = s.split(k).join(V[k]);
   }
   // 第三步：[[ ]] → { }
   s = s.replace(/\[\[/g, '{').replace(/\]\]/g, '}');
@@ -1381,7 +1389,7 @@ function updateRenameExample() {
   pairs.forEach(([inputId, exId]) => {
     const input = document.getElementById(inputId);
     const ex = document.getElementById(exId);
-    if (input && ex) ex.textContent = renderRenameExample(input.value);
+    if (input && ex) ex.textContent = renderRenameExample(input.value, inputId.indexOf('rename-av-') === 0 ? RENAME_VARS_AV : null);
   });
   syncRenamePresetUI();
 }
@@ -1417,19 +1425,21 @@ const RENAME_PRESETS = {
       file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}><{custom_regex_match}><[tmdb{tmdb_id}]{ext}',
     },
   },
-  // AV 番号即 {num}/{title}；{av_title} 等 MetaTube 变量未识别时为空，<> 块自动省略
+  // AV 命名规范 = 番号 + AV 标题（"ABC-123 XXXXXX"），不带画质等附加信息；
+  // {av_title} 未识别（未配置 MetaTube 或搜不到）时 <> 块整体省略退回纯番号。
+  // 详细与默认同款输出（规范固定），精简 = 纯番号
   av: {
     default: {
-      folder: '{first_letter}-{title}',
-      file: '{num}<.{resource_pix}><.{resource_type}>{ext}',
+      folder: '{num}< {av_title}>',
+      file: '{num}< {av_title}>{ext}',
     },
     lite: {
       folder: '{num}',
       file: '{num}{ext}',
     },
     full: {
-      folder: '{first_letter}-{num}< {av_title}>',
-      file: '{num}< {av_title}>< ({av_year})><.{resource_pix}><.{resource_type}>{ext}',
+      folder: '{num}< {av_title}>',
+      file: '{num}< {av_title}>{ext}',
     },
   },
 };
@@ -2549,8 +2559,8 @@ const DEFAULT_CONFIGS = {
     movie_file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
     tv_folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
     tv_file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
-    av_folder: '{first_letter}-{title}',
-    av_file: '{num}<.{resource_pix}><.{resource_type}>{ext}',
+    av_folder: '{num}< {av_title}>',
+    av_file: '{num}< {av_title}>{ext}',
   },
   'monitor': { dir: '', target: '' },
   'message': { wecom: { corp_id: '', secret: '', agent_id: '', api_url: 'https://qyapi.weixin.qq.com', token: '', encoding_aes_key: '', enabled: false }, tg: { token: '', chat_id: '', enabled: false }, feishu: { webhook: '', secret: '', enabled: false }, qq_onebot: { url: '', token: '', target_type: 'group', target: '', admin: '', event_token: '', enabled: false }, qq_official: { app_id: '', secret: '', group_id: '', enabled: false } },
