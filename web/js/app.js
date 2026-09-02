@@ -1328,6 +1328,10 @@ const RENAME_VARS = {
   '{audio_encode}': 'TrueHD.7.1',
   '{resource_team}': 'TnT',
   '{num}': 'ABC-123',
+  '{av_title}': '真夏の夜',
+  '{av_year}': '2022',
+  '{actor}': '相沢みなみ',
+  '{actors}': '相沢みなみ、天使もえ',
 };
 
 function renderRenameExample(rule) {
@@ -1382,7 +1386,7 @@ function updateRenameExample() {
   syncRenamePresetUI();
 }
 
-// ==================== 重命名命名规范预设（电影/剧集） ====================
+// ==================== 重命名命名规范预设（电影/剧集/AV） ====================
 // 手动改过模板后与预设不再一致 → 按钮全部弹起（自定义状态），不自动套用
 const RENAME_PRESETS = {
   movie: {
@@ -1413,6 +1417,21 @@ const RENAME_PRESETS = {
       file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}><{custom_regex_match}><[tmdb{tmdb_id}]{ext}',
     },
   },
+  // AV 番号即 {num}/{title}；{av_title} 等 MetaTube 变量未识别时为空，<> 块自动省略
+  av: {
+    default: {
+      folder: '{first_letter}-{title}',
+      file: '{num}<.{resource_pix}><.{resource_type}>{ext}',
+    },
+    lite: {
+      folder: '{num}',
+      file: '{num}{ext}',
+    },
+    full: {
+      folder: '{first_letter}-{num}< {av_title}>',
+      file: '{num}< {av_title}>< ({av_year})><.{resource_pix}><.{resource_type}>{ext}',
+    },
+  },
 };
 
 function applyRenamePreset(type, key) {
@@ -1426,7 +1445,7 @@ function applyRenamePreset(type, key) {
 
 // 当前值与哪个预设一致就点亮对应按钮；都不一致 = 自定义（全部弹起）
 function syncRenamePresetUI() {
-  for (const type of ['movie', 'tv']) {
+  for (const type of ['movie', 'tv', 'av']) {
     const folder = (val('rename-' + type + '-folder') || '').trim();
     const file = (val('rename-' + type + '-file') || '').trim();
     let hit = '';

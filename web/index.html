@@ -626,9 +626,16 @@ av:
         </div>
 
         <div class="rename-group">
-          <div class="rename-group-title"><span class="badge badge-amber">AV</span></div>
-          <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control control-wide"><textarea id="rename-av-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}</textarea><div class="rename-example-box">示例：<code id="ex-av-folder" class="rename-example"></code></div></div></div>
-          <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。</span></i></div><div class="control control-wide"><textarea id="rename-av-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{num}<.{resource_pix}><.{resource_type}>{ext}</textarea><div class="rename-example-box">示例：<code id="ex-av-file" class="rename-example"></code></div></div></div>
+          <div class="rename-group-title"><span class="badge badge-amber">AV</span>
+            <span class="rn-presets" id="rn-presets-av">
+              <span style="font-size:12px;color:var(--text-3)">命名规范：</span>
+              <button class="rn-preset" data-p="default" onclick="applyRenamePreset('av','default')">默认</button>
+              <button class="rn-preset" data-p="lite" onclick="applyRenamePreset('av','lite')">精简</button>
+              <button class="rn-preset" data-p="full" onclick="applyRenamePreset('av','full')">详细</button>
+            </span>
+          </div>
+          <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{num}/{av_title} 等变量，详见「重命名规则」页。{av_title} 等需配置 MetaTube 识别，未识别时为空（<> 块自动省略）。</span></i></div><div class="control control-wide"><textarea id="rename-av-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}</textarea><div class="rename-example-box">示例：<code id="ex-av-folder" class="rename-example"></code></div></div></div>
+          <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。AV 流程中 {num} 与 {title} 都是番号，二者选一，同用会重复；{av_title}/{actor} 等需 MetaTube 识别。</span></i></div><div class="control control-wide"><textarea id="rename-av-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{num}<.{resource_pix}><.{resource_type}>{ext}</textarea><div class="rename-example-box">示例：<code id="ex-av-file" class="rename-example"></code></div></div></div>
         </div>
 
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-rename')">保存配置</button> <button class="btn btn-warning" onclick="resetConfig('org-rename', this)" style="position:relative">重置配置</button></div></div>
