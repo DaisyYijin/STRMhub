@@ -177,6 +177,19 @@ func metatubeParseMovie(raw []byte) (*metatubeMovie, error) {
 	return &m, nil
 }
 
+// metatubeFetchCoverBytes 从 metatube-server 公开图片代理取封面字节
+// （/v1/images/primary/{provider}/{id}：服务端统一处理源站防盗链并缓存，
+// 比直连源站 CDN 可靠；该端点无需 token）
+func metatubeFetchCoverBytes(m *model.AVMeta) ([]byte, error) {
+	cfg := loadMetatubeCfg()
+	if cfg.URL == "" || m.Provider == "" || m.ProviderID == "" {
+		return nil, fmt.Errorf("metatube 图片代理不可用（缺地址或 provider/id）")
+	}
+	u := fmt.Sprintf("%s/v1/images/primary/%s/%s", cfg.URL,
+		url.PathEscape(m.Provider), url.PathEscape(m.ProviderID))
+	return fetchHTTPBytes(u, 15*time.Second)
+}
+
 // metatubeScrapeMu 批量整理时防止并发重复刮削同一批番号（双引擎竞态）
 var metatubeScrapeMu sync.Mutex
 

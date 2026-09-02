@@ -2802,9 +2802,14 @@ func notifyAVStored(m *model.AVMeta, num, category string, videos []remoteFile) 
 			entry.Line += "\n厂牌：" + maker
 		}
 		if m.CoverURL != "" {
-			entry.PosterURL = m.CoverURL // 源站公网封面
-			// 抓取封面字节：TG 直接上传；企微转存官方图床后 picurl 必然显示
-			if data, err := fetchHTTPBytes(m.CoverURL, 10*time.Second); err == nil && len(data) > 100 {
+			entry.PosterURL = m.CoverURL // 源站公网封面（字节抓取失败时的兜底）
+			// 封面字节优先从 metatube-server 图片代理取（免源站防盗链）：
+			// TG 直接上传，企微转存官方图床后 picurl 必然显示
+			data, err := metatubeFetchCoverBytes(m)
+			if err != nil || len(data) <= 100 {
+				data, err = fetchHTTPBytes(m.CoverURL, 10*time.Second)
+			}
+			if err == nil && len(data) > 100 {
 				entry.PosterData = data
 			}
 		}
