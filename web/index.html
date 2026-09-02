@@ -800,32 +800,16 @@ av:
         </div>
       </div>
 
-      <!-- 第二行：当前任务 + 最近整理 -->
-      <div class="dash-grid dash-grid-2">
-        <div class="card dash-card">
-          <div class="dash-card-title">快捷操作</div>
-          <div class="dash-actions" style="margin-top:12px">
-            <button class="btn btn-outline" onclick="startFullSyncQuick(this)">⇄ 全量同步</button>
-            <button class="btn btn-outline" onclick="quickOrganize(this)">⚙ 整理</button>
-            <button class="btn btn-outline" onclick="quickIncr(this)">⚡ 增量</button>
-            <button class="btn btn-outline" onclick="openPortal()">🎬 门户</button>
-            <button class="btn btn-outline" onclick="location.href='/api/system/backup'">⬇ 备份</button>
-          </div>
+      <!-- 第二行：最近整理 -->
+      <div class="card dash-card">
+        <div class="dash-card-title" style="display:flex;justify-content:space-between;align-items:center">最近整理
+          <button class="btn btn-outline" style="padding:3px 12px;font-size:12px" onclick="showPage('organize')">查看全部</button>
         </div>
-        <div class="card dash-card">
-          <div class="dash-card-title" style="display:flex;justify-content:space-between;align-items:center">最近整理
-            <button class="btn btn-outline" style="padding:3px 12px;font-size:12px" onclick="showPage('organize')">查看全部</button>
-          </div>
-          <div id="dash-recent" class="dash-recent-list">加载中…</div>
-        </div>
+        <div id="dash-recent" class="dash-recent-list">加载中…</div>
       </div>
 
-      <!-- 第三行：后台任务 + 入库统计 + 系统状态 -->
-      <div class="dash-grid dash-grid-3">
-        <div class="card dash-card">
-          <div class="dash-card-title">后台任务</div>
-          <div id="dash-bg" class="dash-bg-list">加载中…</div>
-        </div>
+      <!-- 第三行：入库统计 + 系统状态 -->
+      <div class="dash-grid dash-grid-2">
         <div class="card dash-card">
           <div class="dash-card-title">近 7 天入库</div>
           <div id="dash-weekly"></div>

@@ -2513,7 +2513,6 @@ async function loadDashboard() {
     setTxt('dash-strm-invalid', strm.invalid || 0);
     setTxt('dash-organized', fmtN(d.organized));
     setTxt('dash-synced', fmtN(d.synced_files));
-    /* ---- 快捷操作卡片（任务状态卡已移除） ---- */
     /* ---- 最近整理（海报行） ---- */
     const recent = d.recent_media || [];
     const rb = document.getElementById('dash-recent');
@@ -2526,11 +2525,6 @@ async function loadDashboard() {
     } else {
       rb.innerHTML = '<div class="dash-empty">暂无整理记录</div>';
     }
-    /* ---- 后台任务 ---- */
-    const bg = d.bg_tasks || [];
-    document.getElementById('dash-bg').innerHTML = bg.map(t =>
-      '<div class="dash-bg-item"><span class="dash-bg-dot ' + (t.running ? 'on' : 'off') + '"></span>'
-      + '<span>' + esc(t.name) + '</span><span class="d">' + esc(t.detail || '') + '</span></div>').join('');
     /* ---- 近 7 天入库（SVG 柱图） ---- */
     renderWeekly(d.weekly || [], d.week_total || 0);
     /* ---- 系统状态 ---- */
@@ -2549,8 +2543,9 @@ async function loadDashboard() {
       setTxt('dash-cpu-pct', '-');
     }
     /* ---- 我的媒体库分类卡（点击打开观影门户；Emby 源时 = Emby 媒体库） ---- */
+    const em = d.emby || {};
     let cats = d.categories || [];
-    if (em && em.libraries && em.libraries.length) {
+    if (em.libraries && em.libraries.length) {
       cats = em.libraries.map(l => ({
         name: l.name, count: l.count,
         posters: (l.collage || []).map(p => '/embyimg?path=' + encodeURIComponent(p) + '&maxWidth=200'),
@@ -2575,7 +2570,7 @@ async function loadDashboard() {
     }
     /* ---- 最新入库海报墙（Emby 源时 = Emby 最新入库，点击打开观影门户） ---- */
     const pb = document.getElementById('dash-posters');
-    if (em && em.recent && em.recent.length) {
+    if (em.recent && em.recent.length) {
       pb.innerHTML = em.recent.map(m =>
         '<div class="dash-poster" title="' + esc(m.name + ' ' + (m.year || '')) + '（点击打开观影门户）" onclick="openPortal()">'
         + '<img src="/embyimg?path=' + encodeURIComponent('Items/' + m.id + '/Images/Primary') + '&maxWidth=200" loading="lazy">'
