@@ -1430,7 +1430,7 @@ const RENAME_PRESETS = {
   // 详细与默认同款输出（规范固定），精简 = 纯番号
   av: {
     default: {
-      folder: '{num}< {av_title}>',
+      folder: '{first_letter}-{num}',
       file: '{num}< {av_title}>{ext}',
     },
     lite: {
@@ -1438,7 +1438,7 @@ const RENAME_PRESETS = {
       file: '{num}{ext}',
     },
     full: {
-      folder: '{num}< {av_title}>',
+      folder: '{first_letter}-{num}',
       file: '{num}< {av_title}>{ext}',
     },
   },
@@ -2559,7 +2559,7 @@ const DEFAULT_CONFIGS = {
     movie_file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
     tv_folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
     tv_file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
-    av_folder: '{num}< {av_title}>',
+    av_folder: '{first_letter}-{num}',
     av_file: '{num}< {av_title}>{ext}',
   },
   'monitor': { dir: '', target: '' },

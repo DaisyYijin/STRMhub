@@ -257,7 +257,7 @@ func (h *Handler) LoadRenameTemplates() *RenameConfig {
 		TVFolder:   "{first_letter}-{title}-{year}-[tmdb={tmdb_id}]",
 		TVFile:   "{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}",
 		// AV 命名规范 = 番号 + AV 标题（"ABC-123 XXXXXX"），不带画质附加信息
-		AVFolder:   "{num}< {av_title}>",
+		AVFolder:   "{first_letter}-{num}",
 		AVFile:   "{num}< {av_title}>{ext}",
 	}
 
