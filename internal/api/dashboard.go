@@ -10,6 +10,7 @@ import (
 	"sync"
 	"path/filepath"
 	"fmt"
+	"log"
 	"net/http"
 	"io"
 	"net/url"
@@ -574,3 +575,42 @@ func saveProxyConfigToDB(h *Handler, proxyURL string) {
 	}
 }
 
+
+// StartPosterBackfill 旧数据回填：poster_path 字段上线之前的入库记录没有海报，
+// 启动后按 tmdb_id 从 TMDB 补拉存回数据库，仪表盘海报墙/分类卡才有图
+func StartPosterBackfill(h *Handler) {
+	go func() {
+		time.Sleep(20 * time.Second) // 等数据库与网络就绪
+		var rows []model.MediaLibrary
+		if err := h.DB.Where("poster_path = '' AND tmdb_id <> 0 AND media_type IN ?", []string{"movie", "tv"}).Find(&rows).Error; err != nil {
+			return
+		}
+		if len(rows) == 0 {
+			return
+		}
+		tc, err := loadTmdbClient()
+		if err != nil {
+			return // TMDB 未配置，跳过回填
+		}
+		fixed := 0
+		for _, m := range rows {
+			body, err := tc.get(fmt.Sprintf("/%s/%d", m.MediaType, m.TmdbID), nil)
+			if err != nil {
+				continue
+			}
+			var d struct {
+				PosterPath string `json:"poster_path"`
+			}
+			if json.Unmarshal(body, &d) != nil || d.PosterPath == "" {
+				continue
+			}
+			if err := h.DB.Model(&model.MediaLibrary{}).Where("id = ?", m.ID).Update("poster_path", d.PosterPath).Error; err == nil {
+				fixed++
+			}
+			time.Sleep(120 * time.Millisecond) // TMDB 限速保护
+		}
+		if fixed > 0 {
+			log.Printf("[海报回填] ✓ 补齐 %d 条旧记录的 TMDB 海报", fixed)
+		}
+	}()
+}

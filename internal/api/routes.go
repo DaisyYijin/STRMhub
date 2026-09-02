@@ -168,6 +168,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 	// 启动 115 每日签到调度器（配置时间窗口内随机执行）
 	Start115CheckinScheduler(h)
+	StartPosterBackfill(h) // 旧入库记录的 TMDB 海报回填
 
 	// 启动离线任务监视器（完成即触发整理；失败告警——磁力不是百分百成功）
 	StartOfflineTaskMonitor(h)
