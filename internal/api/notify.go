@@ -440,7 +440,6 @@ func sendWecomNews(cfg WecomConfig, title, desc, picurl, linkURL string) error {
 		// 图文被拒（如 picurl 不可达）时退回纯文本，保证消息不丢
 		return sendWecom(cfg, title+"\n"+desc)
 	}
-	log.Printf("企业微信图文消息发送成功: %s", truncateStr(title, 40))
 	return nil
 }
 
@@ -472,7 +471,6 @@ func sendTelegramPhoto(cfg TGConfig, title, content, photoURL string) error {
 		log.Printf("Telegram 发送图片失败: HTTP %d %s（退回文本）", resp.StatusCode, truncateStr(string(body), 120))
 		return sendTelegram(cfg, caption)
 	}
-	log.Printf("Telegram 图片消息发送成功: %s", truncateStr(title, 40))
 	return nil
 }
 
@@ -531,11 +529,6 @@ func sendWecom(cfg WecomConfig, msg string) error {
 		}
 	}
 
-	suffix := ""
-	if len(chunks) > 1 {
-		suffix = fmt.Sprintf("，分 %d 段", len(chunks))
-	}
-	log.Printf("[通知] ✓ 企微消息已发送（%d 字%s，首行: %s）", len(msg), suffix, truncateStr(firstLine(msg), 40))
 	return nil
 }
 
@@ -615,7 +608,6 @@ func sendTelegram(cfg TGConfig, msg string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	log.Printf("[通知] ✓ TG 消息已发送（%d 字，首行: %s）", len(msg), truncateStr(firstLine(msg), 40))
 	return nil
 }
 

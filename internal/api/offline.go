@@ -222,11 +222,7 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 	time.Sleep(3 * time.Second)
 
 	if !fullSyncMu.TryLock() {
-		if running, tname, _, _ := TaskStatus(); running && tname != "" {
-			log.Printf("[上传] 先等一下：正在执行「%s」，完成后会自动整理", tname)
-		} else {
-			log.Printf("[上传] 先等一下：有其他任务正在执行，完成后会自动整理")
-		}
+		// 被其他任务占用：静默跳过（占用方的日志已覆盖，等下轮守望者接管）
 		return false
 	}
 	defer fullSyncMu.Unlock()
@@ -234,7 +230,6 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 	defer endTask()
 
 	start := time.Now()
-	log.Printf("[上传] 转存完成，开始自动整理和同步…")
 
 	// 整理：直接扫描转存目录（转存触发时不需要扫待整理目录）
 	shareFolder := ""
@@ -277,8 +272,11 @@ func (h *Handler) triggerOrganizeAndSync() bool {
 		log.Printf("[上传] ✗ 自动增量同步失败: %v", err)
 		return true
 	}
-	log.Printf("[上传] ✅ 自动整理+增量完成，耗时 %s · STRM %d，附属 %d",
-		time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
+	// 空转（STRM/附属都是 0）静默，只有真的生成了内容才记录
+	if sum.StrmCreated+sum.AssetsDownloaded > 0 {
+		log.Printf("[上传] ✅ 自动整理+增量完成，耗时 %s · STRM %d，附属 %d",
+			time.Since(start).Truncate(time.Second), sum.StrmCreated, sum.AssetsDownloaded)
+	}
 	return true
 }
 
@@ -439,8 +437,8 @@ func StartTransferWatcher(h *Handler) {
 			if err != nil || len(entries) == 0 {
 				continue
 			}
-			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）
-			log.Printf("[守望] 转存目录发现 %d 个新内容，开始自动整理", len(entries))
+			// 有内容：触发整理（内部自带互斥、与媒体库重叠校验、3 秒沉淀）。
+			// 发现本身不记日志——整理引擎会输出目录扫描结果，避免重复两行
 			ran := h.triggerOrganizeAndSync()
 			// 成功清空后冷却只要 60 秒（连续多个下载先后完成时快速接续）：
 			// 闸门是 since(lastTrigger)≥5min，把锚点拨回 4 分钟前即再等 60 秒

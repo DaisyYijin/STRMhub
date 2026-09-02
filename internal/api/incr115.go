@@ -355,7 +355,6 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 
 	// 沉淀延迟：等上游转存/移动操作完成，避免拿到中间状态（CMS 同款）
 	SetTaskProgress("正在获取网盘最近的改动…")
-	log.Printf("[同步] 开始增量同步，先等网盘操作稳定 3 秒…")
 	time.Sleep(3 * time.Second)
 
 	// ---- 阶段一：小批量分页拉取，落库去重，直到追平（本页无新事件）----
@@ -405,7 +404,6 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		}
 		sum.EventsFresh += fresh
 		if fresh > 0 {
-			log.Printf("[同步] 从网盘获取到 %d 条新变化", fresh)
 		}
 		if fresh == 0 || sum.EventsFresh >= p.Limit {
 			break // 已追平或达到单次上限
@@ -421,7 +419,6 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	var stale []model.SyncEvent
 	h.DB.Where("status = ?", "pending").Order("event_time").Find(&stale)
 	if len(stale) > 0 {
-		log.Printf("[同步] 发现上次没处理完的 %d 条变化，继续处理", len(stale))
 		pending = append(stale, pending...)
 	}
 
@@ -740,12 +737,15 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	if len(parts) > 0 {
 		detail = strings.Join(parts, "，")
 	}
-	ignoredNote := ""
-	if sum.Ignored > 0 {
-		ignoredNote = fmt.Sprintf("（另有 %d 条是整理目录内的变动，已忽略）", sum.Ignored)
+	// 完成摘要只在真的动了媒体库时输出：定时任务每 10 分钟一轮，
+	// "均与媒体库无关"的空转轮次（占绝大多数）静默不刷屏
+	if len(parts) > 0 {
+		ignoredNote := ""
+		if sum.Ignored > 0 {
+			ignoredNote = fmt.Sprintf("（另有 %d 条整理目录内变动已忽略）", sum.Ignored)
+		}
+		log.Printf("[同步] ✓ 增量同步完成：%s%s。用时 %s", detail, ignoredNote, sum.Elapsed)
 	}
-	log.Printf("[同步] ✓ 增量同步完成：处理 %d 条变化，%s%s。用时 %s",
-		len(pending), detail, ignoredNote, sum.Elapsed)
 	return sum, nil
 }
 
