@@ -2358,16 +2358,40 @@ func isAVAdFile(name string) bool {
 	return false
 }
 
+// containsAVAdKeyword 广告词检测（大小写不敏感）
+func containsAVAdKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	for _, kw := range avAdKeywords {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
 // isAdOnlyVideo 判断视频文件是否为纯广告/引流载体：
 // 清洗发布站广告（【…】块/域名）后连片名都没剩下（文件名整体是广告），
-// 或清洗后仍残留域名。"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4"
+// 或清洗后仍残留域名/广告词。"【更多无水印蓝光原盘请访问 www.BBQDDQ.com】.MP4"
 // 清洗后为空 → 广告；"骗不了人的男人.Softie...mkv" 清洗后保留完整片名 → 正片
+//
+// 站点水印前缀 ≠ 广告本体："4k688.com@START-635.mp4" 开头的 4k688.com 只是
+// 发布站水印（sanitizeAVFilename 能剥掉）。剥掉水印后剩干净片名/番号的算
+// 正片；剥不掉（域名在中间）或剥完剩广告词的（"18+游戏大全(996gg.cc)-…"、
+// "4k688.com@免费观看…"）才是真广告
 func isAdOnlyVideo(name string) bool {
-	cleaned := strings.TrimSpace(stripReleaseAds(baseName(name)))
+	raw := baseName(name) // 无扩展名的基名
+	cleaned := strings.TrimSpace(stripReleaseAds(raw))
 	if cleaned == "" {
 		return true
 	}
-	return avAdDomainRegex.MatchString(cleaned)
+	// 水印前缀判定必须喂完整文件名：sanitizeAVFilename 依赖 pathExt 找到真
+	// 扩展名，传无扩展名基名时 "xxx.com@番号" 的域名会被误当扩展名保留
+	trimmed := strings.TrimSpace(baseName(sanitizeAVFilename(name)))
+	if t := strings.Trim(trimmed, ".-_ "); t != "" && trimmed != raw &&
+		!avAdDomainRegex.MatchString(t) && !containsAVAdKeyword(t) {
+		return false // 水印前缀剥掉后是干净片名/番号 → 正片
+	}
+	return avAdDomainRegex.MatchString(cleaned) || containsAVAdKeyword(cleaned)
 }
 
 // avSubLangRegex 字幕语言标记（.chs/.cht/.eng 等）

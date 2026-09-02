@@ -71,6 +71,13 @@ func TestIsAdOnlyVideo(t *testing.T) {
 		// 正片不受影响
 		{"骗不了人的男人.Softie.Conman.2022.1080p.MyTVSuper.WEB-DL.H265.AAC-QuickIO.mkv", false},
 		{"Up.2009.1080p.BluRay.x264.mkv", false},
+		// 站点水印前缀 + 番号：正片（START-635 实测误杀案例，水印剥掉后是干净番号）
+		{"4k688.com@START-635.mp4", false},
+		{"www.4k688.com@START-635.mp4", false},
+		{"4k688.com-START-635.mp4", false},
+		// 域名在中间剥不掉、或剥完剩广告词：真广告（START-635 离线包同款）
+		{"18+游戏大全(996gg.cc)-七龍珠H版-三國志H版-三國群淫傳等.mp4", true},
+		{"4k688.com@免费观看手机看片.mp4", true},
 	}
 	for _, c := range cases {
 		if got := isAdOnlyVideo(c.name); got != c.want {
