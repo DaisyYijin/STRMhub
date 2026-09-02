@@ -1395,8 +1395,8 @@ const RENAME_PRESETS = {
       file: '{title}.{year}<.{resource_pix}>{ext}',
     },
     full: {
-      folder: '{first_letter}/{title}-{year}-[tmdb={tmdb_id}]',
-      file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+      folder: '[{first_letter}]-{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}><{custom_regex_match}><[tmdb{tmdb_id}]{ext}',
     },
   },
   tv: {
@@ -1409,8 +1409,8 @@ const RENAME_PRESETS = {
       file: '{title} - {season_episode}<.{resource_pix}>{ext}',
     },
     full: {
-      folder: '{first_letter}/{title}-{year}-[tmdb={tmdb_id}]',
-      file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+      folder: '[{first_letter}]-{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}><{custom_regex_match}><[tmdb{tmdb_id}]{ext}',
     },
   },
 };
