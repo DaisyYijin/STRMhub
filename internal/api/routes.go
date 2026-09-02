@@ -361,6 +361,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 影视转存 · 观影（账号密码登录 + PoW 反爬自动过验证；磁力提交 115 离线）
 		protected.GET("/guanying/config", h.GyGetConfig)
+		protected.GET("/guanying/check", h.GyCheck)
 		protected.POST("/guanying/config", h.GySaveConfig)
 		protected.POST("/guanying/login", h.GyLogin)
 		protected.POST("/guanying/logout", h.GyLogout)
@@ -393,6 +394,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
+		protected.GET("/hdhive/check", h.HdhiveCheck)
 		protected.POST("/hdhive/config", h.HdhiveSaveConfig)
 		protected.POST("/hdhive/test", h.HdhiveTest)
 		protected.POST("/hdhive/login", h.HdhiveLogin)

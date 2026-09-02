@@ -490,20 +490,55 @@ func gyExtractTorrents(body string) []gin.H {
 // ==================== HTTP 处理器 ====================
 
 // GyGetConfig GET /guanying/config（回填用；密码原样回传便于编辑，站点凭据非高敏）
+// 登录探测的粘性缓存：配置读取即时返回上次结果，过期后台刷新。
+// 此前 GyGetConfig 同步探测站点，网络慢时页面输入框迟迟不回填
+var (
+	gyProbeMu sync.Mutex
+	gyProbeOK bool
+	gyProbeAt time.Time
+)
+
+func gyProbeLoginCached(cfg *gyCfg) bool {
+	gyProbeMu.Lock()
+	defer gyProbeMu.Unlock()
+	if time.Since(gyProbeAt) >= 5*time.Minute {
+		gyProbeAt = time.Now() // 防重复后台探测
+		c := *cfg
+		go func() {
+			client := gyEnsureClient(&c)
+			ok, _ := gyLoggedIn(client, c.BaseURL)
+			gyProbeMu.Lock()
+			gyProbeOK, gyProbeAt = ok, time.Now()
+			gyProbeMu.Unlock()
+		}()
+	}
+	return gyProbeOK
+}
+
 func (h *Handler) GyGetConfig(c *gin.Context) {
+	cfg := loadGyCfg()
+	loggedIn := len(cfg.Cookies) > 0 && gyProbeLoginCached(cfg)
+	c.JSON(http.StatusOK, gin.H{
+		"base_url":    cfg.BaseURL,
+		"username":    cfg.Username,
+		"password":    cfg.Password,
+		"logged_in":   loggedIn,
+		"has_cookies": len(cfg.Cookies) > 0,
+	})
+}
+
+// GyCheck GET /guanying/check：实时探测登录态（前端异步调用，不阻塞配置回填）
+func (h *Handler) GyCheck(c *gin.Context) {
 	cfg := loadGyCfg()
 	loggedIn := false
 	if len(cfg.Cookies) > 0 {
 		client := gyEnsureClient(cfg)
 		loggedIn, _ = gyLoggedIn(client, cfg.BaseURL)
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"base_url":  cfg.BaseURL,
-		"username":  cfg.Username,
-		"password":  cfg.Password,
-		"logged_in": loggedIn,
-		"has_cookies": len(cfg.Cookies) > 0,
-	})
+	gyProbeMu.Lock()
+	gyProbeOK, gyProbeAt = loggedIn, time.Now()
+	gyProbeMu.Unlock()
+	c.JSON(http.StatusOK, gin.H{"logged_in": loggedIn})
 }
 
 // GySaveConfig POST /guanying/config {base_url, username, password}

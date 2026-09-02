@@ -2963,6 +2963,8 @@ async function loadHdhivePage() {
     document.getElementById('hdhive-target-dir').value = d.target_dir || '';
     setHdhiveAllowPoints(!!d.allow_points);
     hdRenderLogin(d.logged_in, d.login_at, d.user);
+    // 配置已即时回填；登录态异步校准（不阻塞输入框显示）
+    api('/hdhive/check').then(r => hdRenderLogin(r.logged_in, r.login_at, r.user)).catch(() => {});
   } catch (e) { console.error('[影巢] 配置回填失败:', e.message); }
 }
 
@@ -3279,6 +3281,8 @@ async function gyLoadPage() {
     document.getElementById('gy-username').value = d.username || '';
     document.getElementById('gy-password').value = d.password || '';
     gyRenderAuth(d.logged_in);
+    // 配置已即时回填；登录态异步校准（不阻塞输入框显示）
+    api('/guanying/check').then(r => gyRenderAuth(r.logged_in)).catch(() => {});
   } catch (e) { console.error('[观影] 配置回填失败:', e.message); }
 }
 

@@ -636,6 +636,17 @@ func (h *Handler) HdhiveLogin(c *gin.Context) {
 }
 
 // HdhiveLogout POST /hdhive/logout → 清除会话
+// HdhiveCheck GET /hdhive/check：实时校验登录态（前端页面加载后异步调用）
+func (h *Handler) HdhiveCheck(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	loggedIn, user := h.hdhiveCheckLogin(cfg)
+	if !loggedIn {
+		// 校验接口可能改版：持有 token 会话即视为已登录（搜索/转存以实际会话为准）
+		loggedIn = cfg.Cookies["token"] != ""
+	}
+	c.JSON(http.StatusOK, gin.H{"logged_in": loggedIn, "user": user, "login_at": cfg.LoginAt})
+}
+
 func (h *Handler) HdhiveLogout(c *gin.Context) {
 	cfg := loadHdhiveCfg()
 	cfg.Cookies = map[string]string{}
@@ -650,10 +661,11 @@ func (h *Handler) HdhiveLogout(c *gin.Context) {
 // HdhiveGetConfig GET /hdhive/config
 func (h *Handler) HdhiveGetConfig(c *gin.Context) {
 	cfg := loadHdhiveCfg()
-	loggedIn, user := h.hdhiveCheckLogin(cfg)
-	if !loggedIn {
-		// 校验接口可能改版：持有 token 会话即视为已登录（搜索/转存以实际会话为准）
-		loggedIn = cfg.Cookies["token"] != ""
+	// 即时返回：只看本地是否持有 token，不做网络探测（探测走 /hdhive/check 异步）
+	loggedIn := cfg.Cookies["token"] != ""
+	var user json.RawMessage
+	if cfg.UserJSON != "" {
+		user = json.RawMessage(cfg.UserJSON)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"base_url":     cfg.BaseURL,
