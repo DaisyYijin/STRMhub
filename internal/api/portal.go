@@ -1347,7 +1347,12 @@ async function startEmby(f,startPct){
     const psid='portal-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
     u+='&PlaySessionId='+psid+'&VideoCodec=h264&AudioCodec=aac,mp3&TranscodingMaxAudioChannels=2&SegmentContainer=ts';
     pdbg('Emby m3u8：',u);
-    hls=new Hls({maxBufferLength:30,maxMaxBufferLength:60});
+    // 转码首段要等 Emby 起 ffmpeg（H.265 弱机 10~40 秒），默认 20 秒分片超时
+    // 会掐断请求（服务端日志表现为 context canceled），放宽到 90 秒
+    hls=new Hls({maxBufferLength:30,maxMaxBufferLength:60,
+      manifestLoadTimeOut:30*1000,manifestLoadingTimeOut:30*1000,manifestLoadingMaxRetry:4,
+      levelLoadTimeOut:30*1000,levelLoadingTimeOut:30*1000,levelLoadingMaxRetry:4,
+      fragLoadingTimeOut:90*1000,fragLoadingMaxRetry:8});
     hls.loadSource(u);
     hls.attachMedia(v);
     let firstFrag=false,manifestAt=0;
@@ -1355,8 +1360,12 @@ async function startEmby(f,startPct){
     hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;dbgStage('首分片下载',performance.now()-t0)}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
       pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'',data.response&&('HTTP '+data.response.code));
-      if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
+      if(data.fatal){
+        const he=$('hlserrmsg');if(he)he.textContent='Emby 引擎播放失败：'+data.details+'（'+data.type+'）';
+        $('fail').style.display='block';$('faillink').value=f.url
+      }
     });
+    $('pnow').textContent=f.name+'（Emby 引擎，转码启动中…）';
     v.onloadedmetadata=()=>{dbgStage('出画（可播）',performance.now()-t0,'时长'+Math.round(v.duration)+'s');if(startPct>0&&v.duration)v.currentTime=v.duration*startPct/100};
     return true
   }catch(e){pdbg('Emby 异常：',e.message);return false}
