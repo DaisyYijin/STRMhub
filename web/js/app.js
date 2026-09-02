@@ -1914,6 +1914,34 @@ async function testTmdb() {
   }
 }
 
+// ==================== MetaTube 配置 ====================
+let metatubeEnabledVal = false;
+function setMetatubeEnabled(val) {
+  metatubeEnabledVal = val;
+  document.querySelectorAll('#metatube-enabled-switch .seg-item').forEach(i => i.classList.toggle('active', i.dataset.value === String(val)));
+}
+
+async function testMetatube() {
+  const btn = document.getElementById('metatube-test-btn');
+  const result = document.getElementById('metatube-test-result');
+  btn.disabled = true;
+  btn.textContent = '测试中...';
+  showTestPending(result, '正在请求 MetaTube…');
+  try {
+    const data = await api('/metatube/check', { method: 'POST', body: JSON.stringify({
+      url: val('metatube-url').trim(),
+      token: val('metatube-token'),
+    }) });
+    if (data.success) showTestResult(result, true, 'MetaTube 连接成功', data.message || undefined);
+    else showTestResult(result, false, 'MetaTube 连接失败', data.error || '请检查服务器地址');
+  } catch (e) {
+    showTestResult(result, false, 'MetaTube 连接失败', e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '测试连接';
+  }
+}
+
 // EMBY 入库刷新
 let embyStyleVal = 'unix';
 let embyEnabledVal = true;
@@ -2163,6 +2191,13 @@ function collectConfig(key) {
   if (key === 'proxy') {
     return { url: document.getElementById('proxy-url').value };
   }
+  if (key === 'metatube') {
+    return {
+      url: val('metatube-url').trim(),
+      token: val('metatube-token'),
+      enabled: metatubeEnabledVal,
+    };
+  }
   if (key === 'emby-notify') {
     return { token: embyNotifyToken };
   }
@@ -2258,6 +2293,10 @@ function applyConfig(key, v) {
     updateStrmExample();
   } else if (key === 'proxy') {
     if (v.url !== undefined) document.getElementById('proxy-url').value = v.url;
+  } else if (key === 'metatube') {
+    setVal('metatube-url', v.url || '');
+    setVal('metatube-token', v.token || '');
+    if (v.enabled !== undefined) setMetatubeEnabled(v.enabled === true || v.enabled === 'true');
   } else if (key === 'emby-notify') {
     applyEmbyNotify(v);
   } else if (key === 'message') {
@@ -2500,6 +2539,7 @@ const DEFAULT_CONFIGS = {
   'incr': { cron: '*/10 8-23 * * *' },
   'share': { folder: '' },
   'tmdb': { api_key: '', api_url: 'https://api.tmdb.org', image_url: 'https://image.tmdb.org', language: 'zh-CN' },
+  'metatube': { url: '', token: '', enabled: false },
 };
 
 async function doResetConfig(key, btn) {
@@ -2550,7 +2590,7 @@ function closeConfirmBubbleOnOutside(e) {
 async function loadConfigs() {
   migratedEmbyEnabled = false;
   migratedEmbyStyle = false;
-  const keys = ['emby', 'full', 'strm', 'proxy', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
+  const keys = ['emby', 'full', 'strm', 'proxy', 'metatube', 'emby-notify', 'org-basic', 'org-recognize', 'org-gpt', 'org-rename', 'message', 'incr', 'share', 'monitor'];
   // 并行拉取，避免逐个等待导致 cid 等字段迟迟不回填
   await Promise.all(keys.map(async (key) => {
     try {

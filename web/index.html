@@ -703,6 +703,10 @@ av:
           <div class="var-section-title">其他</div>
           <div class="var-card">
             <div class="var-item"><code>{num}</code><span class="var-desc">AV 番号</span><span class="var-ex">ABC-123</span></div>
+            <div class="var-item"><code>{av_title}</code><span class="var-desc">AV 真实标题（MetaTube 刮削，需配置启用）</span><span class="var-ex">高校教師</span></div>
+            <div class="var-item"><code>{av_year}</code><span class="var-desc">AV 发行年份（MetaTube）</span><span class="var-ex">2023</span></div>
+            <div class="var-item"><code>{actor}</code><span class="var-desc">AV 第一位主演（MetaTube）</span><span class="var-ex">三上悠亜</span></div>
+            <div class="var-item"><code>{actors}</code><span class="var-desc">AV 全部主演（、连接）</span><span class="var-ex">三上悠亜、天使もえ</span></div>
           </div>
         </div>
       </div>
@@ -938,6 +942,7 @@ av:
 <div class="tabs">
         <div class="tab active" data-tab="strm">STRM配置</div>
         <div class="tab" data-tab="tmdb">TMDB配置</div>
+        <div class="tab" data-tab="metatube">MetaTube</div>
         <div class="tab" data-tab="proxy">代理配置</div>
         <div class="tab" data-tab="emby-manage">EMBY管理</div>
       </div>
@@ -963,6 +968,17 @@ av:
           <div class="form-row"><div class="label">语言<i class="help-tip" tabindex="0">?<span class="tip-bubble">中文优先返回中文片名与简介；英文返回原名。</span></i></div><div class="control"><div class="segmented-control" id="tmdb-language-switch"><div class="seg-item active" data-value="zh-CN" onclick="setTmdbLang('zh-CN')">中文</div><div class="seg-item" data-value="en-US" onclick="setTmdbLang('en-US')">英文</div></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveTmdb()">保存配置</button><button class="btn btn-outline" id="tmdb-test-btn" onclick="testTmdb()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('tmdb', this)" style="position:relative">重置配置</button></div><span id="tmdb-test-result" class="test-result"></span></div></div>
         </div>
+      </div>
+
+      <!-- MetaTube 配置 -->
+      <div class="tab-panel" data-panel="metatube">
+        <div class="card">
+          <div class="form-row"><div class="label">启用刮削<i class="help-tip" tabindex="0">?<span class="tip-bubble">启用后 AV 整理时自动按番号刮削真实标题、演员、封面等元数据；未启用或刮削失败时退回纯番号入库，互不影响。</span></i></div><div class="control"><div class="segmented-control" id="metatube-enabled-switch"><div class="seg-item active" data-value="true" onclick="setMetatubeEnabled(true)">启用</div><div class="seg-item" data-value="false" onclick="setMetatubeEnabled(false)">禁用</div></div></div></div>
+          <div class="form-row"><div class="label"><span class="required-mark">*</span> 服务器地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">自部署 metatube-server 的访问地址。同宿主机 Docker 部署填 http://172.17.0.1:8080，跨机填实际 IP。</span></i></div><div class="control"><input type="text" id="metatube-url" placeholder="如 http://172.17.0.1:8080"></div></div>
+          <div class="form-row"><div class="label">Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">服务端设置了 MT_TOKEN 时必填，否则留空。</span></i></div><div class="control"><input type="password" id="metatube-token" autocomplete="off" title="双击显示/隐藏明文" placeholder="可留空"></div></div>
+          <div class="form-row"><div class="label"></div><div class="control"><div class="btn-row"><button class="btn btn-primary" onclick="saveConfig('metatube')">保存配置</button><button class="btn btn-outline" id="metatube-test-btn" onclick="testMetatube()">测试连接</button><button class="btn btn-warning" onclick="resetConfig('metatube', this)" style="position:relative">重置配置</button></div><span id="metatube-test-result" class="test-result"></span></div></div>
+        </div>
+        <div class="alert alert-info">MetaTube 是 AV 元数据刮削后端（需自行部署，一条命令：<code>docker run -d --name metatube --restart unless-stopped -p 8080:8080 ghcr.io/metatube-community/metatube-server run -r 0.0.0.0:8080</code>）。启用后 AV 整理流程：番号提取 → 自动刮削（结果缓存，同番号只刮一次）→ 本地写入 poster.jpg + movie.nfo → Emby 显示完整海报、演员、简介；总览面板同步展示 AV 封面。重命名模板可用新变量 <code>{av_title}</code>（真实标题）、<code>{av_year}</code>、<code>{actor}</code>、<code>{actors}</code>，不使用则维持番号命名不变。</div>
       </div>
 
       <!-- 代理配置 -->

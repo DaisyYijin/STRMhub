@@ -2393,6 +2393,16 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	// AV 目录结构：/AV/分类/<AVFolder 模板>/（分类 = 无码/有码，按番号前缀匹配）。
 	// 目录与文件名走重命名模板（AVFolder/AVFile，UI 可配）；模板缺省时
 	// 降级为番号直命名（旧行为）
+	// MetaTube 刮削（配置后生效）：番号 → 标题/演员/封面 → AVMeta 缓存；
+	// 模板引擎 buildRenameContext 从缓存直读，{av_title} 等变量即刻可用。
+	// 未配置/刮不到 → meta 为 nil，完全退回纯番号行为
+	avMeta := metatubeFetchCached(media.Title)
+	if avMeta != nil && avMeta.Status == "ok" {
+		onLog(fmt.Sprintf("✦ MetaTube 刮削: %s《%s》%s（%s）",
+			media.Title, avMeta.Title, strings.Join(avMetaActors(avMeta), "、"), avMeta.Year))
+	} else if metatubeEnabled() {
+		onLog(fmt.Sprintf("○ %s - MetaTube 未搜到元数据，按番号入库", media.Title))
+	}
 	category := classifyAVNumber(media.Title, dir.Name)
 	// 模板变量（画质/制作组等）取自体积最大的视频
 	mainName, mainSize := "", int64(-1)
@@ -2530,6 +2540,10 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	ops.moveFiles(cfg.Redundant, []string{dir.Fid})
 
 	onLog(fmt.Sprintf("✓ AV 入库: %s → %s", dir.Name, avDir))
+	// 刮削结果落地：本地媒体目录写 poster.jpg + movie.nfo（Emby 直接读），
+	// MediaLibrary 落库（总览面板最近整理/媒体库卡片显示海报与标题）
+	writeAVMetaFiles(avDir, avMeta, media.Title)
+	recordAVMedia(avMeta, media.Title, category, avDir)
 	for _, v := range videos {
 		results = append(results, OrganizeResult{
 			FileName: v.Name, Status: "success",

@@ -367,6 +367,9 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// 影视转存 · 观影（账号密码登录 + PoW 反爬自动过验证；磁力提交 115 离线）
 		protected.GET("/guanying/config", h.GyGetConfig)
 		protected.GET("/guanying/check", h.GyCheck)
+
+		// MetaTube AV 元数据刮削（自部署 metatube-server）
+		protected.POST("/metatube/check", h.MetatubeCheck)
 		protected.POST("/guanying/config", h.GySaveConfig)
 		protected.POST("/guanying/login", h.GyLogin)
 		protected.POST("/guanying/logout", h.GyLogout)

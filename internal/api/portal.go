@@ -522,6 +522,42 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 	}
 	cacheDir := filepath.Join(dataDir, "posters")
 	_ = os.MkdirAll(cacheDir, 0755)
+	// ---- AV 封面分支（MetaTube 刮削结果，PosterPath = "av:<完整URL>"）----
+	// 直接代理原始 URL（metatubeCacheCover 预取失败时此处兜底重试），缓存规则与 TMDB 相同
+	if strings.HasPrefix(p, "av:") {
+		coverURL := strings.TrimPrefix(p, "av:")
+		if coverURL == "" || !strings.HasPrefix(coverURL, "http") {
+			avPosterPlaceholder(c)
+			return
+		}
+		ah := sha1.Sum([]byte(p))
+		avCache := filepath.Join(cacheDir, hex.EncodeToString(ah[:8])+filepath.Ext(coverURL))
+		if st, err := os.Stat(avCache); err == nil && st.Size() > 0 && time.Since(st.ModTime()) < 7*24*time.Hour {
+			c.Header("Cache-Control", "public, max-age=604800")
+			c.File(avCache)
+			return
+		}
+		resp, err := metatubeClient.Get(coverURL)
+		if err != nil {
+			log.Printf("[海报] ✗ AV 封面拉取失败 %s: %v", coverURL, err)
+		} else {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && len(body) > 100 {
+				_ = os.WriteFile(avCache, body, 0644)
+				ct := resp.Header.Get("Content-Type")
+				if ct == "" {
+					ct = "image/jpeg"
+				}
+				c.Header("Cache-Control", "public, max-age=604800")
+				c.Data(http.StatusOK, ct, body)
+				return
+			}
+			log.Printf("[海报] ✗ AV 封面拉取失败 HTTP %d: %s", resp.StatusCode, coverURL)
+		}
+		avPosterPlaceholder(c)
+		return
+	}
 	h := sha1.Sum([]byte(p))
 	cacheFile := filepath.Join(cacheDir, hex.EncodeToString(h[:8])+filepath.Ext(p))
 	if st, err := os.Stat(cacheFile); err == nil && st.Size() > 0 && time.Since(st.ModTime()) < 7*24*time.Hour {
@@ -585,6 +621,12 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 	}
 	c.Header("Cache-Control", "public, max-age=604800")
 	c.Data(http.StatusOK, lastCT, data)
+}
+
+// avPosterPlaceholder AV 封面占位图（1x1 透明 GIF，避免卡片裂图）
+func avPosterPlaceholder(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Data(http.StatusOK, "image/gif", []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"))
 }
 
 // portalSub 字幕文本代理：服务端按 pick_code 取 115 直链拉字幕并加 CORS 头返回

@@ -35,6 +35,8 @@ import (
 	"fmt"
 	"strings"
 	"regexp"
+
+	"strmhub/internal/model"
 )
 
 // RenameContext 重命名上下文（包含模板引擎需要的全部数据）
@@ -49,6 +51,11 @@ type RenameContext struct {
 	SeasonYear   string
 	EpisodeName  string
 	CustomRegex  string
+	// MetaTube AV 元数据（缓存直读，绝不触发网络；整理流程已提前刮好入库）
+	AvTitle string // 真实标题 {av_title}
+	AvYear  string // 发行年份 {av_year}
+	Actor   string // 第一主演 {actor}
+	Actors  string // 全部主演（、连接）{actors}
 }
 
 // buildRenameContext 构建重命名上下文
@@ -63,6 +70,24 @@ func buildRenameContext(media *TmdbMedia, parsed *ParsedName, originalName strin
 	// AV 流程：番号就是 media.Title（detectAVNumber 的产出），供 {num} 使用
 	if media.MediaType == "av" {
 		ctx.Num = media.Title
+		// MetaTube 刮削结果只从缓存读：整理流程在进模板前已通过
+		// metatubeFetchCached 提前刮好入库；预览等场景查不到就保持空值，
+		// 不发起网络请求
+		if model.DB != nil {
+			var av model.AVMeta
+			if model.DB.Where("num = ? AND status = ?", normalizeAVNum(media.Title), "ok").First(&av).Error == nil {
+				// 真实标题会进文件名，必须过 sanitizeName（日文标题常含 / : 等非法字符）
+				ctx.AvTitle = sanitizeName(av.Title)
+				ctx.AvYear = av.Year
+				if actors := avMetaActors(&av); len(actors) > 0 {
+					ctx.Actor = sanitizeName(actors[0])
+					for i, a := range actors {
+						actors[i] = sanitizeName(a)
+					}
+					ctx.Actors = strings.Join(actors, "、")
+				}
+			}
+		}
 	}
 	return ctx
 }
@@ -204,6 +229,12 @@ func (ctx *RenameContext) allReplacements() map[string]string {
 		"{season_name}":    ctx.SeasonName,
 		"{season_year}":    ctx.SeasonYear,
 		"{episode_name}":   ctx.EpisodeName,
+
+		// AV 元数据（MetaTube 刮削；未刮到时为空，配合 <> 块语法使用）
+		"{av_title}": ctx.AvTitle,
+		"{av_year}":  ctx.AvYear,
+		"{actor}":    ctx.Actor,
+		"{actors}":   ctx.Actors,
 	}
 }
 

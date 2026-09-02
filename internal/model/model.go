@@ -186,9 +186,33 @@ type MediaEnrich struct {
 	FileName  string    `json:"file_name" gorm:"size:255"`               // 当前文件名
 	Status    string    `json:"status" gorm:"size:20;default:pending"`  // pending/done/failed/skipped
 	Message   string    `json:"message" gorm:"size:255"`                 // 结果说明
-	Attempts  int       `json:"attempts"`                                // 重试次数
+	Attempts  int       `json:"attempts" gorm:"default:0"`              // 重试次数
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AVMeta AV 番号元数据缓存（MetaTube 刮削结果）。
+// ok / not_found 都落库：同一番号二次整理不再请求刮削源，
+// not_found 带 TTL（见 metatube.go）过期后自动重试
+type AVMeta struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	Num           string    `json:"num" gorm:"uniqueIndex;size:64;not null"` // 归一化番号（FC2PPV123）
+	Status        string    `json:"status" gorm:"size:20;default:pending"`   // ok / not_found
+	Provider      string    `json:"provider" gorm:"size:50"`
+	ProviderID    string    `json:"provider_id" gorm:"size:100"`
+	Title         string    `json:"title" gorm:"size:500"`
+	OriginalTitle string    `json:"original_title" gorm:"size:500"`
+	Year          string    `json:"year" gorm:"size:10"`
+	ReleaseDate   string    `json:"release_date" gorm:"size:20"`
+	Runtime       int       `json:"runtime"`
+	Director      string    `json:"director" gorm:"size:255"`
+	Publisher     string    `json:"publisher" gorm:"size:255"`
+	Plot          string    `json:"plot" gorm:"type:text"`
+	Score         float64   `json:"score"`
+	CoverURL      string    `json:"cover_url" gorm:"size:500"`
+	ActorsJSON    string    `json:"actors" gorm:"type:text"` // JSON 字符串数组
+	GenresJSON    string    `json:"genres" gorm:"type:text"` // JSON 字符串数组
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 
@@ -214,6 +238,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&CategoryRule{},
 		&WashRule{},
 		&MediaEnrich{},
+		&AVMeta{},
 		&MediaLibrary{},
 		&SyncEvent{},
 		&SyncedFile{},
