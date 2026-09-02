@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"strmhub/internal/config"
 	"strmhub/internal/model"
@@ -483,49 +484,99 @@ func sendWecom(cfg WecomConfig, msg string) error {
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 
-	// Step 2: 发送消息
+	// Step 2: 发送消息（超长自动分段：text 消息上限 2048 字节）
+	chunks := splitWecomText(msg)
 	sendURL := fmt.Sprintf("%s/cgi-bin/message/send?access_token=%s",
 		cfg.apiBase(), token)
 
-	payload := map[string]interface{}{
-		"touser":  "@all",
-		"msgtype": "text",
-		"agentid": cfg.AgentID,
-		"text":    map[string]string{"content": msg},
-	}
-	payloadBytes, _ := json.Marshal(payload)
+	for i, chunk := range chunks {
+		payload := map[string]interface{}{
+			"touser":  "@all",
+			"msgtype": "text",
+			"agentid": cfg.AgentID,
+			"text":    map[string]string{"content": chunk},
+		}
+		payloadBytes, _ := json.Marshal(payload)
 
-	req, err := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp2, err := client.Do(req)
-	if err != nil {
-		// 传输层错误（超时/连接重置）自动重试一次，避免网络抖动丢消息
-		time.Sleep(2 * time.Second)
-		resp2, err = client.Do(req)
+		req, err := http.NewRequest("POST", sendURL, strings.NewReader(string(payloadBytes)))
 		if err != nil {
-			log.Printf("企业微信发送消息失败(重试后仍失败): %s", sanitizeWecomErr(err))
 			return err
 		}
-	}
-	defer resp2.Body.Close()
-	body2, _ := io.ReadAll(resp2.Body)
+		req.Header.Set("Content-Type", "application/json")
 
-	var sendResult struct {
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
-	}
-	json.Unmarshal(body2, &sendResult)
-	if sendResult.ErrCode != 0 {
-		log.Printf("企业微信发送消息失败: %d %s", sendResult.ErrCode, sendResult.ErrMsg)
-		return fmt.Errorf("%s", sendResult.ErrMsg)
+		resp2, err := client.Do(req)
+		if err != nil {
+			// 传输层错误（超时/连接重置）自动重试一次，避免网络抖动丢消息
+			time.Sleep(2 * time.Second)
+			resp2, err = client.Do(req)
+			if err != nil {
+				log.Printf("企业微信发送消息失败(重试后仍失败): %s", sanitizeWecomErr(err))
+				return err
+			}
+		}
+		body2, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+
+		var sendResult struct {
+			ErrCode int    `json:"errcode"`
+			ErrMsg  string `json:"errmsg"`
+		}
+		json.Unmarshal(body2, &sendResult)
+		if sendResult.ErrCode != 0 {
+			log.Printf("企业微信发送消息失败: %d %s", sendResult.ErrCode, sendResult.ErrMsg)
+			return fmt.Errorf("%s", sendResult.ErrMsg)
+		}
+		if i < len(chunks)-1 {
+			time.Sleep(400 * time.Millisecond) // 分段间隔，避免触发频控
+		}
 	}
 
-	log.Printf("[通知] ✓ 企微消息已发送（%d 字，首行: %s）", len(msg), truncateStr(firstLine(msg), 40))
+	suffix := ""
+	if len(chunks) > 1 {
+		suffix = fmt.Sprintf("，分 %d 段", len(chunks))
+	}
+	log.Printf("[通知] ✓ 企微消息已发送（%d 字%s，首行: %s）", len(msg), suffix, truncateStr(firstLine(msg), 40))
 	return nil
+}
+
+// splitWecomText 企微 text 消息上限 2048 字节（UTF-8），按行边界切成 ≤1800
+// 字节的段；单行超限（超长标题等）在 rune 边界硬切
+func splitWecomText(msg string) []string {
+	const maxBytes = 1800
+	if len(msg) <= maxBytes {
+		return []string{msg}
+	}
+	var out []string
+	var cur []string
+	curLen := 0
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.Join(cur, "\n"))
+			cur = cur[:0]
+			curLen = 0
+		}
+	}
+	for _, ln := range strings.Split(msg, "\n") {
+		for len(ln) > maxBytes {
+			cut := maxBytes
+			for cut > 0 && !utf8.RuneStart(ln[cut]) {
+				cut--
+			}
+			flush()
+			out = append(out, ln[:cut])
+			ln = ln[cut:]
+		}
+		if curLen+len(ln)+1 > maxBytes && len(cur) > 0 {
+			flush()
+		}
+		cur = append(cur, ln)
+		curLen += len(ln) + 1
+	}
+	flush()
+	if len(out) == 0 {
+		out = []string{msg}
+	}
+	return out
 }
 
 // sendTelegram 发送 Telegram 消息
