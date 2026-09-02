@@ -127,7 +127,14 @@ func metatubeGet(cfg MetatubeConfig, apiPath string, out any) error {
 		}
 		u += sep + "token=" + url.QueryEscape(cfg.Token)
 	}
-	resp, err := metatubeClient.Get(u)
+	req, err := nethttp.NewRequest(nethttp.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	}
+	resp, err := metatubeClient.Do(req)
 	if err != nil {
 		return err
 	}
