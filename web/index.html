@@ -600,13 +600,27 @@ av:
       <div class="card">
 
         <div class="rename-group">
-          <div class="rename-group-title"><span class="badge badge-blue">电影</span></div>
+          <div class="rename-group-title"><span class="badge badge-blue">电影</span>
+            <span class="rn-presets" id="rn-presets-movie">
+              <span style="font-size:12px;color:var(--text-3)">命名规范：</span>
+              <button class="rn-preset" data-p="default" onclick="applyRenamePreset('movie','default')">默认</button>
+              <button class="rn-preset" data-p="lite" onclick="applyRenamePreset('movie','lite')">精简</button>
+              <button class="rn-preset" data-p="full" onclick="applyRenamePreset('movie','full')">详细</button>
+            </span>
+          </div>
           <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control control-wide"><textarea id="rename-movie-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-movie-folder" class="rename-example"></code></div></div></div>
           <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。AV 流程中 {num} 与 {title} 都是番号，二者选一，同用会重复。</span></i></div><div class="control control-wide"><textarea id="rename-movie-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-movie-file" class="rename-example"></code></div></div></div>
         </div>
 
         <div class="rename-group">
-          <div class="rename-group-title"><span class="badge badge-green">剧集</span></div>
+          <div class="rename-group-title"><span class="badge badge-green">剧集</span>
+            <span class="rn-presets" id="rn-presets-tv">
+              <span style="font-size:12px;color:var(--text-3)">命名规范：</span>
+              <button class="rn-preset" data-p="default" onclick="applyRenamePreset('tv','default')">默认</button>
+              <button class="rn-preset" data-p="lite" onclick="applyRenamePreset('tv','lite')">精简</button>
+              <button class="rn-preset" data-p="full" onclick="applyRenamePreset('tv','full')">详细</button>
+            </span>
+          </div>
           <div class="form-row"><div class="label">文件夹命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件夹名模板，支持 {first_letter}/{title}/{year}/{tmdb_id} 等变量，详见「重命名规则」页。</span></i></div><div class="control control-wide"><textarea id="rename-tv-folder" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{first_letter}-{title}-{year}-[tmdb={tmdb_id}]</textarea><div class="rename-example-box">示例：<code id="ex-tv-folder" class="rename-example"></code></div></div></div>
           <div class="form-row"><div class="label">文件命名规则<i class="help-tip" tabindex="0">?<span class="tip-bubble">入库后的文件名模板，<xxx> 块内变量为空时整块省略，详见「重命名规则」页。</span></i></div><div class="control control-wide"><textarea id="rename-tv-file" class="auto-resize" rows="1" oninput="updateRenameExample();autoResizeTextarea(this)">{title}.{season_episode}<.{resource_pix}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}></textarea><div class="rename-example-box">示例：<code id="ex-tv-file" class="rename-example"></code></div></div></div>
         </div>

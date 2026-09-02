@@ -1379,6 +1379,63 @@ function updateRenameExample() {
     const ex = document.getElementById(exId);
     if (input && ex) ex.textContent = renderRenameExample(input.value);
   });
+  syncRenamePresetUI();
+}
+
+// ==================== 重命名命名规范预设（电影/剧集） ====================
+// 手动改过模板后与预设不再一致 → 按钮全部弹起（自定义状态），不自动套用
+const RENAME_PRESETS = {
+  movie: {
+    default: {
+      folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+    },
+    lite: {
+      folder: '{title} ({year})',
+      file: '{title}.{year}<.{resource_pix}>{ext}',
+    },
+    full: {
+      folder: '{first_letter}/{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title}.{year}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+    },
+  },
+  tv: {
+    default: {
+      folder: '{first_letter}-{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+    },
+    lite: {
+      folder: '{title} ({year})',
+      file: '{title} - {season_episode}<.{resource_pix}>{ext}',
+    },
+    full: {
+      folder: '{first_letter}/{title}-{year}-[tmdb={tmdb_id}]',
+      file: '{title} - {season_episode}<.{resource_pix}><.{fps}><.{resource_version}><.{resource_source}><.{resource_type}><.{resource_effect}><.{video_encode}><.{audio_encode}><-{resource_team}>{ext}',
+    },
+  },
+};
+
+function applyRenamePreset(type, key) {
+  const p = (RENAME_PRESETS[type] || {})[key];
+  if (!p) return;
+  setVal('rename-' + type + '-folder', p.folder);
+  setVal('rename-' + type + '-file', p.file);
+  document.querySelectorAll('#rename-' + type + '-folder, #rename-' + type + '-file').forEach(t => autoResizeTextarea(t));
+  updateRenameExample(); // 含 syncRenamePresetUI
+}
+
+// 当前值与哪个预设一致就点亮对应按钮；都不一致 = 自定义（全部弹起）
+function syncRenamePresetUI() {
+  for (const type of ['movie', 'tv']) {
+    const folder = (val('rename-' + type + '-folder') || '').trim();
+    const file = (val('rename-' + type + '-file') || '').trim();
+    let hit = '';
+    for (const [k, p] of Object.entries(RENAME_PRESETS[type])) {
+      if (folder === p.folder && file === p.file) { hit = k; break; }
+    }
+    document.querySelectorAll('#rn-presets-' + type + ' .rn-preset').forEach(b =>
+      b.classList.toggle('active', b.dataset.p === hit));
+  }
 }
 
 // 输入框自适应高度
