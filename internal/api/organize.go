@@ -2567,6 +2567,8 @@ func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir di
 	onLog(fmt.Sprintf("✓ AV 入库: %s → %s", dir.Name, avDir))
 	// 识别结果落库（总览面板最近整理显示真实标题）；媒体目录不写任何文件
 	recordAVMedia(avMeta, media.Title, category, avDir)
+	// 入库富通知（与电影/剧集同款：封面卡片 + 类型/演员/厂牌信息）
+	notifyAVStored(avMeta, media.Title, category, videos)
 	for _, v := range videos {
 		results = append(results, OrganizeResult{
 			FileName: v.Name, Status: "success",
@@ -2730,6 +2732,36 @@ func episodeRangeWithMissing(videoFiles []remoteFile, media *TmdbMedia) (string,
 		}
 	}
 	return rng, strings.Join(parts, ",")
+}
+
+// notifyAVStored AV 入库富通知：MetaTube 封面卡片（企微 news / TG 图片），
+// 内容含 类别/演员/厂牌/文件数与大小——与电影剧集的 notifyMediaStoredFull 同级
+func notifyAVStored(m *model.AVMeta, num, category string, videos []remoteFile) {
+	title := num
+	year := ""
+	line := "类型：AV · 类别：" + category
+	var totalBytes int64
+	for _, v := range videos {
+		totalBytes += v.Size
+	}
+	line += fmt.Sprintf("\n共计：%d 个文件 · %s", len(videos), humanSizeBytes(totalBytes))
+	if m != nil && m.Status == "ok" {
+		if m.Title != "" {
+			title = num + " " + m.Title
+		}
+		year = m.Year
+		if actors := avMetaActors(m); len(actors) > 0 {
+			line += "\n演员：" + strings.Join(actors, "、")
+		}
+		if m.Publisher != "" {
+			line += "\n厂牌：" + m.Publisher
+		}
+	}
+	entry := mediaNotifEntry{Title: title, Year: year, Line: line}
+	if m != nil && m.CoverURL != "" {
+		entry.PosterURL = m.CoverURL // 源站公网封面，企微/TG 可直接抓取
+	}
+	QueueMediaNotif(entry)
 }
 
 // notifyMediaStoredFull 入库成功富通知：TMDB 封面（企微图文卡 / TG 图片），

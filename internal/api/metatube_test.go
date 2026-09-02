@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,9 +98,8 @@ func TestMetatubeFetchCachedFlow(t *testing.T) {
 	if actors := avMetaActors(meta); len(actors) != 2 {
 		t.Errorf("演员应为 2 人: %v", actors)
 	}
-	// 封面应使用服务器图片代理（公开端点，免源站防盗链）
-	if !strings.Contains(meta.CoverURL, "/v1/images/primary/javbus/abc123") {
-		t.Errorf("封面应走服务器图片代理: %q", meta.CoverURL)
+	if meta.CoverURL != "http://example.com/cover.jpg" {
+		t.Errorf("封面应为源站公网 URL（通知 picurl 用）: %q", meta.CoverURL)
 	}
 	// 第二次：命中缓存，不再请求服务器（返回同一条记录）
 	firstID := meta.ID

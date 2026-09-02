@@ -177,16 +177,6 @@ func metatubeParseMovie(raw []byte) (*metatubeMovie, error) {
 	return &m, nil
 }
 
-// metatubeImageURL 服务器自带的海报代理（公开端点，免源站防盗链）：
-// /v1/images/primary/{provider}/{id}
-func metatubeImageURL(cfg MetatubeConfig, provider, id string) string {
-	if cfg.URL == "" || provider == "" || id == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s/v1/images/primary/%s/%s", cfg.URL,
-		url.PathEscape(provider), url.PathEscape(id))
-}
-
 // metatubeScrapeMu 批量整理时防止并发重复刮削同一批番号（双引擎竞态）
 var metatubeScrapeMu sync.Mutex
 
@@ -277,12 +267,8 @@ func metatubeFetchCached(num string) *model.AVMeta {
 		b, _ := json.Marshal(detail.Genres)
 		meta.GenresJSON = string(b)
 	}
-	// 封面走服务器自带代理（公开端点），不直连源站（防盗链 + 统一缓存）
-	if img := metatubeImageURL(cfg, detail.Provider, detail.ID); img != "" {
-		meta.CoverURL = img
-	} else {
-		meta.CoverURL = detail.CoverURL
-	}
+	meta.CoverURL = detail.CoverURL // 源站公网 URL：入库通知 picurl 直接可用；
+	// 面板显示走 /av: 代理（服务端抓取+缓存），不受内网/防盗链影响
 	saveAVMeta(meta)
 	return meta
 }
