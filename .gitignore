@@ -38,3 +38,4 @@ emby-pulse-main/
 .tmp-*.py
 *.tmp
 tmp_cms/
+tmp_p115/
