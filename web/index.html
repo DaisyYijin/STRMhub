@@ -41,7 +41,7 @@
   <aside class="sidebar">
     <div class="logo"><div class="avatar">S</div><div class="name">Strm<span>Hub</span></div></div>
     <div class="menu" id="sidebar-menu">
-      <div class="menu-item active" data-page="dashboard"><span class="icon">▦</span><span>仪表盘</span></div>
+      <div class="menu-item active" data-page="dashboard"><span class="icon">▦</span><span>总览面板</span></div>
       <div class="menu-item" data-page="config-accounts"><span class="icon">◈</span><span>账号管理</span></div>
       <div class="menu-item" data-page="sync"><span class="icon">⇄</span><span>账号同步</span></div>
       <div class="menu-item" data-page="organize"><span class="icon">⚙</span><span>自动整理</span></div>
@@ -773,7 +773,7 @@ av:
     </div>
 
     <!-- 核心配置-115账号 -->
-        <!-- 仪表盘 -->
+        <!-- 总览面板 -->
     <div class="page active" id="page-dashboard">
       <div class="card" id="guide-card" style="display:none;margin-bottom:16px;border-left:3px solid var(--primary)">
         <div style="font-weight:600;margin-bottom:8px">🚀 配置引导</div>
@@ -798,6 +798,11 @@ av:
             <div class="dash-stat"><div class="dash-stat-ico i-blue">📚</div><div><div class="dash-stat-label">已入库</div><div class="dash-stat-num" id="dash-organized">-</div><div class="dash-stat-sub">附属 <span id="dash-synced">-</span></div></div></div>
           </div>
         </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <button class="btn btn-outline" onclick="tgSubOpen()">🔔 订阅管理</button>
+        <span style="font-size:12px;color:var(--text-3);margin-left:8px">TG 频道关键词订阅，命中新资源自动通知/转存</span>
       </div>
 
       <!-- 第二行：最近整理 -->
@@ -1191,6 +1196,30 @@ av:
     <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:8px">已生成的封面<button class="btn btn-outline" style="float:right;padding:2px 10px;font-size:12px" onclick="coverGenLoadList()">刷新</button></div>
       <div id="covergen-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:260px;overflow:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TG 订阅管理弹窗 -->
+<div class="modal-mask" id="tgsub-modal" style="display:none">
+  <div class="modal" style="max-width:600px;max-height:88vh;overflow:auto">
+    <h3>TG 订阅管理</h3>
+    <div id="tgsub-list" style="margin-bottom:12px"></div>
+    <div style="border-top:1px solid var(--border);padding-top:10px">
+      <div class="form-row"><div class="label">新增订阅</div><div class="control"><div class="form-inline-group">
+        <input type="text" id="tgsub-keyword" placeholder="关键词（片名/番号）" style="flex:1.2">
+        <input type="text" id="tgsub-channels" placeholder="频道（逗号分隔，留空用全局）" style="flex:1.6">
+      </div></div></div>
+      <div class="form-row"><div class="label"></div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-auto"> 命中后自动转存（115 分享直接转存，磁力提交离线）</label></div></div>
+      <div class="actions" style="padding-top:4px">
+        <button class="btn btn-primary" onclick="tgSubAdd(this)">添加订阅</button>
+        <button class="btn btn-success" onclick="tgSubRunNow(this)">立即检查</button>
+      </div>
+    </div>
+    <div class="form-row" style="margin-top:6px"><div class="label">检查间隔（分钟）</div><div class="control"><input type="number" id="tgsub-interval" value="30" min="5" style="max-width:120px"></div></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="tgSubModalClose()">关闭</button>
+      <button class="btn btn-primary" onclick="tgSubSaveInterval(this)">保存间隔</button>
     </div>
   </div>
 </div>

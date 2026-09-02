@@ -170,6 +170,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	Start115CheckinScheduler(h)
 	StartPosterBackfill(h) // 旧入库记录的 TMDB 海报回填
 	StartCoverGenScheduler(h)
+	StartTgSubScheduler(h)
 
 	// 启动离线任务监视器（完成即触发整理；失败告警——磁力不是百分百成功）
 	StartOfflineTaskMonitor(h)
@@ -400,6 +401,11 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/covergen/run", h.CoverGenRun)
 		protected.GET("/covergen/list", h.CoverGenList)
 		protected.GET("/covergen/preview", h.CoverGenPreview)
+
+		// TG 关键词订阅（频道轮询 → 水位去重 → 命中通知/自动转存）
+		protected.GET("/tgsub/config", h.TgSubGetConfig)
+		protected.POST("/tgsub/config", h.TgSubSaveConfig)
+		protected.POST("/tgsub/run", h.TgSubRun)
 
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)

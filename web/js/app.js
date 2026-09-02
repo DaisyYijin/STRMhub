@@ -84,7 +84,7 @@ const PAGE_TITLES = {
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
   'media-transfer': ['影视转存', '影巢资源 / 观影种子 / 115 离线'],
   'transfer': ['上传下载', '监控上传 / 转存下载'],
-  'dashboard': ['仪表盘', '容量 / STRM / 整理 / 任务总览'],
+  'dashboard': ['总览面板', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
   'config-message': ['消息配置', '企业微信与 TG 机器人'],
@@ -1691,6 +1691,84 @@ async function coverGenLoadList() {
       + '<div style="padding:4px 8px;font-size:11.5px;color:var(--text-3)">' + esc(it.name) + '<span style="float:right">' + esc(it.time || '') + '</span></div></div>'
     ).join('') : '<span style="color:var(--text-3);font-size:12.5px">还没有生成过封面，点「立即生成」试试</span>';
   } catch (e) { box.innerHTML = '<span style="color:var(--danger)">加载失败</span>'; }
+}
+
+// ==================== TG 订阅管理 ====================
+async function tgSubOpen() {
+  document.getElementById('tgsub-modal').style.display = 'flex';
+  await tgSubRenderList();
+  try {
+    const d = await api('/tgsub/config');
+    setVal('tgsub-interval', (d.data || {}).interval_min || 30);
+  } catch (e) { /* 忽略 */ }
+}
+
+function tgSubModalClose() { document.getElementById('tgsub-modal').style.display = 'none'; }
+
+async function tgSubRenderList() {
+  const box = document.getElementById('tgsub-list');
+  try {
+    const d = await api('/tgsub/config');
+    const items = (d.data || {}).items || [];
+    if (!items.length) { box.innerHTML = '<div class="dash-empty">还没有订阅，添加一个关键词开始追更</div>'; return; }
+    box.innerHTML = items.map(it =>
+      '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
+      + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(it.keyword) + '</b>'
+      + '<div style="font-size:11.5px;color:var(--text-3)">' + (it.channels ? esc(String(it.channels).split('\n').join(' ')) : '全局频道')
+      + (it.auto ? ' · 自动转存' : '') + (it.last_hit ? ' · 最近命中 ' + esc(it.last_hit) : '') + '</div></div>'
+      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubDel(\'' + it.id + '\')">删除</button></div>'
+    ).join('');
+  } catch (e) { box.innerHTML = '<span style="color:var(--danger)">加载失败</span>'; }
+}
+
+async function tgSubPersist(items, intervalMin, btn, doneMsg) {
+  if (btn) btn.disabled = true;
+  try {
+    await api('/tgsub/config', { method: 'POST', body: JSON.stringify({ items: items, interval_min: intervalMin || 30 }) });
+    toast(doneMsg || '已保存');
+    await tgSubRenderList();
+  } catch (e) { toast('保存失败：' + e.message); }
+  if (btn) btn.disabled = false;
+}
+
+async function tgSubAdd(btn) {
+  const kw = val('tgsub-keyword').trim();
+  if (!kw) { toast('请填写关键词'); return; }
+  const d = await api('/tgsub/config');
+  const cfg = d.data || {};
+  const items = cfg.items || [];
+  items.push({
+    keyword: kw,
+    channels: val('tgsub-channels').trim(),
+    auto: document.getElementById('tgsub-auto').checked,
+    last_id: 0,
+  });
+  document.getElementById('tgsub-keyword').value = '';
+  document.getElementById('tgsub-channels').value = '';
+  document.getElementById('tgsub-auto').checked = false;
+  await tgSubPersist(items, cfg.interval_min || 30, btn, '订阅已添加');
+}
+
+async function tgSubDel(id) {
+  const d = await api('/tgsub/config');
+  const cfg = d.data || {};
+  const items = (cfg.items || []).filter(it => String(it.id) !== String(id));
+  await tgSubPersist(items, cfg.interval_min || 30, null, '已删除');
+}
+
+async function tgSubRunNow(btn) {
+  btn.disabled = true;
+  try {
+    const d = await api('/tgsub/run', { method: 'POST' });
+    toast(d.message || '检查已开始');
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+
+async function tgSubSaveInterval(btn) {
+  const d = await api('/tgsub/config');
+  const cfg = d.data || {};
+  await tgSubPersist(cfg.items || [], parseInt(val('tgsub-interval'), 10) || 30, btn, '检查间隔已保存');
 }
 
 // ==================== GPT 测试连接 ====================

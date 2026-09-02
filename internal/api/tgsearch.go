@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,7 @@ type tgItem struct {
 	Title   string   `json:"title"`
 	Content string   `json:"content"`
 	Channel string   `json:"channel"`
+	MsgID   int64    `json:"msg_id,omitempty"`
 	Date    string   `json:"date"`
 	Image   string   `json:"image,omitempty"`
 	Tags    []string `json:"tags,omitempty"`
@@ -245,6 +247,7 @@ func tgParseMessage(seg, channel string) *tgItem {
 	it := &tgItem{Channel: channel}
 	if m := tgPostRe.FindStringSubmatch(seg); m != nil {
 		it.Channel = m[1]
+		it.MsgID, _ = strconv.ParseInt(m[2], 10, 64)
 	}
 	if m := tgTimeRe.FindStringSubmatch(seg); m != nil {
 		if t, err := time.Parse(time.RFC3339, m[1]); err == nil {
