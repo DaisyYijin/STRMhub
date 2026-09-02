@@ -1219,7 +1219,7 @@ async function renderPlay(key,idx,pct){
     '</div>'+
     '<div class="ptitle">'+esc(curMedia?curMedia.title:'')+(curMedia&&curMedia.year?'（'+curMedia.year+'）':'')+'</div>'+
     '<div class="pmeta" id="pnow">'+esc(f.name)+'</div>'+
-    '<div class="fail" id="fail">播放失败：浏览器不支持该视频格式（MKV/H.265 常见）。<br>直链：<input id="faillink" readonly> <button class="ghost" onclick="copyTxt($(\'faillink\').value);this.textContent=\'已复制\'">复制</button><br>推荐用直链配合 PotPlayer/VLC/nPlayer 观看（支持内嵌音轨字幕），或在 Emby 客户端播放（支持转码）。</div>'+
+    '<div class="fail" id="fail"><b id="hlserrmsg" style="color:#f87171"></b>播放失败：浏览器不支持该视频格式（MKV/H.265 常见）。<br>直链：<input id="faillink" readonly> <button class="ghost" onclick="copyTxt($(\'faillink\').value);this.textContent=\'已复制\'">复制</button><br>推荐用直链配合 PotPlayer/VLC/nPlayer 观看（支持内嵌音轨字幕），或在 Emby 客户端播放（支持转码）。</div>'+
    '</div>'+
    '<div class="pright"><h3>'+(curMedia&&curMedia.media_type==='tv'?'选集':'版本/文件')+'</h3><div id="eplist">'+
     curFiles.map((x,i)=>{
@@ -1242,7 +1242,7 @@ async function openDetailData(key){
   const d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json();
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d
 }
-let curProbe=null,curSid='',hls=null,curAudioRel=0;
+let curProbe=null,curProbePick='',hls=null,curAudioRel=0,hlsRetried=false;
 let curEngine='direct'; // emby | ffmpeg | direct
 let embyPlay=null, embyAudio=-1, embySub=-1;
 /* ---- 播放调试（控制台输出；?debug=1 或 sessionStorage.pdbg=1 开启）---- */
@@ -1261,7 +1261,8 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
   const f=curFiles[idx];curFileIdx=idx;curFileUrl=f.url;
   const v=$('video');
   const t0=performance.now();
-  DBGSTAGES=[];
+  DBGSTAGES=[];hlsRetried=false;
+  const he0=$('hlserrmsg');if(he0)he0.textContent='';
   pdbg('=== 开始播放 ===',f.name,'startPct='+startPct);
   curAudioRel=audioRel||0;
   if(hls){hls.destroy();hls=null}
@@ -1298,9 +1299,13 @@ async function startPlay(idx,startPct,forceHLS,audioRel){
     v.src=f.url;
     probeTracks(f);
   }else{
-    const isH265=/265|hevc/i.test(f.name);
+    // 编码判定：优先 ffprobe 实测（文件名猜 265/hevc 常漏判，漏判=copy 出
+    // H.265 分片浏览器播不了）；探测失败退回文件名猜测
+    if(!curProbe||curProbePick!==f.pick){await probeTracks(f)}
+    const vcod=(((curProbe||{}).video||[])[0]||{}).codec||'';
+    const isH265=/hevc|265|av1|vp9/i.test(vcod)||/265|hevc/i.test(f.name);
     if(isH265){
-      dbgStage('H.265 转码',0,'Emby 不可用，门户 ffmpeg 转码 H.265→H.264');
+      dbgStage('H.265 转码',0,'Emby 不可用，ffmpeg 转码 H.265→H.264（'+(vcod||'文件名判定')+'）');
       $('pnow').textContent=f.name+'（H.265 转码中，首次加载稍慢）';
     }
     await startHLS(f,audioRel||0,isH265?'transcode':'copy');
@@ -1374,11 +1379,25 @@ async function startHLS(f,audioRel,vc){
     hls.on(Hls.Events.FRAG_LOADED,(e,dd)=>{if(!firstFrag){firstFrag=true;dbgStage('转封装首分片',performance.now()-t0)}});
     hls.on(Hls.Events.ERROR,(e,data)=>{
       pdbg('HLS 错误：',data.type,data.details,data.fatal?'(fatal)':'');
-      if(data.fatal){$('fail').style.display='block';$('faillink').value=f.url}
+      if(data.fatal){
+        // copy（无损转封装）播放失败：源多半是探测漏判的 H.265，自动升级
+        // 转码重试一次；已是转码仍失败才放弃
+        if(vc!=='transcode'&&!hlsRetried){
+          hlsRetried=true;
+          dbgStage('转封装失败',0,data.details+'，自动升级转码重试');
+          $('pnow').textContent=f.name+'（自动切换转码重试…）';
+          if(hls){hls.destroy();hls=null}
+          startHLS(f,audioRel,'transcode');
+          return
+        }
+        const he=$('hlserrmsg');if(he)he.textContent='播放流错误：'+data.details+'（'+data.type+'）';
+        $('fail').style.display='block';$('faillink').value=f.url
+      }
     });
     $('pnow').textContent=f.name;
   }catch(e){
     pdbg('转封装失败：',e.message);
+    const he=$('hlserrmsg');if(he)he.textContent='服务端转封装启动失败：'+e.message;
     $('fail').style.display='block';$('faillink').value=f.url;
     $('pnow').textContent=f.name+'（'+e.message+'）';
     v.src=f.url;
@@ -1387,6 +1406,7 @@ async function startHLS(f,audioRel,vc){
 /* 轨道探测：有 ffmpeg 时返回内嵌音轨/字幕 */
 async function probeTracks(f){
   if(!f.pick)return;
+  curProbe=null;curProbePick=f.pick; // 失效旧探测（切文件后不能沿用上一集的轨道）
   try{
     const d=await(await fetch('/api/portal/probe?pick='+f.pick)).json();
     if(!d.error)curProbe=d;

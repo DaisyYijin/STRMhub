@@ -30,13 +30,13 @@ import (
 
 // hlsSession 一个转封装会话（一次播放一个）
 type hlsSession struct {
-	dir       string
-	pick      string // 精确记录（会话复用按它比对； Contains(dir,pick) 前缀误配的修复）
-	vc        string // copy / transcode（复用时必须一致，否则分片编码不对）
-	cmd       *exec.Cmd
-	cancel    context.CancelFunc
-	lastHit   time.Time
-	audioRel  int
+	dir      string
+	pick     string // 精确记录（会话复用按它比对； Contains(dir,pick) 前缀误配的修复）
+	vc       string // copy / transcode（复用时必须一致，否则分片编码不对）
+	cmd      *exec.Cmd
+	cancel   context.CancelFunc
+	lastHit  time.Time
+	audioRel int
 }
 
 // portalHLSMaxSessions 并发转封装/转码会话上限（公开端点的 CPU/磁盘保护）
@@ -76,8 +76,8 @@ type portalProbeResult struct {
 }
 
 type probeStream struct {
-	Index    int    `json:"index"`     // ffmpeg 全局流索引
-	Rel      int    `json:"rel"`       // 同类流内序号（音轨 0/1/2…）
+	Index    int    `json:"index"` // ffmpeg 全局流索引
+	Rel      int    `json:"rel"`   // 同类流内序号（音轨 0/1/2…）
 	Codec    string `json:"codec"`
 	Language string `json:"language,omitempty"`
 	Title    string `json:"title,omitempty"`
@@ -126,12 +126,12 @@ func portalProbe(c *gin.Context) {
 	var pr portalProbeResult
 	var wrap struct {
 		Streams []struct {
-			Index    int    `json:"index"`
-			CodecName string `json:"codec_name"`
-			CodecType string `json:"codec_type"`
-			Channels int    `json:"channels,omitempty"`
+			Index       int            `json:"index"`
+			CodecName   string         `json:"codec_name"`
+			CodecType   string         `json:"codec_type"`
+			Channels    int            `json:"channels,omitempty"`
 			Disposition map[string]int `json:"disposition"`
-			Tags     struct {
+			Tags        struct {
 				Language string `json:"language"`
 				Title    string `json:"title"`
 			} `json:"tags"`
@@ -203,6 +203,24 @@ func ffmpegHeaderArgs(headers map[string]string) []string {
 	return args
 }
 
+// cappedWriter 截尾字节缓冲（收 ffmpeg stderr 首段，防无限占用内存）
+type cappedWriter struct {
+	buf   []byte
+	limit int
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	if len(w.buf) < w.limit {
+		w.buf = append(w.buf, p...)
+		if len(w.buf) > w.limit {
+			w.buf = w.buf[:w.limit]
+		}
+	}
+	return len(p), nil
+}
+
+func (w *cappedWriter) String() string { return string(w.buf) }
+
 // portalHLS 启动/复用转封装会话；?pick=&a=<音轨序号>；返回 sid
 func portalHLS(c *gin.Context) {
 	// 兼容 JSON body 与 query 两种传参
@@ -257,8 +275,15 @@ func portalHLS(c *gin.Context) {
 			return
 		}
 	}
-	// 并发上限：门户端口公开可达，无上限时可被无限并发 ffmpeg 打满 CPU/磁盘
-	if live := len(hlsSessions); live >= portalHLSMaxSessions {
+	// 并发上限：只统计 ffmpeg 仍存活的会话——进程已退出的死会话不占位
+	//（此前启动即占位，ffmpeg 秒退后连续重试 4 次就全被"会话已满"拒绝）
+	live := 0
+	for _, ss := range hlsSessions {
+		if ss.cmd == nil || ss.cmd.ProcessState == nil {
+			live++
+		}
+	}
+	if live >= portalHLSMaxSessions {
 		hlsSessionsMu.Unlock()
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": fmt.Sprintf("并发播放会话已满（%d），请稍后再试或关闭其他播放页", live)})
 		return
@@ -291,6 +316,9 @@ func portalHLS(c *gin.Context) {
 		"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"),
 		filepath.Join(dir, "index.m3u8"))
 	cmd := exec.CommandContext(ctx, ffmpegBinOrPath(), segArgs...)
+	// stderr 截尾收集：ffmpeg 读直链失败（403/超时/区域限制）时退出原因可查
+	stderrCap := &cappedWriter{limit: 2048}
+	cmd.Stderr = stderrCap
 	if err := cmd.Start(); err != nil {
 		cancel()
 		os.RemoveAll(dir)
@@ -302,7 +330,16 @@ func portalHLS(c *gin.Context) {
 	hlsSessionsMu.Lock()
 	hlsSessions[sid] = ss
 	hlsSessionsMu.Unlock()
-	go cmd.Wait()
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			// 未产出 m3u8 即退出 = 播放必然失败，记录 ffmpeg 报错便于定位
+			//（115 直链对数据中心 IP 的 403、超时等）
+			if _, statErr := os.Stat(filepath.Join(dir, "index.m3u8")); statErr != nil {
+				log.Printf("[门户] ✗ 转封装会话 %s 退出且无产出（vc=%s）: %v ─ ffmpeg: %s",
+					sid, vc, err, truncateStr(stderrCap.String(), 200))
+			}
+		}
+	}()
 	// 路径式地址：m3u8 内分片是相对路径，基于此 URL 解析自然带上 sid
 	c.JSON(http.StatusOK, gin.H{"sid": sid, "m3u8": "/api/portal/hls/" + sid + "/index.m3u8"})
 }
@@ -380,9 +417,9 @@ func portalExtractSub(c *gin.Context) {
 	}
 	cmdArgs := append([]string{"-hide_banner", "-loglevel", "error"},
 		append(append(ffmpegHeaderArgs(headers), "-i", urlStr),
-		"-map", fmt.Sprintf("0:s:%d", rel),
-		"-c:s", "webvtt",
-		"-f", "webvtt", "pipe:1")...)
+			"-map", fmt.Sprintf("0:s:%d", rel),
+			"-c:s", "webvtt",
+			"-f", "webvtt", "pipe:1")...)
 	out, err := exec.Command(ffmpegBinOrPath(), cmdArgs...).Output()
 	if err != nil {
 		c.String(http.StatusBadGateway, "字幕提取失败（该字幕轨编码可能是图片格式 PGS/VobSub，无法转文本）")
@@ -429,4 +466,3 @@ func hlsCleaner() {
 		probeCacheMu.Unlock()
 	}
 }
-
