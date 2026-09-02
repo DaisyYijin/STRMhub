@@ -37,3 +37,4 @@ emby-pulse-main/
 # 临时脚本
 .tmp-*.py
 *.tmp
+tmp_cms/
