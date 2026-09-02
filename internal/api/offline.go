@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -330,6 +331,27 @@ func offlineMineSave(h *Handler, marks map[string]int64) {
 }
 
 // offlineMineAdd 提交成功后登记任务指纹（magnet→btih、ed2k→hash、以及原始 URL）
+// offlineFastPolls 快速轮询预算：新任务提交后 10 秒一轮、最多 5 次
+//（覆盖提交后第一分钟，秒传/小任务即刻被发现），用尽回 30 秒常规节奏
+// 守 115 风控；任务从排队转为下载中时重新给满 5 次
+var offlineFastPolls atomic.Int64
+
+func offlineArmFastPoll() { offlineFastPolls.Store(5) }
+
+// offlineNextPollDelay 本轮监视器应等待的间隔（消费一次预算）
+func offlineNextPollDelay() time.Duration {
+	for {
+		n := offlineFastPolls.Load()
+		if n > 0 {
+			if offlineFastPolls.CompareAndSwap(n, n-1) {
+				return 10 * time.Second
+			}
+			continue
+		}
+		return 30 * time.Second
+	}
+}
+
 func offlineMineAdd(h *Handler, rawURL string) {
 	lower := strings.ToLower(rawURL)
 	var keys []string
@@ -364,6 +386,7 @@ func offlineMineAdd(h *Handler, rawURL string) {
 		marks[k] = now
 	}
 	offlineMineSave(h, marks)
+	offlineArmFastPoll() // 新任务提交：监视器切快速轮询（10s×5）
 }
 
 // offlineMineMatch 任务是否属于 StrmHub 提交（info_hash / 任务名指纹 / URL 任一命中；
@@ -465,7 +488,7 @@ func StartOfflineTaskMonitor(h *Handler) {
 			select {
 			case <-stopCh:
 				return
-			case <-time.After(30 * time.Second):
+			case <-time.After(offlineNextPollDelay()):
 			}
 			cookie, err := h.get115Cookie()
 			if err != nil {
@@ -490,6 +513,11 @@ func StartOfflineTaskMonitor(h *Handler) {
 				// 提交的磁力/链接不发通知、不触发整理）
 				if !offlineMineMatch(h, mine, key, t.name) {
 					continue
+				}
+				// 排队 → 下载中：115 真正开始下载，再给 5 次快速轮询
+				//（完成后 10 秒内即可发现并整理）
+				if seen && prev == 0 && t.status == 1 {
+					offlineArmFastPoll()
 				}
 				// !seen 且已终态的任务：只处理「本进程启动之后完成的」——
 				// 115 任务列表会长期保留全部历史任务，重启后首轮若不加时间
