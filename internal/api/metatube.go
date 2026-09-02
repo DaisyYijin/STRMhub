@@ -207,7 +207,11 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	var cached model.AVMeta
 	if model.DB.Where("num = ?", key).First(&cached).Error == nil {
 		if cached.Status == "ok" {
-			return &cached
+			// 字段全空的 ok 行是历史 bug（响应格式解析失败时期）写入的坏缓存，
+			// 视为无效，继续走重刮流程自愈
+			if strings.TrimSpace(cached.Title) != "" || cached.CoverURL != "" {
+				return &cached
+			}
 		}
 		if cached.Status == "not_found" && time.Since(cached.UpdatedAt) < avNotFoundTTL {
 			return nil

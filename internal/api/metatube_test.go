@@ -135,6 +135,19 @@ func TestMetatubeDataWrapperFormat(t *testing.T) {
 	}
 }
 
+func TestMetatubeEmptyOkCacheSelfHeal(t *testing.T) {
+	// 历史 bug 写入的"全空 ok 行"应自动重刮而非直接返回
+	search := `{"data":[{"id":"e1","number":"HHH-222","title":"坏缓存自愈","provider":"javbus","release_date":"2023-06-01"}]}`
+	detail := `{"data":{"id":"e1","number":"HHH-222","title":"坏缓存自愈","provider":"javbus","release_date":"2023-06-01"}}`
+	metatubeTestSetup(t, "mt_selfheal", search, detail)
+	model.DB.Create(&model.AVMeta{Num: "HHH222", Status: "ok", Title: "", CoverURL: ""})
+
+	meta := metatubeFetchCached("HHH-222")
+	if meta == nil || meta.Title != "坏缓存自愈" {
+		t.Fatalf("空 ok 缓存应触发重刮自愈: %+v", meta)
+	}
+}
+
 func TestMetatubeNotFoundTTL(t *testing.T) {
 	_, hits := metatubeTestSetup(t, "mt_notfound", `{"data":[]}`, `{"data":{}}`)
 	if meta := metatubeFetchCached("XYZ-999"); meta != nil {
