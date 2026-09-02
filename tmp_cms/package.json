@@ -1,0 +1,24 @@
+{
+  "name": "chunyu-cms-v2",
+  "version": "2.0.0",
+  "description": "基于Node.js Nuxt3 实战开发的一套完整的影视类网站系统。",
+  "main": "index.js",
+  "bin": {
+    "deploy": "bin/deploy.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yinMrsir/chunyu-cms-v2.git"
+  },
+  "author": "laoying",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/yinMrsir/chunyu-cms-v2/issues"
+  },
+  "homepage": "https://cms.yinchunyu.com",
+  "dependencies": {},
+  "packageManager": "pnpm@10.14.0+sha1.85759954ad817d248e2fed7f789f046a24f0327d"
+}

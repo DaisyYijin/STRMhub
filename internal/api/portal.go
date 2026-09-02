@@ -44,6 +44,8 @@ func StartPortal(cfg *config.Config) {
 	r.GET("/api/portal/nav", portalNav)
 	r.GET("/api/portal/list", portalList)
 	r.GET("/api/portal/detail", portalDetail)
+	r.GET("/api/portal/trending", portalTrending)
+	r.POST("/api/portal/played", portalPlayed)
 	r.GET("/poster/*path", portalPoster)
 	r.GET("/api/portal/sub", portalSub)
 	r.GET("/api/portal/probe", portalProbe)
@@ -278,7 +280,7 @@ func portalList(c *gin.Context) {
 	kw := strings.TrimSpace(c.Query("q"))
 
 	type enriched struct {
-		e     *portalTitleEntry
+		e      *portalTitleEntry
 		poster string
 		vote   float64
 	}
@@ -368,14 +370,58 @@ func portalDetail(c *gin.Context) {
 		portalBackfillTMDB(&ml)
 		haveML = ml.PosterPath != ""
 	}
-	poster, vote, overview := "", float64(0), ""
+	poster, vote, overview, backdrop := "", float64(0), "", ""
 	if haveML {
-		poster, vote, overview = ml.PosterPath, ml.VoteAverage, ml.Overview
+		poster, vote, overview, backdrop = ml.PosterPath, ml.VoteAverage, ml.Overview, ml.BackdropPath
 		if ml.Title != "" {
 			title = ml.Title
 		}
 		if ml.Year != "" {
 			year = ml.Year
+		}
+	}
+	// 观看次数（排行榜同源统计）
+	var stat model.PortalStat
+	views := int64(0)
+	if model.DB.Where("key = ?", key).First(&stat).Error == nil {
+		views = stat.Views
+	}
+	// 相关推荐：同类型同分类最近入库（排除自己），海报/评分从整理记录合并
+	related := []gin.H{}
+	{
+		metaByID := map[int]model.MediaLibrary{}
+		var mls []model.MediaLibrary
+		model.DB.Where("media_type = ?", mediaType).Find(&mls)
+		for _, m := range mls {
+			if m.TmdbID > 0 {
+				metaByID[m.TmdbID] = m
+			}
+		}
+		type relEnt struct {
+			e      *portalTitleEntry
+			poster string
+			vote   float64
+		}
+		var rels []relEnt
+		for _, e2 := range portalScanLedger() {
+			if e2.Key == key || e2.MediaType != mediaType || e2.Category != category {
+				continue
+			}
+			r := relEnt{e: e2}
+			if e2.TmdbID > 0 {
+				if ml2, ok := metaByID[e2.TmdbID]; ok {
+					r.poster, r.vote = ml2.PosterPath, ml2.VoteAverage
+				}
+			}
+			rels = append(rels, r)
+		}
+		sort.Slice(rels, func(i, j int) bool { return rels[i].e.LastAt.After(rels[j].e.LastAt) })
+		if len(rels) > 12 {
+			rels = rels[:12]
+		}
+		for _, r := range rels {
+			related = append(related, gin.H{"key": r.e.Key, "title": r.e.Title, "year": r.e.Year,
+				"poster_path": r.poster, "vote_average": r.vote})
 		}
 	}
 	base302 := portal302Base(c)
@@ -406,9 +452,133 @@ func portalDetail(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"media": gin.H{"title": title, "year": year, "media_type": mediaType, "category": category,
-			"poster_path": poster, "vote_average": vote, "overview": overview},
-		"files": files, "subs": subs,
+			"poster_path": poster, "vote_average": vote, "overview": overview, "backdrop_path": backdrop},
+		"files": files, "subs": subs, "views": views, "related": related,
 	})
+}
+
+// portalPlayed 播放计数（前端开始播放时上报，每部每次会话只计一次）。
+// 周/月/年计数跨期自动清零重计——单行 upsert，无明细表膨胀
+func portalPlayed(c *gin.Context) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Key == "" || strings.Contains(req.Key, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	now := time.Now()
+	isoYear, isoWeek := now.ISOWeek()
+	week := fmt.Sprintf("%d-W%02d", isoYear, isoWeek)
+	month := now.Format("2006-01")
+	year := now.Format("2006")
+	var stat model.PortalStat
+	if model.DB.Where("key = ?", req.Key).First(&stat).Error != nil {
+		// 新行：从台账补标题/类型
+		e, ok := portalScanLedger()[req.Key]
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "条目不存在"})
+			return
+		}
+		stat = model.PortalStat{Key: req.Key, MediaType: e.MediaType, Title: e.Title,
+			WeekStart: week, MonthStart: month, YearStart: year}
+	} else {
+		// 跨期清零（比较字符串即可：ISO 周标签单调）
+		if stat.WeekStart != week {
+			stat.WeekViews, stat.WeekStart = 0, week
+		}
+		if stat.MonthStart != month {
+			stat.MonthViews, stat.MonthStart = 0, month
+		}
+		if stat.YearStart != year {
+			stat.YearViews, stat.YearStart = 0, year
+		}
+		if stat.Title == "" {
+			if e, ok := portalScanLedger()[req.Key]; ok {
+				stat.Title, stat.MediaType = e.Title, e.MediaType
+			}
+		}
+	}
+	stat.Views++
+	stat.WeekViews++
+	stat.MonthViews++
+	stat.YearViews++
+	stat.LastAt = now
+	model.DB.Save(&stat)
+	c.JSON(http.StatusOK, gin.H{"views": stat.Views})
+}
+
+// portalTrending 排行榜：周/月/年播放次数排序；无人播放时回退最近入库
+// （新装库/冷启动也有内容可看）。返回 Top 30
+func portalTrending(c *gin.Context) {
+	period := c.DefaultQuery("period", "week")
+	if period != "week" && period != "month" && period != "year" {
+		period = "week"
+	}
+	stats := map[string]model.PortalStat{}
+	var rows []model.PortalStat
+	model.DB.Find(&rows)
+	for _, s := range rows {
+		stats[s.Key] = s
+	}
+	// 元数据合并
+	metaByID := map[int]model.MediaLibrary{}
+	var mls []model.MediaLibrary
+	model.DB.Find(&mls)
+	for _, m := range mls {
+		if m.TmdbID > 0 {
+			metaByID[m.TmdbID] = m
+		}
+	}
+	type item struct {
+		e      *portalTitleEntry
+		period int64
+		total  int64
+		poster string
+		vote   float64
+		ov     string
+	}
+	items := []item{}
+	for k, e := range portalScanLedger() {
+		s := stats[k]
+		pv := s.Views
+		switch period {
+		case "week":
+			pv = s.WeekViews
+		case "month":
+			pv = s.MonthViews
+		case "year":
+			pv = s.YearViews
+		}
+		it := item{e: e, period: pv, total: s.Views}
+		if e.TmdbID > 0 {
+			if ml, ok := metaByID[e.TmdbID]; ok {
+				it.poster, it.vote, it.ov = ml.PosterPath, ml.VoteAverage, ml.Overview
+			}
+		}
+		items = append(items, it)
+	}
+	// 主排序：期内播放次数；回退排序：最近入库（播放数并列或全 0 时）
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].period != items[j].period {
+			return items[i].period > items[j].period
+		}
+		return items[i].e.LastAt.After(items[j].e.LastAt)
+	})
+	// 无任何播放记录 → 完全按最近入库展示（榜面不至于空）
+	if len(items) > 0 && items[0].period == 0 {
+		sort.Slice(items, func(i, j int) bool { return items[i].e.LastAt.After(items[j].e.LastAt) })
+	}
+	if len(items) > 30 {
+		items = items[:30]
+	}
+	out := []gin.H{}
+	for i, it := range items {
+		out = append(out, gin.H{"rank": i + 1, "key": it.e.Key, "title": it.e.Title, "year": it.e.Year,
+			"poster_path": it.poster, "vote_average": it.vote, "overview": it.ov,
+			"period_views": it.period, "views": it.total})
+	}
+	c.JSON(http.StatusOK, gin.H{"period": period, "items": out})
 }
 
 // portal302Base 直链基地址：用"当前访问门户的主机 + 302 代理端口"。
@@ -448,7 +618,7 @@ func portalBackfillWorker() {
 			var ml model.MediaLibrary
 			need := true
 			if model.DB.Where("tmdb_id = ? AND media_type = ?", e.TmdbID, e.MediaType).First(&ml).Error == nil {
-				need = ml.PosterPath == "" || ml.Overview == ""
+				need = ml.PosterPath == "" || ml.Overview == "" || ml.BackdropPath == ""
 			}
 			if !need {
 				continue
@@ -490,15 +660,19 @@ func portalBackfillTMDB(m *model.MediaLibrary) {
 		return
 	}
 	var d struct {
-		PosterPath  string  `json:"poster_path"`
-		Overview    string  `json:"overview"`
-		VoteAverage float64 `json:"vote_average"`
+		PosterPath   string  `json:"poster_path"`
+		BackdropPath string  `json:"backdrop_path"`
+		Overview     string  `json:"overview"`
+		VoteAverage  float64 `json:"vote_average"`
 	}
 	if json.Unmarshal(body, &d) != nil {
 		return
 	}
 	if d.PosterPath != "" {
 		m.PosterPath = d.PosterPath
+	}
+	if d.BackdropPath != "" {
+		m.BackdropPath = d.BackdropPath // 详情页沉浸头图
 	}
 	if d.Overview != "" {
 		m.Overview = d.Overview
@@ -630,7 +804,7 @@ func avPosterPlaceholder(c *gin.Context) {
 }
 
 // portalSub 字幕文本代理：服务端按 pick_code 取 115 直链拉字幕并加 CORS 头返回
-//（浏览器直接 fetch 302/115 会因跨域失败，必须经服务端中转）
+// （浏览器直接 fetch 302/115 会因跨域失败，必须经服务端中转）
 func portalSub(c *gin.Context) {
 	pick := c.Query("pick")
 	if pick == "" || len(pick) > 64 {
@@ -757,6 +931,39 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
 .epi .sz{color:var(--dim);font-size:11px;flex:none}
 .epi .don{color:var(--acc);font-size:11px;flex:none}
 @media(max-width:900px){.playwrap{flex-direction:column}.pright{width:100%;max-height:280px}}
+/* ===== 详情独立页 ===== */
+.dhero{margin:0 -24px;height:300px;background:linear-gradient(135deg,#1e293b,#475569);background-size:cover;background-position:center;position:relative;overflow:hidden}
+.dhero .dgrad{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.05) 30%,var(--bg))}
+.dback{position:absolute;top:16px;left:20px;z-index:3;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:18px;padding:7px 18px;cursor:pointer;font-size:13px}
+.dback:hover{background:rgba(0,0,0,.65)}
+.dwrap{display:flex;gap:24px;max-width:1100px;margin:-100px auto 0;padding:0 24px;position:relative;z-index:2}
+.dposter{flex:none;width:180px}
+.dposter img{width:100%;border-radius:10px;aspect-ratio:2/3;object-fit:cover;box-shadow:0 12px 32px rgba(0,0,0,.4);background:var(--card)}
+.dposter .ph{width:100%;aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;font-size:42px;background:var(--card);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.4)}
+.dinfo{flex:1;min-width:0;padding-top:104px}
+.dinfo h2{font-size:26px;line-height:1.3}
+.ovfull{font-size:14px;line-height:1.9;color:var(--dim);margin-top:16px}
+.dsec{max-width:1100px;margin:30px auto 0;padding:0 24px}
+.eplist2{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+/* ===== 排行榜 ===== */
+.tlist{display:flex;flex-direction:column;gap:10px;margin-top:16px;max-width:1100px}
+.trow{display:flex;gap:14px;align-items:flex-start;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;cursor:pointer;transition:transform .15s}
+.trow:hover{transform:translateY(-2px)}
+.trank{flex:none;width:36px;text-align:center;font-size:20px;font-weight:700;font-style:italic;color:var(--dim);padding-top:14px}
+.trank.top{color:#f59e0b;font-size:24px}
+.tposter{flex:none;width:64px;aspect-ratio:2/3;object-fit:cover;border-radius:6px;background:var(--hover)}
+.ph2{display:flex;align-items:center;justify-content:center;font-size:20px}
+.tinfo{flex:1;min-width:0}
+.tt{font-size:15px;font-weight:600}
+.tv{font-size:12px;color:var(--dim);margin-top:4px}
+.tov{font-size:12px;color:var(--dim);margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media(max-width:600px){
+ .dwrap{flex-direction:column;margin-top:-60px;gap:14px}
+ .dposter{width:130px}
+ .dinfo{padding-top:0}
+ .dhero{height:200px;margin:0 -12px}
+ .dinfo h2{font-size:20px}
+}
 /* 详情弹窗 */
 #mask{position:fixed;inset:0;background:var(--mask);z-index:100;display:none;align-items:center;justify-content:center;padding:24px}
 #modal{background:var(--card);border-radius:14px;max-width:860px;width:100%;max-height:92vh;overflow-y:auto;border:1px solid var(--bd);position:relative}
@@ -783,31 +990,13 @@ select{background:var(--card);color:var(--text);border:1px solid var(--bd);borde
   <div class="tabs">
     <div class="tab" data-t="movie" onclick="goType('movie')">电影</div>
     <div class="tab" data-t="tv" onclick="goType('tv')">剧集</div>
+    <div class="tab" data-t="trending" onclick="goTrending()">排行榜</div>
   </div>
   <input id="kw" placeholder="搜索片名…">
   <button id="theme" onclick="toggleTheme()">🌙</button>
 </header>
 <div id="content"></div>
 
-<div id="mask" onclick="if(event.target===this)closeDetail()">
-  <div id="modal">
-    <span class="close" onclick="closeDetail()">✕</span>
-    <div class="dhead">
-      <img id="d-poster">
-      <div class="dbody">
-        <h2 id="d-title"></h2>
-        <div class="meta" id="d-meta"></div>
-        <div class="badges" id="d-badges"></div>
-        <div class="ov" id="d-ov"></div>
-        <div class="playbtns">
-          <button class="play" id="d-play" onclick="playNow(0)">▶ 播放</button>
-          <button class="ghost" onclick="copyLink0()">复制直链</button>
-        </div>
-      </div>
-    </div>
-    <div style="padding:0 24px 20px" id="d-eps"></div>
-  </div>
-</div>
 <input type="file" id="subfile" accept=".srt,.ass,.ssa,.vtt" style="display:none" onchange="localSub(this)">
 <script>
 const $=id=>document.getElementById(id);
@@ -835,6 +1024,11 @@ async function route(){
   if(h.startsWith('#/play')){
     const q=new URLSearchParams(h.slice(7));
     await renderPlay(q.get('key')||'', parseInt(q.get('i')||'0'), parseFloat(q.get('p')||'0'));
+  }else if(h.startsWith('#/detail')){
+    const q=new URLSearchParams(h.slice(9));
+    await renderDetail(q.get('key')||'');
+  }else if(h.startsWith('#/trending')){
+    renderTrending();
   }else if(view==='home'){renderHome()}
   else if(view==='search'){renderSearch()}
   else{renderList()}
@@ -933,30 +1127,64 @@ async function renderSearch(){
   if(!(a.items||[]).length&&!(b.items||[]).length)g.innerHTML='<div class="empt" style="grid-column:1/-1">未找到相关影视</div>'
 }
 
-/* ---------- 详情 ---------- */
-async function openDetail(key){
-  // 立即弹骨架态（加载反馈），数据到达后填充——慢网时不再毫无反应
-  try{$('d-title').textContent='加载中…';$('d-meta').textContent='';$('d-ov').textContent='';
-    $('d-eps').innerHTML='';$('d-badges').innerHTML='';$('d-poster').removeAttribute('src');
-    $('mask').style.display='flex'}catch(e){}
+/* ---------- 详情（独立页：沉浸头图 + 选集 + 相关推荐） ---------- */
+function openDetail(key){nav('#/detail?key='+encodeURIComponent(key))}
+async function renderDetail(key){
+  const c=$('content');renderTabs('');
+  if(!key){c.innerHTML='<div class="empt">缺少参数</div>';return}
+  c.innerHTML='<div class="empt">加载中…</div>';window.scrollTo(0,0);
   let d=null;
   try{d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json()}catch(e){}
-  if(!d||!d.media){$('mask').style.display='none';toast2('条目已失效或加载失败，请返回列表刷新');return}
+  if(!d||!d.media){c.innerHTML='<div class="empt">条目已失效或加载失败，请返回列表刷新</div>';return}
   curMedia=d.media;curFiles=d.files||[];curSubs=d.subs||[];curKey=key;curDetail=d;
-  $('d-poster').src=curMedia.poster_path?('/poster'+curMedia.poster_path):'';
-  $('d-title').textContent=curMedia.title+(curMedia.year?'（'+curMedia.year+'）':'');
-  $('d-meta').textContent=(curMedia.media_type==='tv'?'剧集':'电影')+(curMedia.category?' · '+curMedia.category:'')+' · '+(curFiles.length||0)+' 个视频';
-  $('d-badges').innerHTML=(curMedia.vote_average>0?'<span>★ '+curMedia.vote_average.toFixed(1)+'</span>':'')+'<span>'+(curSubs.length?curSubs.length+' 个字幕':'')+'</span>';
-  $('d-ov').textContent=curMedia.overview||'暂无简介';
-  const de=$('d-eps');
+  const m=curMedia;
+  const bg=m.backdrop_path?('/poster'+m.backdrop_path):(m.poster_path?('/poster'+m.poster_path):'');
+  let h='<div class="dpage">';
+  h+='<div class="dhero"'+(bg?(' style="background-image:url('+bg+')"'):'')+'><div class="dgrad"></div><button class="dback" onclick="history.back()">‹ 返回</button></div>';
+  h+='<div class="dwrap">';
+  h+='<div class="dposter">'+(m.poster_path?('<img src="/poster'+m.poster_path+'">'):'<div class="ph">🎬</div>')+'</div>';
+  h+='<div class="dinfo">';
+  h+='<h2>'+esc(m.title)+(m.year?'（'+m.year+'）':'')+'</h2>';
+  h+='<div class="meta">'+(m.media_type==='tv'?'剧集':'电影')+(m.category?' · '+m.category:'')+' · '+(curFiles.length||0)+' 个视频'+((d.views||0)>0?' · '+d.views+' 次观看':'')+'</div>';
+  h+='<div class="badges">'+(m.vote_average>0?'<span>★ '+m.vote_average.toFixed(1)+'</span>':'')+(curSubs.length?'<span>'+curSubs.length+' 个字幕</span>':'')+(m.year?'<span>'+m.year+'</span>':'')+'</div>';
+  h+='<div class="playbtns"><button class="play" onclick="playNow(0)">▶ 播放</button><button class="ghost" onclick="copyLink0()">复制直链</button></div>';
+  h+='<div class="ovfull">'+esc(m.overview||'暂无简介')+'</div>';
+  h+='</div></div>';
   if(curFiles.length>1){
-    de.innerHTML='<div class="rh"><h2 style="font-size:15px">选集</h2></div>'+curFiles.slice(0,50).map((f,i)=>
-      '<div class="epi" onclick="playNow('+i+')"><span class="nm">'+esc(f.name)+'</span><span class="sz">'+(f.size>0?(f.size/1073741824).toFixed(1)+'G':'')+'</span></div>').join('')
-  }else de.innerHTML='';
-  $('mask').style.display='flex'
+    h+='<div class="dsec"><div class="rh"><h2>选集（'+curFiles.length+'）</h2></div><div class="eplist2">'+
+      curFiles.map((f,i)=>'<div class="epi" onclick="playNow('+i+')"><span class="nm">'+esc(f.name)+'</span><span class="sz">'+(f.size>0?(f.size/1073741824).toFixed(1)+'G':'')+'</span></div>').join('')+'</div></div>'
+  }
+  if((d.related||[]).length){
+    h+='<div class="dsec"><div class="rh"><h2>相关推荐</h2></div><div class="grid">'+
+      d.related.map(r=>cardHTML(r)).join('')+'</div></div>'
+  }
+  h+='</div>';
+  c.innerHTML=h;
 }
-function closeDetail(){$('mask').style.display='none'}
-function playNow(i){closeDetail();nav('#/play?key='+encodeURIComponent(curKey)+'&i='+i)}
+function playNow(i){nav('#/play?key='+encodeURIComponent(curKey)+'&i='+i)}
+
+/* ---------- 排行榜（周/月/年） ---------- */
+let trPeriod='week';
+function goTrending(){nav('#/trending')}
+async function renderTrending(){
+  const c=$('content');renderTabs('trending');
+  const seg=(v,label)=>'<div class="chip'+(trPeriod===v?' on':'')+'" onclick="trPeriod=&apos;'+v+'&apos;;renderTrending()">'+label+'</div>';
+  let h='<div class="listtitle">排行榜</div><div class="filters"><div class="chips">'+
+    seg('week','周榜')+seg('month','月榜')+seg('year','年榜')+'</div></div>';
+  let d=null;
+  try{d=await(await fetch('/api/portal/trending?period='+trPeriod)).json()}catch(e){}
+  if(!d||!(d.items||[]).length){c.innerHTML=h+'<div class="empt">暂无数据</div>';return}
+  h+='<div class="tlist">'+d.items.map(it=>{
+    const pvTxt=it.period_views>0?((trPeriod==='week'?'本周':(trPeriod==='month'?'本月':'本年'))+it.period_views+' 次播放'):'新入库';
+    return '<div class="trow" onclick="openDetail(&apos;'+escA(it.key)+'&apos;)">'+
+      '<div class="trank'+(it.rank<=3?' top':'')+'">'+it.rank+'</div>'+
+      (it.poster_path?('<img class="tposter" loading="lazy" src="/poster'+it.poster_path+'">'):'<div class="tposter ph2">🎬</div>')+
+      '<div class="tinfo"><div class="tt">'+esc(it.title)+(it.year?'（'+it.year+'）':'')+'</div>'+
+      '<div class="tv">'+pvTxt+(it.views>0?' · 累计 '+it.views:'')+(it.vote_average>0?' · ★ '+it.vote_average.toFixed(1):'')+'</div>'+
+      '<div class="tov">'+esc(it.overview||'')+'</div></div></div>'
+  }).join('')+'</div>';
+  c.innerHTML=h;
+}
 function playResume(key,i){nav('#/play?key='+encodeURIComponent(key)+'&i='+i+'&p=resume')}
 function copyLink0(){if(curFiles[0])copyTxt(curFiles[0].url)}
 
@@ -964,6 +1192,7 @@ function copyLink0(){if(curFiles[0])copyTxt(curFiles[0].url)}
 async function renderPlay(key,idx,pct){
   const c=$('content');renderTabs('');
   if(!curKey||curKey!==key){await openDetailData(key)}
+  reportPlayed(key);
   if(!curFiles.length){c.innerHTML='<div class="empt">该条目暂无视频文件</div>';return}
   if(idx>=curFiles.length)idx=0;
   const f=curFiles[idx];
@@ -1003,6 +1232,11 @@ async function renderPlay(key,idx,pct){
    '</div></div>'+
   '</div>';
   startPlay(idx,startPct)
+}
+/* 播放计数上报：每部每次浏览器会话只计一次（切集/重进不重复计） */
+function reportPlayed(key){
+  try{if(sessionStorage.getItem('pv:'+key))return;sessionStorage.setItem('pv:'+key,'1')}catch(e){return}
+  try{fetch('/api/portal/played',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key})})}catch(e){}
 }
 async function openDetailData(key){
   const d=await(await fetch('/api/portal/detail?key='+encodeURIComponent(key))).json();
