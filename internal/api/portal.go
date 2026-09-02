@@ -1371,6 +1371,23 @@ async function startHLS(f,audioRel,vc){
     if(d.error){throw new Error(d.error)}
     curSid=d.sid;
     pdbg('会话 sid='+d.sid,'m3u8='+d.m3u8);
+    // 等 playlist 真正产出分片（ffmpeg 切出首段后 m3u8 才含 #EXTINF）：
+    // 急着 attach 会让 hls.js 拿到 404/空列表进入内部异常状态
+    //（典型症状：控制台 startTime undefined + play() AbortError，播放无声卡死）
+    let ready=false,lastErr='';
+    for(let i=0;i<35;i++){
+      try{
+        const r=await fetch(d.m3u8);
+        if(r.ok){
+          const t=await r.text();
+          if(t.indexOf('#EXTINF')>=0){ready=true;break}
+          lastErr='列表为空';
+        }else lastErr='HTTP '+r.status;
+      }catch(e2){lastErr=e2.message}
+      await new Promise(res=>setTimeout(res,1000));
+    }
+    if(!ready){throw new Error('转封装未产出分片（'+(lastErr||'超时')+'）——ffmpeg 可能已退出，请查看服务端日志')}
+    dbgStage('转封装列表就绪',performance.now()-t0);
     hls=new Hls({maxBufferLength:30});
     hls.loadSource(d.m3u8);
     hls.attachMedia(v);
