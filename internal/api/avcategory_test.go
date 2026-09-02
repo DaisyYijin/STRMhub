@@ -67,3 +67,30 @@ func TestCollapseDuplicateAVNum(t *testing.T) {
 		}
 	}
 }
+
+func TestAVCarriesNumberPadded(t *testing.T) {
+	cases := []struct {
+		cleaned, num string
+		want         bool
+	}{
+		// JUVR-303 实测误杀案例：数字段补零到 5 位 + 分卷后缀
+		{"juvr00303_1_8k", "JUVR-303", true},
+		{"juvr00303_2_8k", "JUVR-303", true},
+		{"juvr00303", "JUVR-303", true},
+		// 常规形态回归
+		{"start-622", "START-622", true},
+		{"start622", "START-622", true},
+		{"START-622-CD1", "START-622", true},
+		{"fc2_1234567", "FC2-PPV-1234567", true},
+		// 防误报：补零后的数字段必须精确相等，前缀相同数字不同的番号不命中
+		{"juvr00303", "JUVR-30", false},
+		{"juvr00303", "JUVR-3030", false},
+		{"start622", "START-623", false},
+		{"midv001", "MIDV-100", false},
+	}
+	for _, c := range cases {
+		if got := avCarriesNumber(c.cleaned, c.num); got != c.want {
+			t.Errorf("avCarriesNumber(%q, %q) = %v, want %v", c.cleaned, c.num, got, c.want)
+		}
+	}
+}

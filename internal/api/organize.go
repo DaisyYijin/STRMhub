@@ -2410,8 +2410,46 @@ func avCarriesNumber(cleanedBase, avNum string) bool {
 			return true
 		}
 	}
+	// 分词模糊匹配：发布方常把番号数字段补零且不带连字符
+	//（JUVR-303 ↔ 文件名 juvr00303_1_8k）。按分隔符切词，词内
+	// 「字母前缀+数字」的数字段去掉前导零后与番号数字段精确比对
+	alnum := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	m := avPrefixNumRe.FindStringSubmatch(alnum(avNum))
+	if m == nil {
+		return false
+	}
+	prefixes := []string{m[1]}
+	if p := strings.TrimSuffix(m[1], "ppv"); p != m[1] {
+		prefixes = append(prefixes, p) // FC2-PPV ↔ 文件 fc2_xxx
+	}
+	num := strings.TrimLeft(m[2], "0")
+	if num == "" {
+		return false
+	}
+	for _, tok := range strings.FieldsFunc(lc, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == ' '
+	}) {
+		if tm := avPrefixNumRe.FindStringSubmatch(tok); tm != nil {
+			for _, p := range prefixes {
+				if tm[1] == p && strings.TrimLeft(tm[2], "0") == num {
+					return true
+				}
+			}
+		}
+	}
 	return false
 }
+
+// avPrefixNumRe 「字母前缀+纯数字段」（juvr303 / fc2ppv1234567 → 前缀+番号数字）
+var avPrefixNumRe = regexp.MustCompile(`^([a-z]+)(\d+)$`)
 
 // processAVDirectory 处理 AV 目录（跳过 TMDB，直接用番号入库）
 func processAVDirectory(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, dir dirEntry, files []remoteFile, onLog func(string), results []OrganizeResult) []OrganizeResult {
