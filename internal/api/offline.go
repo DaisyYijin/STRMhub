@@ -42,6 +42,10 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的链接类型（仅支持磁力/ed2k/HTTP/FTP）"})
 		return
 	}
+	if linkType == "share" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "115 分享链接不支持离线下载，请使用「分享转存」功能（或把链接发给机器人自动转存）"})
+		return
+	}
 
 	cookie, err := h.get115Cookie()
 	if err != nil {
@@ -204,8 +208,12 @@ func classifyLink(raw string) string {
 		return "magnet"
 	case strings.HasPrefix(lower, "ed2k://"):
 		return "ed2k"
-	case strings.Contains(lower, "115.com/s/"):
-		// 分享链接需先于 http 判断（分享链接也是 http(s) 开头）
+	case strings.Contains(lower, "115.com/s/"),
+		strings.Contains(lower, "115cdn.com/s/"),
+		strings.Contains(lower, "anxia.com/s/"):
+		// 分享链接需先于 http 判断（分享链接也是 http(s) 开头）。
+		// 此前只认 115.com——115cdn.com/s/ 被当普通 http 交给离线下载，
+		// 115 假成功实际只建空壳目录，永远等不到下载完成
 		return "share"
 	case strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://"):
 		return "http"

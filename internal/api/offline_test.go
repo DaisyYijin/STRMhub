@@ -27,3 +27,22 @@ func TestExtractTaskItems(t *testing.T) {
 	}
 	_ = json.Marshal
 }
+
+func TestClassifyLinkShareDomains(t *testing.T) {
+	cases := []struct {
+		link string
+		want string
+	}{
+		// 115cdn.com/s/ 曾被误判为 http 交给离线下载（115 假成功建空壳目录）
+		{"https://115cdn.com/s/swsvlam3nqo?password=9527#", "share"},
+		{"https://115.com/s/abc123?password=xxxx", "share"},
+		{"https://anxia.com/s/abcd1234", "share"},
+		{"magnet:?xt=urn:btih:ABC", "magnet"},
+		{"https://example.com/file.mp4", "http"},
+	}
+	for _, c := range cases {
+		if got := classifyLink(c.link); got != c.want {
+			t.Errorf("classifyLink(%q) = %q, want %q", c.link, got, c.want)
+		}
+	}
+}

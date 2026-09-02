@@ -1166,9 +1166,18 @@ func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules [
 	}
 	if !entry.IsDir {
 		if classifyFile(entry.Name) != FileTypeVideo {
+			// 顶层散落垃圾（txt/url 等）清进冗余，其余非视频跳过并留痕
+			if classifyFile(entry.Name) == FileTypeJunk {
+				if err := ops.moveFiles(cfg.Redundant, []string{entry.Fid}); err == nil {
+					onLog(fmt.Sprintf("○ %s - 顶层垃圾文件，已移到冗余", entry.Name))
+				}
+				return results
+			}
+			onLog(fmt.Sprintf("○ %s - 顶层非视频文件，跳过", entry.Name))
 			return results
 		}
 		if cfg.MinSize > 0 && entry.Size > 0 && entry.Size < cfg.MinSize*1024*1024 {
+			onLog(fmt.Sprintf("○ %s - 仅 %.1fMB（小于最小体积 %dMB），跳过", entry.Name, float64(entry.Size)/1024/1024, cfg.MinSize))
 			return results
 		}
 		f := remoteFile{Fid: entry.Fid, Name: entry.Name, Size: entry.Size, Sha1: entry.Sha1}
@@ -1246,6 +1255,13 @@ func processEntry(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules [
 		return results
 	}
 	if len(subFiles) == 0 {
+		// 空目录（离线/转存产生的空壳）清进冗余：不处理会导致守望者
+		// 反复"整理后转存目录仍有内容"且无任何日志可查
+		if err := ops.moveFiles(cfg.Redundant, []string{entry.Fid}); err != nil {
+			onLog(fmt.Sprintf("○ %s/ - 空目录移到冗余失败: %v", entry.Name, err))
+		} else {
+			onLog(fmt.Sprintf("○ %s/ - 空目录（无任何文件），已移到冗余", entry.Name))
+		}
 		return results
 	}
 	result := processDir(ops, cfg, tc, replaceRules, entry, subFiles, libAbs, onLog)
