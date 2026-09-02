@@ -2,11 +2,18 @@ package api
 
 // ==================== MetaTube AV 番号识别 ====================
 //
-// 对接自部署的 metatube-server（github.com/metatube-community/metatube）：
-//   GET /v1/movies/search?q=<番号>          → []MovieSummary（各刮削源命中列表）
-//   GET /v1/movies/{provider}/{id}          → Movie 详情（标题/封面/演员/类型…）
-//   GET /v1/providers                       → 启用的刮削源（测试连接用）
-// 认证：URL 上带 ?token=（服务端配置了 MT_TOKEN 时必填）。
+// 对接自部署的 metatube-server（github.com/metatube-community/metatube）。
+// 响应协议（以 metatube-sdk-go route/model 源码为准）：
+//   统一包裹     {"data": X, "error": {code,message}}        （responseMessage）
+//   搜索         GET /v1/movies/search?q=番号 → data: []MovieSearchResult
+//   详情         GET /v1/movies/{provider}/{id} → data: MovieInfo
+//   刮削源       GET /v1/providers（公开端点）→ data: {movie_providers, actor_providers}
+//   海报代理     GET /v1/images/primary/{provider}/{id}（公开端点，免防盗链）
+// 认证：movies/actors 组走 token（服务端 MT_TOKEN）；请求同时带
+// ?token= 参数与 Authorization: Bearer 头，两种校验方式都兼容。
+//
+// 字段名与直觉不同的：番号 = number（不是 title_number）、简介 = summary、
+// 厂牌 = maker、演员/类型 = 纯字符串数组。
 //
 // 定位 = AV 版的 TMDB 识别：整理流程（processAVDirectory）番号提取后自动识别，
 // 结果缓存 AVMeta 表，失败/未配置自动退回纯番号行为。识别结果只用于
@@ -54,65 +61,33 @@ func metatubeEnabled() bool {
 	return cfg.Enabled && cfg.URL != ""
 }
 
-// metatubeMovie metatube-server 返回的影片结构（节选实际用到的字段）。
-// Actors/Genres/PreviewImages 在服务端是 datatypes.JSON，可能是数组也可能是
-// JSON 字符串，用 RawMessage 接住后按 flexible 方式解析
+// metatubeMovie MovieInfo/MovieSearchResult 的实际 JSON 结构（字段名按
+// metatube-sdk-go model 包逐字对齐）
 type metatubeMovie struct {
-	Provider    string          `json:"provider"`
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	TitleNumber string          `json:"title_number"`
-	OriginalTitle string        `json:"original_title"`
-	Description string          `json:"description"`
-	ReleaseDate string          `json:"release_date"`
-	Runtime     int             `json:"runtime"`
-	Director    string          `json:"director"`
-	Publisher   string          `json:"publisher"`
-	CoverURL    string          `json:"cover_url"`
-	PreviewImages json.RawMessage `json:"preview_images_url"`
-	Actors      json.RawMessage `json:"actors"`
-	Genres      json.RawMessage `json:"genres"`
-	Score       float64         `json:"score"`
-}
+	ID      string   `json:"id"`
+	Number  string   `json:"number"` // 番号
+	Title   string   `json:"title"`
+	Summary string   `json:"summary"`
+	Provider string  `json:"provider"`
+	Homepage string  `json:"homepage"`
 
-// metatubeJSONStrings 兼容 []string 与 "\"a\",\"b\"" 两种形态
-func metatubeJSONStrings(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var list []string
-	if err := json.Unmarshal(raw, &list); err == nil {
-		return list
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil && s != "" {
-		_ = json.Unmarshal([]byte(s), &list)
-	}
-	return list
-}
+	Director string   `json:"director"`
+	Actors   []string `json:"actors"`
 
-// metatubeActorNames actors 是 [{name, aliases}] 数组，提取 name 列表
-func metatubeActorNames(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	type actorItem struct {
-		Name string `json:"name"`
-	}
-	var actors []actorItem
-	if err := json.Unmarshal(raw, &actors); err != nil {
-		var s string
-		if json.Unmarshal(raw, &s) == nil && s != "" {
-			_ = json.Unmarshal([]byte(s), &actors)
-		}
-	}
-	names := make([]string, 0, len(actors))
-	for _, a := range actors {
-		if n := strings.TrimSpace(a.Name); n != "" {
-			names = append(names, n)
-		}
-	}
-	return names
+	ThumbURL      string   `json:"thumb_url"`
+	BigThumbURL   string   `json:"big_thumb_url"`
+	CoverURL      string   `json:"cover_url"`
+	BigCoverURL   string   `json:"big_cover_url"`
+	PreviewImages []string `json:"preview_images"`
+
+	Maker  string   `json:"maker"` // 厂牌
+	Label  string   `json:"label"`
+	Series string   `json:"series"`
+	Genres []string `json:"genres"`
+	Score  float64  `json:"score"`
+
+	Runtime     int    `json:"runtime"`
+	ReleaseDate string `json:"release_date"`
 }
 
 var metatubeClient = &nethttp.Client{Timeout: 15 * time.Second}
@@ -156,42 +131,60 @@ func metatubeGet(cfg MetatubeConfig, apiPath string, out any) error {
 	return json.Unmarshal(body, out)
 }
 
-// metatubeParseMovies 搜索结果兼容解析：新版返回 {"result":[…]} 包裹对象，
-// 旧版/其他部署可能返回裸数组，两种都认
+// metatubeUnwrapData 服务器统一包裹 {"data": X, "error": …}（responseMessage），
+// 剥出 data；裸 JSON（老版本/其他形态）原样返回
+func metatubeUnwrapData(raw []byte) []byte {
+	var wrapper struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &wrapper) == nil && len(wrapper.Data) > 0 {
+		return wrapper.Data
+	}
+	return raw
+}
+
+// metatubeParseMovies 搜索结果解析：data 包裹对象为主，裸数组兼容
 func metatubeParseMovies(raw []byte) ([]metatubeMovie, error) {
+	raw = metatubeUnwrapData(raw)
 	var arr []metatubeMovie
 	if err := json.Unmarshal(raw, &arr); err == nil {
 		return arr, nil
 	}
-	var wrapper struct {
+	var legacy struct {
 		Result []metatubeMovie `json:"result"`
-		Data   []metatubeMovie `json:"data"`
 	}
-	if err := json.Unmarshal(raw, &wrapper); err == nil {
-		if len(wrapper.Result) > 0 {
-			return wrapper.Result, nil
-		}
-		return wrapper.Data, nil
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		return legacy.Result, nil
 	}
 	return nil, fmt.Errorf("响应格式无法解析: %s", truncateStr(string(raw), 80))
 }
 
-// metatubeParseMovie 详情兼容解析：详情为对象本体；万一被 {"result":{…}}
-// 包裹（字段全空时尝试解包），也能取出
+// metatubeParseMovie 详情解析：data 包裹对象为主，result 兼容
 func metatubeParseMovie(raw []byte) (*metatubeMovie, error) {
+	raw = metatubeUnwrapData(raw)
 	var m metatubeMovie
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, err
 	}
 	if m.Title == "" && m.CoverURL == "" && m.ID == "" {
-		var wrapper struct {
+		var legacy struct {
 			Result *metatubeMovie `json:"result"`
 		}
-		if json.Unmarshal(raw, &wrapper) == nil && wrapper.Result != nil {
-			return wrapper.Result, nil
+		if json.Unmarshal(raw, &legacy) == nil && legacy.Result != nil {
+			return legacy.Result, nil
 		}
 	}
 	return &m, nil
+}
+
+// metatubeImageURL 服务器自带的海报代理（公开端点，免源站防盗链）：
+// /v1/images/primary/{provider}/{id}
+func metatubeImageURL(cfg MetatubeConfig, provider, id string) string {
+	if cfg.URL == "" || provider == "" || id == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/v1/images/primary/%s/%s", cfg.URL,
+		url.PathEscape(provider), url.PathEscape(id))
 }
 
 // metatubeScrapeMu 批量整理时防止并发重复刮削同一批番号（双引擎竞态）
@@ -251,6 +244,12 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	} else if d, perr := metatubeParseMovie(detailBody); perr == nil {
 		detail = *d
 	}
+	if detail.Provider == "" {
+		detail.Provider = sum.Provider
+	}
+	if detail.ID == "" {
+		detail.ID = sum.ID
+	}
 	year := ""
 	if d := detail.ReleaseDate; len(d) >= 4 {
 		year = d[:4]
@@ -258,22 +257,27 @@ func metatubeFetchCached(num string) *model.AVMeta {
 	meta := &model.AVMeta{
 		Num: key, Status: "ok",
 		Provider: detail.Provider, ProviderID: detail.ID,
-		Title:       strings.TrimSpace(detail.Title),
-		OriginalTitle: strings.TrimSpace(detail.OriginalTitle),
-		Year:        year, ReleaseDate: detail.ReleaseDate,
-		Runtime: detail.Runtime, Director: detail.Director, Publisher: detail.Publisher,
-		Plot: detail.Description, Score: detail.Score, CoverURL: detail.CoverURL,
+		Title:      strings.TrimSpace(detail.Title),
+		Year:       year, ReleaseDate: detail.ReleaseDate,
+		Runtime:    detail.Runtime, Director: detail.Director, Publisher: detail.Maker,
+		Plot:       detail.Summary, Score: detail.Score,
 	}
 	if meta.Title == "" {
-		meta.Title = strings.TrimSpace(detail.TitleNumber)
+		meta.Title = strings.TrimSpace(detail.Number)
 	}
-	if actors := metatubeActorNames(detail.Actors); len(actors) > 0 {
-		b, _ := json.Marshal(actors)
+	if len(detail.Actors) > 0 {
+		b, _ := json.Marshal(detail.Actors)
 		meta.ActorsJSON = string(b)
 	}
-	if genres := metatubeJSONStrings(detail.Genres); len(genres) > 0 {
-		b, _ := json.Marshal(genres)
+	if len(detail.Genres) > 0 {
+		b, _ := json.Marshal(detail.Genres)
 		meta.GenresJSON = string(b)
+	}
+	// 封面走服务器自带代理（公开端点），不直连源站（防盗链 + 统一缓存）
+	if img := metatubeImageURL(cfg, detail.Provider, detail.ID); img != "" {
+		meta.CoverURL = img
+	} else {
+		meta.CoverURL = detail.CoverURL
 	}
 	saveAVMeta(meta)
 	return meta
@@ -377,7 +381,8 @@ func recordAVMedia(m *model.AVMeta, num, category, targetPath string) {
 // ==================== HTTP 接口 ====================
 
 // MetatubeCheck 测试连接：POST {url?, token?}（表单值优先，缺省回退已保存配置）。
-// 成功返回刮削源数量
+// 两段式：/v1/providers（公开端点）验可达 → /v1/movies/search（token 保护端点）
+// 验 token 真实有效。成功返回刮削源数量
 func (h *Handler) MetatubeCheck(c *gin.Context) {
 	var req struct {
 		URL   string `json:"url"`
@@ -394,17 +399,19 @@ func (h *Handler) MetatubeCheck(c *gin.Context) {
 		return
 	}
 	start := time.Now()
-	// 第一段：/v1/providers（公开端点）验证地址可达
+	// 第一段：providers 响应为 responseMessage 包裹的映射（名称→主页）
 	var providers struct {
-		MovieProviders json.RawMessage `json:"movie_providers"`
-		ActorProviders json.RawMessage `json:"actor_providers"`
+		Data struct {
+			MovieProviders map[string]string `json:"movie_providers"`
+			ActorProviders map[string]string `json:"actor_providers"`
+		} `json:"data"`
 	}
 	if err := metatubeGet(cfg, "/v1/providers", &providers); err != nil {
 		c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "服务器不可达: " + truncateStr(err.Error(), 150)})
 		return
 	}
-	// 第二段：/v1/movies/search（token 保护端点）验证 token 真实有效。
-	// providers 不校验 token，只测它会出现"随便填 token 也成功"的假象
+	// 第二段：搜索端点受 token 保护，providers 不校验 token，
+	// 只测它会出现"随便填 token 也成功"的假象
 	probeBody, err := metatubeGetRaw(cfg, "/v1/movies/search?q=test")
 	if err != nil {
 		if strings.Contains(err.Error(), "401") {
@@ -418,7 +425,7 @@ func (h *Handler) MetatubeCheck(c *gin.Context) {
 		c.JSON(nethttp.StatusOK, gin.H{"success": false, "error": "搜索接口响应格式异常: " + truncateStr(err.Error(), 150)})
 		return
 	}
-	n := len(metatubeJSONStrings(providers.MovieProviders)) + len(metatubeJSONStrings(providers.ActorProviders))
+	n := len(providers.Data.MovieProviders) + len(providers.Data.ActorProviders)
 	msg := fmt.Sprintf("连接成功（%dms）", time.Since(start).Milliseconds())
 	if n > 0 {
 		msg += fmt.Sprintf("，已启用 %d 个刮削源", n)

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,35 +47,40 @@ func saveSettingRow(t *testing.T, key, value string) {
 	}
 }
 
-func TestMetatubeJSONStrings(t *testing.T) {
-	// 数组形态
-	if got := metatubeJSONStrings([]byte(`["a","b"]`)); len(got) != 2 || got[0] != "a" {
-		t.Errorf("数组形态解析错误: %v", got)
+func TestMetatubeUnwrapData(t *testing.T) {
+	// responseMessage 包裹 → 剥出 data
+	if got := metatubeUnwrapData([]byte(`{"data":{"k":"v"},"error":null}`)); string(got) != `{"k":"v"}` {
+		t.Errorf("data 剥包错误: %s", got)
 	}
-	// JSON 字符串形态（datatypes.JSON 兼容）
-	if got := metatubeJSONStrings([]byte(`"[\"x\",\"y\"]"`)); len(got) != 2 || got[1] != "y" {
-		t.Errorf("字符串形态解析错误: %v", got)
-	}
-	if got := metatubeJSONStrings(nil); got != nil {
-		t.Errorf("空值应为 nil: %v", got)
+	// 裸 JSON 原样返回
+	if got := metatubeUnwrapData([]byte(`[1,2]`)); string(got) != `[1,2]` {
+		t.Errorf("裸 JSON 应原样: %s", got)
 	}
 }
 
-func TestMetatubeActorNames(t *testing.T) {
-	got := metatubeActorNames([]byte(`[{"name":"三上悠亜","aliases":["SSIS"]},{"name":"天使もえ"}]`))
-	if len(got) != 2 || got[0] != "三上悠亜" {
-		t.Errorf("演员解析错误: %v", got)
+func TestMetatubeParseMoviesFormats(t *testing.T) {
+	// 当前协议：responseMessage.data 包裹（字段名按 SDK model 对齐）
+	wrapped := `{"data":[{"id":"abc123","number":"ABC-123","title":"作品名","provider":"javbus","actors":["演员A"],"release_date":"2023-01-05"}]}`
+	hits, err := metatubeParseMovies([]byte(wrapped))
+	if err != nil || len(hits) != 1 || hits[0].Number != "ABC-123" || hits[0].Title != "作品名" {
+		t.Errorf("data 包裹解析错误: %v %+v", err, hits)
 	}
-	// 字符串包裹形态
-	got = metatubeActorNames([]byte(`"[{\"name\":\"河北彩花\"}]"`))
-	if len(got) != 1 || got[0] != "河北彩花" {
-		t.Errorf("字符串形态演员解析错误: %v", got)
+	// 裸数组兼容
+	hits, err = metatubeParseMovies([]byte(`[{"id":"x","number":"X-1","title":"t","provider":"p"}]`))
+	if err != nil || len(hits) != 1 {
+		t.Errorf("裸数组解析错误: %v", err)
+	}
+	// 无结果
+	hits, _ = metatubeParseMovies([]byte(`{"data":[]}`))
+	if len(hits) != 0 {
+		t.Errorf("空结果应为 0 条: %+v", hits)
 	}
 }
 
 func TestMetatubeFetchCachedFlow(t *testing.T) {
-	search := `[{"provider":"javbus","id":"abc123","title":"テスト作品","title_number":"ABC-123","cover_url":"","release_date":"2023-01-05","actors":[{"name":"演员A"}],"genres":["剧情"]}]`
-	detail := `{"provider":"javbus","id":"abc123","title":"テスト作品 オフィスレディ編","original_title":"","description":"剧情简介","release_date":"2023-01-05","runtime":120,"director":"导演","publisher":"厂牌","cover_url":"http://example.com/cover.jpg","actors":[{"name":"演员A"},{"name":"演员B"}],"genres":["剧情","办公室"]}`
+	// 裸数组搜索（兼容路径）+ data 包裹详情（当前协议）
+	search := `[{"id":"abc123","number":"ABC-123","title":"テスト作品","provider":"javbus","cover_url":"http://example.com/cover.jpg","release_date":"2023-01-05","actors":["演员A"]}]`
+	detail := `{"data":{"id":"abc123","number":"ABC-123","title":"テスト作品 オフィスレディ編","summary":"剧情简介","provider":"javbus","release_date":"2023-01-05","runtime":120,"director":"导演","maker":"厂牌","actors":["演员A","演员B"],"genres":["剧情","办公室"]}}`
 	_, hits := metatubeTestSetup(t, "mt_flow", search, detail)
 
 	meta := metatubeFetchCached("ABC-123")
@@ -87,8 +93,15 @@ func TestMetatubeFetchCachedFlow(t *testing.T) {
 	if meta.Year != "2023" || meta.Runtime != 120 {
 		t.Errorf("年份/时长解析错误: %q %d", meta.Year, meta.Runtime)
 	}
+	if meta.Publisher != "厂牌" || meta.Plot != "剧情简介" {
+		t.Errorf("厂牌/简介解析错误: %q %q", meta.Publisher, meta.Plot)
+	}
 	if actors := avMetaActors(meta); len(actors) != 2 {
 		t.Errorf("演员应为 2 人: %v", actors)
+	}
+	// 封面应使用服务器图片代理（公开端点，免源站防盗链）
+	if !strings.Contains(meta.CoverURL, "/v1/images/primary/javbus/abc123") {
+		t.Errorf("封面应走服务器图片代理: %q", meta.CoverURL)
 	}
 	// 第二次：命中缓存，不再请求服务器（返回同一条记录）
 	firstID := meta.ID
@@ -101,10 +114,10 @@ func TestMetatubeFetchCachedFlow(t *testing.T) {
 	}
 }
 
-func TestMetatubeWrapperFormat(t *testing.T) {
-	// 新版 metatube-server 搜索返回 {"result":[…]} 包裹对象
-	search := `{"result":[{"provider":"javdb","id":"xyz","title":"包装格式作品","title_number":"GGG-111","cover_url":"http://c/x.jpg","release_date":"2024-02-03"}],"took":1.2}`
-	detail := `{"provider":"javdb","id":"xyz","title":"包装格式作品 详情","description":"简介","release_date":"2024-02-03","runtime":100,"actors":[{"name":"演员C"}],"genres":["剧情"]}`
+func TestMetatubeDataWrapperFormat(t *testing.T) {
+	// 当前协议：搜索/详情都包在 {"data": …} 里
+	search := `{"data":[{"id":"xyz","number":"GGG-111","title":"包装格式作品","provider":"javdb","cover_url":"http://c/x.jpg","release_date":"2024-02-03"}],"took":1.2}`
+	detail := `{"data":{"id":"xyz","number":"GGG-111","title":"包装格式作品 详情","summary":"简介","provider":"javdb","release_date":"2024-02-03","runtime":100,"actors":["演员C"],"genres":["剧情"]}}`
 	metatubeTestSetup(t, "mt_wrapper", search, detail)
 
 	meta := metatubeFetchCached("GGG-111")
@@ -123,7 +136,7 @@ func TestMetatubeWrapperFormat(t *testing.T) {
 }
 
 func TestMetatubeNotFoundTTL(t *testing.T) {
-	_, hits := metatubeTestSetup(t, "mt_notfound", `[]`, `{}`)
+	_, hits := metatubeTestSetup(t, "mt_notfound", `{"data":[]}`, `{"data":{}}`)
 	if meta := metatubeFetchCached("XYZ-999"); meta != nil {
 		t.Fatalf("无结果应返回 nil: %+v", meta)
 	}
@@ -145,7 +158,7 @@ func TestMetatubeNotFoundTTL(t *testing.T) {
 }
 
 func TestMetatubeDisabled(t *testing.T) {
-	_, hits := metatubeTestSetup(t, "mt_disabled", `[]`, `{}`)
+	_, hits := metatubeTestSetup(t, "mt_disabled", `{"data":[]}`, `{"data":{}}`)
 	saveSettingRow(t, "metatube", `{"url":"http://x","enabled":false}`)
 	if meta := metatubeFetchCached("ABC-001"); meta != nil {
 		t.Fatalf("未启用应返回 nil: %+v", meta)
@@ -156,7 +169,7 @@ func TestMetatubeDisabled(t *testing.T) {
 }
 
 func TestRecordAVMediaDedupe(t *testing.T) {
-	metatubeTestSetup(t, "mt_bare", `[]`, `[]`) // 仅借 DB 初始化
+	metatubeTestSetup(t, "mt_bare", `{"data":[]}`, `{"data":{}}`) // 仅借 DB 初始化
 	meta := &model.AVMeta{Num: "DDD001", Status: "ok", Title: "标题一", Year: "2024", CoverURL: "http://c/1.jpg", Plot: "简介"}
 	recordAVMedia(meta, "DDD-001", "有码", "有码/DDD-001")
 	recordAVMedia(meta, "DDD-001", "有码", "有码/DDD-001") // 重复入库 → 更新而非新增
@@ -180,7 +193,7 @@ func TestRecordAVMediaDedupe(t *testing.T) {
 }
 
 func TestRenameAVMetaVars(t *testing.T) {
-	metatubeTestSetup(t, "mt_rename", `[]`, `[]`)
+	metatubeTestSetup(t, "mt_rename", `{"data":[]}`, `{"data":{}}`)
 	model.DB.Create(&model.AVMeta{
 		Num: "EEE002", Status: "ok", Title: "タイトル/危険", Year: "2021",
 		ActorsJSON: `["演员A","演员B"]`,
