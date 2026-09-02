@@ -1066,7 +1066,7 @@ av:
     <div class="page" id="page-config-extension">
       <div class="plugin-page-content">
       <div class="plugin-content-header">
-        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 6 个插件 · 3 个可用</span></div>
+        <div class="plugin-section-title"><span class="section-icon"></span><span>插件扩展</span><span class="plugin-rule-count">共 7 个插件 · 4 个可用</span></div>
       </div>
       <div class="rule-container">
         <!-- 卡片：115 每日签到（可用） -->
@@ -1095,6 +1095,20 @@ av:
           <div class="rule-footer"><div class="button-group">
             <button class="action-button config-button" onclick="embyLibConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
             <button class="action-button run-button" id="emby-lib-run-btn" onclick="embyLibRun()"><span class="btn-icon run-icon">▶</span><span>立即运行</span></button>
+          </div></div>
+        </div>
+        <!-- 卡片：媒体库海报（可用） -->
+        <div class="rule-card rule-card-active">
+          <div class="card-status-badge"><span class="status-dot animated"></span></div>
+          <div class="rule-header">
+            <div class="rule-title"><span class="icon">▦</span>媒体库海报</div>
+            <div class="rule-status"><span class="status-text active">可用</span></div>
+          </div>
+          <div class="rule-content"><p>按分类聚合入库海报，合成带库名的封面图并推送 Emby 媒体库。支持定时与多种样式。</p></div>
+          <div class="plugin-preview" id="covergen-result" style="display:none"></div>
+          <div class="rule-footer"><div class="button-group">
+            <button class="action-button config-button" onclick="coverGenConfig()"><span class="btn-icon config-icon">⚙</span><span>配置规则</span></button>
+            <button class="action-button run-button" onclick="coverGenRun(this)"><span class="btn-icon run-icon">▶</span><span>立即生成</span></button>
           </div></div>
         </div>
         <!-- 卡片：123 云盘（待开发） -->
@@ -1151,6 +1165,32 @@ av:
         </div>
       </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 媒体库封面生成配置弹窗 -->
+<div class="modal-mask" id="covergen-modal" style="display:none">
+  <div class="modal" style="max-width:640px;max-height:88vh;overflow:auto">
+    <h3>媒体库封面生成配置</h3>
+    <div class="form-row"><div class="label">定时执行<i class="help-tip" tabindex="0">?<span class="tip-bubble">5 段式 cron：分 时 日 月 周。例：0 0 * * * = 每天 0 点。到点自动重新生成全部封面并推送 Emby。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="covergen-cron" placeholder="0 0 * * *" style="flex:1" onblur="coverGenCronPreview()"><button class="btn btn-outline" onclick="coverGenCronPreview()">预览</button></div></div></div>
+    <div id="covergen-next" style="font-size:12px;color:var(--text-3);margin:-4px 0 8px"></div>
+    <div class="form-row"><div class="label">封面样式</div><div class="control"><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" id="covergen-styles">
+      <div class="cg-style-card" data-v="1" onclick="coverGenPickStyle(this)"><div class="cg-radio"></div><div>样式一<div class="cg-desc">彩色底 + 斜排海报 + 库名</div></div></div>
+      <div class="cg-style-card" data-v="2" onclick="coverGenPickStyle(this)"><div class="cg-radio"></div><div>样式二<div class="cg-desc">深色横幅 + 底部海报排</div></div></div>
+      <div class="cg-style-card" data-v="3" onclick="coverGenPickStyle(this)"><div class="cg-radio"></div><div>样式三<div class="cg-desc">大字库名 + 右侧大图</div></div></div>
+      <div class="cg-style-card" data-v="random" onclick="coverGenPickStyle(this)"><div class="cg-radio"></div><div>随机<div class="cg-desc">每个库按名称随机样式</div></div></div>
+    </div></div></div>
+    <div class="form-row"><div class="label">海报选取策略</div><div class="control"><select id="covergen-strategy" class="inline-input"><option value="added">按加入日期排序，选最新的9个</option><option value="release">按发行日期排序，选最新的9个</option><option value="title">按标题排序，选前面的9个</option><option value="rating">按评分排序，选最高的9个</option></select></div></div>
+    <div class="form-row"><div class="label">媒体库黑名单<i class="help-tip" tabindex="0">?<span class="tip-bubble">一行一个分类名，写在这里的媒体库不会生成封面。</span></i></div><div class="control"><textarea id="covergen-blacklist" class="auto-resize" rows="2" placeholder="一行一个，写在这里的媒体库不会生成封面"></textarea></div></div>
+    <div class="form-row"><div class="label">高级配置<i class="help-tip" tabindex="0">?<span class="tip-bubble">预留：后续支持自定义背景色/尺寸等参数（JSON 格式）。</span></i></div><div class="control"><textarea id="covergen-advanced" class="auto-resize" rows="2"></textarea></div></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="coverGenModalClose()">取消</button>
+      <button class="btn btn-primary" onclick="coverGenSave(this)">保存</button>
+    </div>
+    <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:8px">已生成的封面<button class="btn btn-outline" style="float:right;padding:2px 10px;font-size:12px" onclick="coverGenLoadList()">刷新</button></div>
+      <div id="covergen-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:260px;overflow:auto"></div>
     </div>
   </div>
 </div>

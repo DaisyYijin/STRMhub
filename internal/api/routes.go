@@ -169,6 +169,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 	// 启动 115 每日签到调度器（配置时间窗口内随机执行）
 	Start115CheckinScheduler(h)
 	StartPosterBackfill(h) // 旧入库记录的 TMDB 海报回填
+	StartCoverGenScheduler(h)
 
 	// 启动离线任务监视器（完成即触发整理；失败告警——磁力不是百分百成功）
 	StartOfflineTaskMonitor(h)
@@ -392,6 +393,13 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/pan123/scan", h.Pan123Scan)
 		protected.POST("/pan123/qrcode", h.Pan123Qrcode)
 		protected.GET("/pan123/qrcode/poll", h.Pan123QrcodePoll)
+
+		// 媒体库封面生成（分类聚合 TMDB 海报 → 合成封面 → 推送 Emby）
+		protected.GET("/covergen/config", h.CoverGenGetConfig)
+		protected.POST("/covergen/config", h.CoverGenSaveConfig)
+		protected.POST("/covergen/run", h.CoverGenRun)
+		protected.GET("/covergen/list", h.CoverGenList)
+		protected.GET("/covergen/preview", h.CoverGenPreview)
 
 		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)

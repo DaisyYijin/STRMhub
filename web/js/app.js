@@ -1615,6 +1615,84 @@ async function pan123ScanRun(btn) {
   btn.disabled = false;
 }
 
+// ==================== 媒体库封面生成 ====================
+let coverGenStyle = '1';
+
+function coverGenModalClose() { document.getElementById('covergen-modal').style.display = 'none'; }
+
+function coverGenPickStyle(el) {
+  document.querySelectorAll('#covergen-styles .cg-style-card').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  coverGenStyle = el.dataset.v;
+}
+
+async function coverGenConfig() {
+  document.getElementById('covergen-modal').style.display = 'flex';
+  coverGenLoadList();
+  try {
+    const d = await api('/covergen/config');
+    const c = d.data || {};
+    setVal('covergen-cron', c.cron || '0 0 * * *');
+    setVal('covergen-strategy', c.strategy || 'added');
+    setVal('covergen-blacklist', c.blacklist || '');
+    setVal('covergen-advanced', c.advanced || '');
+    coverGenStyle = c.style || '1';
+    document.querySelectorAll('#covergen-styles .cg-style-card').forEach(n =>
+      n.classList.toggle('active', n.dataset.v === coverGenStyle));
+  } catch (e) { /* 首次为空 */ }
+}
+
+function coverGenCronPreview() {
+  const box = document.getElementById('covergen-next');
+  const expr = document.getElementById('covergen-cron').value.trim() || '0 0 * * *';
+  api('/sync/cron-preview', { method: 'POST', body: JSON.stringify({ cron: expr }) })
+    .then(d => { box.textContent = d.next || ''; })
+    .catch(() => { box.textContent = ''; });
+}
+
+async function coverGenSave(btn) {
+  btn.disabled = true;
+  try {
+    await api('/covergen/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        cron: val('covergen-cron').trim() || '0 0 * * *',
+        style: coverGenStyle,
+        strategy: val('covergen-strategy'),
+        blacklist: val('covergen-blacklist'),
+        advanced: val('covergen-advanced'),
+      }),
+    });
+    toast('配置已保存');
+  } catch (e) { toast('保存失败：' + e.message); }
+  btn.disabled = false;
+}
+
+async function coverGenRun(btn) {
+  if (!confirm('立即生成全部媒体库封面？（已配置 Emby 时会同步推送为媒体库主页图）')) return;
+  btn.disabled = true;
+  try {
+    const d = await api('/covergen/run', { method: 'POST' });
+    toast(d.message || '生成已开始');
+    setTimeout(coverGenLoadList, 8000);
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+
+async function coverGenLoadList() {
+  const box = document.getElementById('covergen-list');
+  if (!box) return;
+  try {
+    const d = await api('/covergen/list');
+    const items = d.data || [];
+    box.innerHTML = items.length ? items.map(it =>
+      '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">'
+      + '<img src="/api/covergen/preview?name=' + encodeURIComponent(it.name) + '&t=' + Date.now() + '" loading="lazy" style="width:100%;display:block">'
+      + '<div style="padding:4px 8px;font-size:11.5px;color:var(--text-3)">' + esc(it.name) + '<span style="float:right">' + esc(it.time || '') + '</span></div></div>'
+    ).join('') : '<span style="color:var(--text-3);font-size:12.5px">还没有生成过封面，点「立即生成」试试</span>';
+  } catch (e) { box.innerHTML = '<span style="color:var(--danger)">加载失败</span>'; }
+}
+
 // ==================== GPT 测试连接 ====================
 async function testGPT() {
   const url = val('org-gpt-url');
