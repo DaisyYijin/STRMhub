@@ -3367,26 +3367,28 @@ async function pansouSearch() {
 }
 
 function pansouPickTmdb(title) {
-  pansouModalClose();
   pansouSearchSite(String(title || '').trim());
 }
 
 async function pansouSearchSite(kw) {
-  const box = document.getElementById('pansou-results');
+  const body = document.getElementById('pansou-modal-body');
   if (!kw) { toast('请输入搜索关键词'); return; }
-  box.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索「' + esc(kw) + '」中（多源并发，约需数秒）…</span>';
+  body.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索「' + esc(kw) + '」中（多源并发，约需数秒）…</span>';
+  document.getElementById('pansou-modal-title').textContent = 'PanSou 资源 · ' + kw;
   pansouItems = [];
   pansouFilter = '';
   try {
     const d = await api('/pansou/search?kw=' + encodeURIComponent(kw));
     pansouItems = d.data || [];
     if (!pansouItems.length) {
-      box.innerHTML = '<span style="color:var(--text-3)">没有搜索到「' + esc(kw) + '」的网盘分享</span>';
+      body.innerHTML = '<span style="color:var(--text-3)">没有搜索到「' + esc(kw) + '」的网盘分享</span>'
+        + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="pansouSearch()">← 重新选片</a>';
       return;
     }
     pansouRenderList();
   } catch (e) {
-    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+      + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="pansouSearch()">← 重新选片</a>';
   }
 }
 
@@ -3398,7 +3400,7 @@ function pansouSetFilter(key) {
 }
 
 function pansouRenderList() {
-  const box = document.getElementById('pansou-results');
+  const box = document.getElementById('pansou-modal-body');
   if (!box) return;
   // 类型计数（按服务端排序顺序）
   const counts = {};
