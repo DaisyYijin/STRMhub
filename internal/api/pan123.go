@@ -511,9 +511,16 @@ func (h *Handler) Pan123QrcodePoll(c *gin.Context) {
 
 // ==================== HTTP 处理器 ====================
 
-// Pan123GetConfig GET /pan123/config
+// Pan123GetConfig GET /pan123/config（client_secret/token 脱敏，掩码回传）
 func (h *Handler) Pan123GetConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": h.loadPan123Cfg()})
+	cfg := h.loadPan123Cfg()
+	if cfg.ClientSecret != "" {
+		cfg.ClientSecret = settingMask
+	}
+	if cfg.Token != "" {
+		cfg.Token = settingMask
+	}
+	c.JSON(http.StatusOK, gin.H{"data": cfg})
 }
 
 // Pan123SaveConfig POST /pan123/config
@@ -524,10 +531,14 @@ func (h *Handler) Pan123SaveConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
-	if req.Token == "" {
-		if old := h.loadPan123Cfg(); old.Token != "" {
-			req.Token, req.TokenExp = old.Token, old.TokenExp
+	old := h.loadPan123Cfg()
+	if req.Token == "" || req.Token == settingMask {
+		if old.Token != "" {
+			req.Token, req.TokenExp = old.Token, old.TokenExp // 掩码/空 = 未改动
 		}
+	}
+	if req.ClientSecret == settingMask {
+		req.ClientSecret = old.ClientSecret
 	}
 	h.savePan123Cfg(req)
 	c.JSON(http.StatusOK, gin.H{"message": "已保存"})

@@ -518,10 +518,14 @@ func gyProbeLoginCached(cfg *gyCfg) bool {
 func (h *Handler) GyGetConfig(c *gin.Context) {
 	cfg := loadGyCfg()
 	loggedIn := len(cfg.Cookies) > 0 && gyProbeLoginCached(cfg)
+	pw := ""
+	if cfg.Password != "" {
+		pw = settingMask // 脱敏：掩码回传，保存时回填旧值
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"base_url":    cfg.BaseURL,
 		"username":    cfg.Username,
-		"password":    cfg.Password,
+		"password":    pw,
 		"logged_in":   loggedIn,
 		"has_cookies": len(cfg.Cookies) > 0,
 	})
@@ -554,9 +558,13 @@ func (h *Handler) GySaveConfig(c *gin.Context) {
 		return
 	}
 	cfg := loadGyCfg()
+	oldPass := cfg.Password
 	cfg.BaseURL = gyNormalizeBase(req.BaseURL)
 	cfg.Username = strings.TrimSpace(req.Username)
 	cfg.Password = req.Password
+	if req.Password == settingMask {
+		cfg.Password = oldPass // 掩码回传 = 未改动，保持旧值
+	}
 	if err := saveGyCfg(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
 		return
@@ -583,6 +591,9 @@ func (h *Handler) GyLogin(c *gin.Context) {
 	}
 	cfg.Username = strings.TrimSpace(req.Username)
 	cfg.Password = req.Password
+	if req.Password == settingMask {
+		cfg.Password = loadGyCfg().Password // 配置页掩码未改动直接点登录：用已存密码
+	}
 
 	jar := &gyJar{m: map[string]string{}}
 	client := gyClient(jar)

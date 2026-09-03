@@ -84,7 +84,57 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 }
 
 // handleProxyRedirect 处理 302 重定向请求
+// proxyRateLim 直链/中转限流：pickcode 是"知道即可用"的弱凭据，无鉴权端点
+// 不能让公网无限速换取直链或全量中转（带宽 DoS 面）。20 次/分/IP 足够正常
+// 播放（每次起播 1 次 302），能挡住遍历抓取
+var (
+	proxyRateMu        sync.Mutex
+	proxyRateBkts      = map[string]*proxyBucket{}
+	proxyRateLastSweep time.Time
+)
+
+type proxyBucket struct {
+	tokens float64
+	last   time.Time
+}
+
+func proxyRateAllow(ip string) bool {
+	proxyRateMu.Lock()
+	defer proxyRateMu.Unlock()
+	now := time.Now()
+	// 顺带清理 10 分钟未活跃的桶（防无界增长）
+	if now.Sub(proxyRateLastSweep) > 10*time.Minute {
+		for k, b := range proxyRateBkts {
+			if now.Sub(b.last) > 10*time.Minute {
+				delete(proxyRateBkts, k)
+			}
+		}
+		proxyRateLastSweep = now
+	}
+	const rate = 20.0 / 60.0 // 每秒补充速率（20/分钟）
+	b, ok := proxyRateBkts[ip]
+	if !ok {
+		b = &proxyBucket{tokens: 20, last: now} // 突发额度 20
+		proxyRateBkts[ip] = b
+	} else {
+		b.tokens += now.Sub(b.last).Seconds() * rate
+		if b.tokens > 20 {
+			b.tokens = 20
+		}
+		b.last = now
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
+	if !proxyRateAllow(c.ClientIP()) {
+		c.String(http.StatusTooManyRequests, "too many requests")
+		return
+	}
 	pickcode := c.Param("pickcode")
 	if pickcode == "" {
 		c.String(http.StatusBadRequest, "missing pickcode")

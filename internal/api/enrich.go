@@ -26,12 +26,12 @@ import (
 
 // probeResult ffprobe 探测出的媒体信息（映射为 CMS 风格的画质串片段）
 type probeResult struct {
-	Pix       string // 1080p / 2160p ...
-	Video     string // H264 / H265
-	Audio     string // AAC / DDP / DTS...
-	Effect    string // HDR / DV（探测出 side_data 时标注）
-	Duration  int    // 秒
-	ProbedAt  time.Time
+	Pix      string // 1080p / 2160p ...
+	Video    string // H264 / H265
+	Audio    string // AAC / DDP / DTS...
+	Effect   string // HDR / DV（探测出 side_data 时标注）
+	Duration int    // 秒
+	ProbedAt time.Time
 }
 
 // probeMediaInfo 用镜像内置的 ffprobe 读直链头部，解析主视频流与主音轨
@@ -343,30 +343,31 @@ func (h *Handler) enrichProcessOne() {
 // 不会随时间变化，重复扫描不再重新探测）；failed 且未超次 → 复活为
 // pending 重试（此前 failed 也阻止新建、又无任何代码复活它 → 一次探测
 // 失败后该文件永久进不了队列的死锁）
-func enrichQueueTask(f remoteFile) {
+func enrichQueueTask(f remoteFile) bool {
 	if model.DB == nil || f.Fid == "" || f.PickCode == "" {
-		return
+		return false
 	}
 	var exist model.MediaEnrich
 	if err := model.DB.Where("file_id = ?", f.Fid).Order("id DESC").First(&exist).Error; err == nil {
 		switch exist.Status {
 		case "pending", "done", "skipped":
-			return
+			return false
 		case "failed":
 			if exist.Attempts >= 3 {
-				return // 重试耗尽
+				return false // 重试耗尽
 			}
 			model.DB.Model(&exist).Updates(map[string]interface{}{
 				"status": "pending", "file_name": f.Name, "pick_code": f.PickCode, "message": "",
 			})
 			log.Printf("[补全] ▶ 复活重试: %s（此前失败 %d 次）", f.Name, exist.Attempts)
-			return
+			return true
 		}
 	}
 	model.DB.Create(&model.MediaEnrich{
 		FileID: f.Fid, PickCode: f.PickCode, FileName: f.Name, Status: "pending",
 	})
 	log.Printf("[补全] ▶ 入队: %s（文件名缺画质信息，将探测后规范命名）", f.Name)
+	return true
 }
 
 // enrichPendingCount 队列 pending 行数（入队是否生效的判断依据）
@@ -408,9 +409,9 @@ func (h *Handler) executeEnrichScan() (int, int, error) {
 		if !enrichNeedsProbe(v.Name) {
 			continue
 		}
-		before := enrichPendingCount()
-		enrichQueueTask(v)
-		if enrichPendingCount() > before {
+		// 直接看入队返回值（此前 count-before/after 每视频 2 次 COUNT，
+		// 万级库一次存量扫描约 3 万次查询）
+		if enrichQueueTask(v) {
 			queued++
 		}
 	}
@@ -422,22 +423,24 @@ func (h *Handler) executeEnrichScan() (int, int, error) {
 func (h *Handler) EnrichList(c *gin.Context) {
 	var tasks []model.MediaEnrich
 	h.DB.Order("id DESC").Limit(100).Find(&tasks)
-	counts := map[string]int64{}
-	for _, st := range []string{"pending", "done", "failed", "skipped"} {
-		var n int64
-		h.DB.Model(&model.MediaEnrich{}).Where("status = ?", st).Count(&n)
-		counts[st] = n
+	counts := map[string]int64{"pending": 0, "done": 0, "failed": 0, "skipped": 0}
+	var rows []struct {
+		Status string
+		N      int64
+	}
+	h.DB.Model(&model.MediaEnrich{}).Select("status, COUNT(*) as n").Group("status").Scan(&rows)
+	for _, r := range rows {
+		counts[r.Status] = r.N
 	}
 	c.JSON(http.StatusOK, gin.H{"data": tasks, "counts": counts})
 }
-
 
 // ---- 补全策略（UI 可配） ----
 
 // enrichPolicy 用户策略：各情形的处置（rename=按探测改 / keep=保留原名）
 type enrichPolicy struct {
-	Enabled bool   `json:"enabled"`  // 总开关（关闭时自动入队与扫描均不工作）
-	Mode    string `json:"mode"`     // conservative 保守 / standard 标准 / aggressive 激进
+	Enabled bool   `json:"enabled"` // 总开关（关闭时自动入队与扫描均不工作）
+	Mode    string `json:"mode"`    // conservative 保守 / standard 标准 / aggressive 激进
 	// 逐情形策略（空 = 跟随 mode 默认；rename/keep 二选一）
 	Missing      string `json:"missing"`       // 情形1：名缺+探测有 → 默认 rename
 	Match        string `json:"match"`         // 情形2：名实一致 → 固定 keep（不可改，展示用）

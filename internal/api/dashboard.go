@@ -4,16 +4,16 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"path/filepath"
-	"fmt"
-	"log"
-	"net/http"
-	"io"
-	"net/url"
 	"time"
 
 	"strmhub/internal/model"
@@ -381,7 +381,9 @@ func (h *Handler) EmbyImageProxy(c *gin.Context) {
 		return
 	}
 	path := strings.Trim(c.Query("path"), "/")
-	if !strings.HasPrefix(path, "Items/") || strings.Contains(path, "..") {
+	// 仅放行图片端点（此前 Items/ 前缀下任意子路径可打：可借本代理枚举
+	// Emby 全库元数据）。仪表盘只用 Items/{id}/Images/{type} 形态
+	if !regexp.MustCompile(`^Items/\d+/Images/[A-Za-z]{2,20}(?:/\d+)?$`).MatchString(path) {
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -527,7 +529,7 @@ func (h *Handler) DashboardEnhanced(c *gin.Context) {
 	embyData := fetchEmbyDashboard(h)
 
 	c.JSON(http.StatusOK, gin.H{
-		"emby":     embyData,
+		"emby":    embyData,
 		"storage": h.pan115CapacityCached(),
 		"media": gin.H{
 			"movies": movieCount, "tvs": tvCount,
@@ -554,71 +556,4 @@ func saveProxyConfigToDB(h *Handler, proxyURL string) {
 	} else {
 		h.DB.Create(&model.Setting{Key: "proxy", Value: fmt.Sprintf(`{"url":%q}`, proxyURL)})
 	}
-}
-
-
-// StartPosterBackfill 旧数据回填：poster_path 字段上线之前的入库记录没有海报
-//（评分/简介同理）。启动后先跑一轮，之后每 6 小时复查——TMDB 短暂不可通
-// 不会导致永久缺数，直到清零为止。仅在缺数据的行存在时才请求 TMDB。
-func StartPosterBackfill(h *Handler) {
-	run := func() {
-		var rows []model.MediaLibrary
-		// 缺海报 或 缺评分 的都补（封面生成「按评分」策略依赖 vote_average）
-		if err := h.DB.Where("tmdb_id <> 0 AND media_type IN ? AND (poster_path = '' OR vote_average = 0)",
-			[]string{"movie", "tv"}).Find(&rows).Error; err != nil || len(rows) == 0 {
-			return
-		}
-		tc, err := loadTmdbClient()
-		if err != nil {
-			return // TMDB 未配置，跳过
-		}
-		fixed := 0
-		for _, m := range rows {
-			body, err := tc.get(fmt.Sprintf("/%s/%d", m.MediaType, m.TmdbID), nil)
-			if err != nil {
-				continue // 单条失败下轮再试
-			}
-			var d struct {
-				PosterPath  string  `json:"poster_path"`
-				VoteAverage float64 `json:"vote_average"`
-				Overview    string  `json:"overview"`
-			}
-			if json.Unmarshal(body, &d) != nil {
-				continue
-			}
-			upd := map[string]any{}
-			if d.PosterPath != "" && m.PosterPath == "" {
-				upd["poster_path"] = d.PosterPath
-			}
-			if d.VoteAverage > 0 && m.VoteAverage == 0 {
-				upd["vote_average"] = d.VoteAverage
-			}
-			if d.Overview != "" && m.Overview == "" {
-				upd["overview"] = truncateStr(d.Overview, 500)
-			}
-			if len(upd) > 0 {
-				if err := h.DB.Model(&model.MediaLibrary{}).Where("id = ?", m.ID).Updates(upd).Error; err == nil {
-					fixed++
-				}
-			}
-			time.Sleep(120 * time.Millisecond) // TMDB 限速保护
-		}
-		if fixed > 0 {
-			log.Printf("[海报回填] ✓ 本轮补齐 %d 条旧记录（海报/评分/简介）", fixed)
-		}
-	}
-	go func() {
-		time.Sleep(20 * time.Second) // 等数据库与网络就绪
-		run()
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				run()
-			case <-stopCh:
-				return
-			}
-		}
-	}()
 }

@@ -775,15 +775,18 @@ func portalBackfillWorker() {
 				}
 				e.TmdbID = media.TmdbID
 			}
+			// 一次查询：found 决定补建还是更新（此前连续两次完全相同的查询）。
+			// 评分也纳入回填范围（接管原 dashboard StartPosterBackfill 的职责，
+			// 消除两个 worker 对同一张表的双倍 TMDB 请求）
 			var ml model.MediaLibrary
-			need := true
-			if model.DB.Where("tmdb_id = ? AND media_type = ?", e.TmdbID, e.MediaType).First(&ml).Error == nil {
-				need = ml.PosterPath == "" || ml.Overview == "" || ml.BackdropPath == "" || ml.Genres == ""
+			found := model.DB.Where("tmdb_id = ? AND media_type = ?", e.TmdbID, e.MediaType).First(&ml).Error == nil
+			if found {
+				need := ml.PosterPath == "" || ml.Overview == "" || ml.BackdropPath == "" || ml.Genres == "" || ml.VoteAverage == 0
+				if !need {
+					continue
+				}
 			}
-			if !need {
-				continue
-			}
-			if model.DB.Where("tmdb_id = ? AND media_type = ?", e.TmdbID, e.MediaType).First(&ml).Error != nil {
+			if !found {
 				ml = model.MediaLibrary{TmdbID: e.TmdbID, Title: e.Title, Year: e.Year,
 					MediaType: e.MediaType, Category: e.Category, TargetPath: e.Key}
 			} else if ml.TargetPath == "" {

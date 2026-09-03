@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
@@ -208,7 +209,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 
 	// 启动 115 每日签到调度器（配置时间窗口内随机执行）
 	Start115CheckinScheduler(h)
-	StartPosterBackfill(h) // 旧入库记录的 TMDB 海报回填
 	StartCoverGenScheduler(h)
 	StartTgSubScheduler(h)
 
@@ -1469,15 +1469,111 @@ func firstDiagName(data []struct {
 // GET /config/setting?key=strm
 func (h *Handler) GetSetting(c *gin.Context) {
 	key := c.Query("key")
+	value := h.settingValueRaw(key)
+	if sensitiveSettingKeys[key] {
+		value = maskSensitiveJSON(value)
+	}
+	c.JSON(http.StatusOK, gin.H{"key": key, "value": value})
+}
+
+// settingValueRaw 通用配置读取（配置源 > 数据库回退）
+func (h *Handler) settingValueRaw(key string) string {
 	value := h.Config.GetSetting(key)
-	// 回退到数据库（兼容旧数据）
 	if value == "" {
 		var s model.Setting
 		if err := h.DB.Where("key = ?", key).First(&s).Error; err == nil {
 			value = s.Value
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"key": key, "value": value})
+	return value
+}
+
+// ---- 敏感字段掩码（GET 脱敏 / SAVE 回填，管理员态防 XSS 窃密链） ----
+// 掩码标记 "••••"：表单原样回传即保持旧值，清空才是真清除——前端零改动
+const settingMask = "••••"
+
+var sensitiveSettingKeys = map[string]bool{
+	"message":     true, // 企微 Secret/Token/AESKey、TG token、OneBot/飞书/QQ 密钥
+	"emby":        true, // api_key
+	"emby-notify": true, // webhook token
+	"tgsub":       true, // TG bot token
+}
+
+var sensitiveFieldRe = regexp.MustCompile(`(?i)secret|token|api_?key|aes_?key|password`)
+
+func maskSensitiveJSON(v string) string {
+	if v == "" {
+		return v
+	}
+	var root any
+	if json.Unmarshal([]byte(v), &root) != nil {
+		return v
+	}
+	var walk func(n any) any
+	walk = func(n any) any {
+		switch t := n.(type) {
+		case map[string]any:
+			for k, val := range t {
+				if sensitiveFieldRe.MatchString(k) {
+					if sv, ok := val.(string); ok && sv != "" {
+						t[k] = settingMask
+						continue
+					}
+				}
+				t[k] = walk(val)
+			}
+			return t
+		case []any:
+			for i, val := range t {
+				t[i] = walk(val)
+			}
+			return t
+		}
+		return n
+	}
+	b, err := json.Marshal(walk(root))
+	if err != nil {
+		return v
+	}
+	return string(b)
+}
+
+// unmaskSensitiveJSON 保存前回填：新值里的掩码字段还原为旧值
+func unmaskSensitiveJSON(newV, oldV string) string {
+	if newV == "" || oldV == "" {
+		return newV
+	}
+	var nn, oo any
+	if json.Unmarshal([]byte(newV), &nn) != nil || json.Unmarshal([]byte(oldV), &oo) != nil {
+		return newV
+	}
+	var walk func(n, o any) any
+	walk = func(n, o any) any {
+		nt, ok := n.(map[string]any)
+		if !ok {
+			return n
+		}
+		ot, _ := o.(map[string]any)
+		for k, val := range nt {
+			if sv, ok := val.(string); ok && sv == settingMask && ot != nil {
+				if ov, exist := ot[k]; exist {
+					nt[k] = ov
+					continue
+				}
+			}
+			ov := any(nil)
+			if ot != nil {
+				ov = ot[k]
+			}
+			nt[k] = walk(val, ov)
+		}
+		return nt
+	}
+	b, err := json.Marshal(walk(nn, oo))
+	if err != nil {
+		return newV
+	}
+	return string(b)
 }
 
 // SaveSetting 保存通用配置（key-value，value 为 JSON 字符串）
@@ -1490,6 +1586,10 @@ func (h *Handler) SaveSetting(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil || req.Key == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
+	}
+	// 敏感键：表单回传的掩码字段回填旧值（未改动的密钥不丢）
+	if sensitiveSettingKeys[req.Key] {
+		req.Value = unmaskSensitiveJSON(req.Value, h.settingValueRaw(req.Key))
 	}
 	if err := h.Config.SaveSetting(req.Key, req.Value); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})

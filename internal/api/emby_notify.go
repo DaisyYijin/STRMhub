@@ -3,8 +3,8 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -108,9 +108,9 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 		defer libResp.Body.Close()
 		var libs struct {
 			Items []struct {
-				ID         string   `json:"Id"`
-				Name       string   `json:"Name"`
-				Locations  []string `json:"Locations"`
+				ID        string   `json:"Id"`
+				Name      string   `json:"Name"`
+				Locations []string `json:"Locations"`
 			} `json:"Items"`
 		}
 		if json.NewDecoder(libResp.Body).Decode(&libs) == nil {
@@ -146,7 +146,7 @@ func (h *Handler) notifyEmbyRefresh(localPath string) {
 				if h.embyWebhookConfigured() {
 					log.Printf("Emby 已提交刷新（%s）；webhook 入库通知已配置，跳过本条消息", libNames)
 				} else {
-					go NotifyMessage("🎬 媒体入库", "已刷新媒体库：" + libNames)
+					go NotifyMessage("🎬 媒体入库", "已刷新媒体库："+libNames)
 				}
 				return
 			}
@@ -189,7 +189,14 @@ func (h *Handler) EmbyWebhook(c *gin.Context) {
 			wantToken = u.Query().Get("token")
 		}
 	}
-	if wantToken != "" && c.Query("token") != wantToken {
+	// token 强制：未配置时拒绝处理（此前可空，任何人可伪造入库/播放事件，
+	// 借站长通知通道外发垃圾内容）。界面会自动生成 token
+	if wantToken == "" {
+		log.Printf("[Emby] ✗ webhook 未配置鉴权 token，已拒绝处理（到 消息配置 生成 token 并更新 Emby 的 webhook URL）")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "webhook 未配置鉴权 token：请到 消息配置 里生成，并更新 Emby 的 webhook URL（加 &token=xxx）"})
+		return
+	}
+	if c.Query("token") != wantToken {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 无效"})
 		return
 	}
