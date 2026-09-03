@@ -102,7 +102,7 @@ func (h *Handler) PansouSaveConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("[PanSou] ✓ 聚合搜索站点已设为 %s", cfg.BaseURL)
+	log.Printf("[盘搜] ✓ 聚合搜索站点已设为 %s", cfg.BaseURL)
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功", "base_url": cfg.BaseURL})
 }
 
@@ -134,7 +134,7 @@ func (h *Handler) PansouSearch(c *gin.Context) {
 		return
 	}
 	cfg := loadPansouCfg()
-	log.Printf("[PanSou] ✓ 「%s」：%d 条结果", kw, len(items))
+	log.Printf("[盘搜] ✓ 「%s」：%d 条结果", kw, len(items))
 	c.JSON(http.StatusOK, gin.H{"data": items, "base": cfg.BaseURL})
 }
 
@@ -179,7 +179,7 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 		req.Header.Set("Accept", "application/json")
 		resp, err := (&http.Client{Timeout: timeout}).Do(req)
 		if err != nil {
-			lastErr = "连接 PanSou 失败: " + sanitizeWecomErr(err)
+			lastErr = "连接盘搜失败: " + sanitizeWecomErr(err)
 			continue
 		}
 		body, _ = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -188,7 +188,7 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 			lastErr = ""
 			break
 		}
-		lastErr = fmt.Sprintf("PanSou 返回 HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
+		lastErr = fmt.Sprintf("盘搜返回 HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
 	}
 	if lastErr != "" {
 		if strings.Contains(lastErr, "503") || strings.Contains(lastErr, "502") {
@@ -209,7 +209,7 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 		if msg == "" {
 			msg = truncateStr(string(body), 120)
 		}
-		return nil, fmt.Errorf("PanSou 响应异常: %s", msg)
+		return nil, fmt.Errorf("盘搜响应异常: %s", msg)
 	}
 
 	items := make([]PansouItem, 0, out.Data.Total)

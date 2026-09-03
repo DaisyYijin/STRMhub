@@ -190,7 +190,7 @@ func (h *Handler) MukakuSaveConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("[木咖] ✓ 配置已保存（token %v）", cfg.AccessToken != "")
+	log.Printf("[不太灵影视] ✓ 配置已保存（token %v）", cfg.AccessToken != "")
 	c.JSON(http.StatusOK, gin.H{"message": "保存成功"})
 }
 
@@ -259,7 +259,7 @@ func (h *Handler) MukakuLogin(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("[木咖] ✓ 账号 %s 登录成功", req.Username)
+	log.Printf("[不太灵影视] ✓ 账号 %s 登录成功", req.Username)
 	c.JSON(http.StatusOK, gin.H{"message": "登录成功"})
 }
 
@@ -298,7 +298,7 @@ func (h *Handler) MukakuSearch(c *gin.Context) {
 			"image":   v.Image,
 		})
 	}
-	log.Printf("[木咖] ✓ 搜索「%s」：%d 条", kw, len(items))
+	log.Printf("[不太灵影视] ✓ 搜索「%s」：%d 条", kw, len(items))
 	c.JSON(http.StatusOK, gin.H{"data": items})
 }
 
@@ -335,7 +335,7 @@ func (h *Handler) MukakuResources(c *gin.Context) {
 		return
 	}
 	resources, raw := mukakuScanResources(data)
-	log.Printf("[木咖] ✓ 影片 %s 资源：%d 条", id, len(resources))
+	log.Printf("[不太灵影视] ✓ 影片 %s 资源：%d 条", id, len(resources))
 	c.JSON(http.StatusOK, gin.H{"data": resources, "raw_found": raw})
 }
 

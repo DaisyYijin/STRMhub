@@ -3283,8 +3283,8 @@ function renderLoginBadge(el, state, sub) {
     + (sub ? ' <span class="sub">' + esc(sub) + '</span>' : '') + '</span>';
 }
 
-// ==================== 影视转存 · 木咖（不太灵系影视库） ====================
-// TMDB 选片 → 木咖站内搜索 → 资源列表（VIP token）。搜索匿名可用；
+// ==================== 影视转存 · 不太灵影视（bt0 系影视库） ====================
+// TMDB 选片 → 不太灵影视站内搜索 → 资源列表（VIP token）。搜索匿名可用；
 // 资源需在配置里粘贴 token 或用验证码登录。链接按协议分流：
 // 115 分享自动转存 / 磁力 ed2k 离线下载 / 其他网盘打开原链。
 
@@ -3316,7 +3316,7 @@ async function mukakuLoadPage() {
       tk.placeholder = '粘贴浏览器 localStorage 里的 token';
       st.textContent = '未配置（资源需 VIP）';
     }
-  } catch (e) { console.error('[木咖] 配置回填失败:', e.message); }
+  } catch (e) { console.error('[不太灵影视] 配置回填失败:', e.message); }
 }
 
 async function mukakuSaveBase(btn) {
@@ -3381,7 +3381,7 @@ async function mukakuSearch() {
   const q = document.getElementById('mk-query').value.trim();
   if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
   mukakuModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
-  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuPickTmdb(document.getElementById(&quot;mk-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜木咖</a>';
+  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuPickTmdb(document.getElementById(&quot;mk-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜不太灵影视</a>';
   try {
     const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
     const items = d.data || [];
@@ -3427,14 +3427,14 @@ async function mukakuSearchSite(kw) {
   const body = document.getElementById('mk-modal-body');
   if (!kw) { toast('请输入搜索关键词'); return; }
   mukakuCurTitle = kw;
-  body.innerHTML = '<span style="color:var(--text-3)">木咖搜索「' + esc(kw) + '」中…</span>';
-  document.getElementById('mk-modal-title').textContent = '木咖 · ' + kw;
+  body.innerHTML = '<span style="color:var(--text-3)">不太灵影视搜索「' + esc(kw) + '」中…</span>';
+  document.getElementById('mk-modal-title').textContent = '不太灵影视 · ' + kw;
   mukakuVideos = [];
   try {
     const d = await api('/mukaku/search?kw=' + encodeURIComponent(kw));
     mukakuVideos = d.data || [];
     if (!mukakuVideos.length) {
-      body.innerHTML = '<span style="color:var(--text-3)">木咖没有找到「' + esc(kw) + '」相关影片</span>'
+      body.innerHTML = '<span style="color:var(--text-3)">不太灵影视没有找到「' + esc(kw) + '」相关影片</span>'
         + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuSearch()">← 重新选片</a>';
       return;
     }
@@ -3466,7 +3466,7 @@ function mukakuRenderVideos() {
       + '</div>';
   }).join('');
   mukakuModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>',
-    '木咖 · ' + mukakuCurTitle + '（' + items.length + ' 个影片）');
+    '不太灵影视 · ' + mukakuCurTitle + '（' + items.length + ' 个影片）');
 }
 
 // 拉取影片资源列表（需 VIP token）
@@ -3476,7 +3476,7 @@ async function mukakuOpenResources(i) {
   mukakuCurTitle = v.title;
   const body = document.getElementById('mk-modal-body');
   body.innerHTML = '<span style="color:var(--text-3)">读取「' + esc(v.title) + '」资源中…</span>';
-  document.getElementById('mk-modal-title').textContent = '木咖资源 · ' + v.title;
+  document.getElementById('mk-modal-title').textContent = '不太灵影视 · ' + v.title;
   try {
     const d = await api('/mukaku/resources?id=' + v.id);
     mukakuRes = d.data || [];
@@ -3521,7 +3521,7 @@ function mukakuRenderResources() {
     + mukakuRes.length + ' 条资源 · 115 分享点击转存，磁力/ed2k 点击离线下载</div>'
     + '<div class="otk">' + rows + '</div>'
     + '<div style="margin-top:12px"><a href="javascript:void(0)" style="font-size:13px;color:var(--primary)" onclick="mukakuSearchSite(mukakuCurTitle)">← 返回影片列表</a></div>',
-    '木咖资源 · ' + mukakuCurTitle);
+    '不太灵影视 · ' + mukakuCurTitle);
 }
 
 async function mukakuTransfer(i, el) {
@@ -3560,7 +3560,7 @@ async function mukakuOffline(i, el) {
   }
 }
 
-// ==================== 影视转存 · PanSou 网盘聚合搜索 ====================
+// ==================== 影视转存 · 盘搜（PanSou 聚合） ====================
 // 开源项目 PanSou 实例聚合 TG 频道/插件的网盘分享。115 分享行点击转存、
 // 磁力/ed2k 行点击离线下载、其他网盘行打开原链接手动转存。
 
@@ -3571,7 +3571,7 @@ async function pansouLoadPage() {
   try {
     const d = await api('/pansou/config');
     document.getElementById('pansou-base').value = d.base_url || 'https://pansou.app';
-  } catch (e) { console.error('[PanSou] 配置回填失败:', e.message); }
+  } catch (e) { console.error('[盘搜] 配置回填失败:', e.message); }
 }
 
 async function pansouSaveConfig(btn) {
@@ -3650,8 +3650,8 @@ function pansouPickTmdb(title) {
 async function pansouSearchSite(kw) {
   const body = document.getElementById('pansou-modal-body');
   if (!kw) { toast('请输入搜索关键词'); return; }
-  body.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索「' + esc(kw) + '」中（多源并发，约需数秒）…</span>';
-  document.getElementById('pansou-modal-title').textContent = 'PanSou 资源 · ' + kw;
+  body.innerHTML = '<span style="color:var(--text-3)">盘搜聚合搜索「' + esc(kw) + '」（多源并发，约需数秒）…</span>';
+  document.getElementById('pansou-modal-title').textContent = '盘搜 · ' + kw;
   pansouItems = [];
   pansouFilter = '';
   try {
