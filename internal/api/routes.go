@@ -410,21 +410,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/tgsub/config", h.TgSubSaveConfig)
 		protected.POST("/tgsub/run", h.TgSubRun)
 
-		// 影视转存 · 影巢（聚合种子搜索免登录；旧版网盘资源走网页账号）
-		protected.GET("/hdhive/config", h.HdhiveGetConfig)
-		protected.GET("/hdhive/check", h.HdhiveCheck)
-		protected.POST("/hdhive/config", h.HdhiveSaveConfig)
-		protected.POST("/hdhive/test", h.HdhiveTest)
-		protected.POST("/hdhive/login", h.HdhiveLogin)
-		protected.POST("/hdhive/logout", h.HdhiveLogout)
-		protected.GET("/hdhive/torrents", h.HdhiveTorrents)
-		protected.GET("/hdhive/pans", h.HdhivePans)
-		protected.POST("/hdhive/grab", h.HdhiveGrab)
-		protected.GET("/hdhive/resources", h.HdhiveResources)
-		protected.GET("/hdhive/diag", h.HdhiveDiag)
-		protected.GET("/hdhive/diag/sign", h.HdhiveDiagSign)
-		protected.POST("/hdhive/unlock", h.HdhiveUnlock)
-
 		// 离线下载（磁力/ed2k/HTTP）
 		protected.POST("/offline/add", h.offlineAddTask)
 		protected.GET("/offline/tasks", h.offlineTaskList)

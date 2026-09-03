@@ -752,29 +752,8 @@ av:
     <!-- 影视转存（资源站搜索 → 解锁 → 115 转存 → 自动整理） -->
     <div class="page" id="page-media-transfer">
       <div class="tabs">
-        <div class="tab active" data-tab="mt-hdhive">影巢</div>
-        <div class="tab" data-tab="mt-gy">观影</div>
+        <div class="tab active" data-tab="mt-gy">观影</div>
         <div class="tab" style="opacity:.45;pointer-events:none">更多资源站（待开发）</div>
-      </div>
-      <div class="tab-panel active" data-panel="mt-hdhive">
-        <div class="card">
-          <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢官方地址 https://hdhive.com，被墙或换域名时可自行修改。</span></i></div><div class="control"><input type="text" id="hd-base" placeholder="影巢站点地址"></div></div>
-          <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢站内账号。免费资源与种子搜索无需登录；付费资源自动解锁（按标注积分扣费）需要登录。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hd-username" placeholder="影巢账号" style="flex:1" autocomplete="off"><input type="password" id="hd-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="hd-auth-btn" onclick="hdAuthClick(this)">登录</button></div></div></div>
-          <div class="form-row"><div class="label">转存目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">种子磁力提交 115 离线下载的目标目录。留空则使用「分享同步」里配置的接收文件夹。下载完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-target-dir" placeholder="离线下载转存的目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('hdhive-target-dir')">选择目录</button></div></div></div>
-          <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="hdSaveConfig(this)">保存配置</button> <button class="btn btn-warning" onclick="hdResetConfig(this)">重置配置</button> <span id="hd-login-status" style="font-size:13px;color:var(--text-3);align-self:center;margin-left:6px"></span></div></div>
-        </div>
-        <div class="card">
-          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目（支持直接填 TMDB ID），选定影片后同时搜影巢的网盘资源（115/阿里云盘，标注解锁费用，115 资源点击自动提取链接转存）与聚合种子（点击提交 115 离线下载），完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')hdhiveSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="hdhiveSearch()">搜索</button></div></div></div>
-        </div>
-        <div class="modal-mask" id="hdhive-modal" style="display:none" onclick="if(event.target===this)hdhiveModalClose()">
-          <div class="modal" style="max-width:720px">
-            <h3 id="hdhive-modal-title">选择影视</h3>
-            <div id="hdhive-modal-body" style="font-size:13px;max-height:62vh;overflow-y:auto"></div>
-            <div class="actions">
-              <button class="btn btn-outline" onclick="hdhiveModalClose()">关闭</button>
-            </div>
-          </div>
-        </div>
       </div>
       <div class="tab-panel" data-panel="mt-gy">
         <div class="card">

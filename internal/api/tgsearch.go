@@ -192,7 +192,7 @@ func tgHTTPGet(rawURL string, timeout time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", hdhiveDefaultUA)
+	req.Header.Set("User-Agent", chromeUA)
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -410,7 +410,7 @@ func (h *Handler) TgSearchSave(c *gin.Context) {
 		return
 	}
 	cfg := h.loadTgSearchCfg()
-	link := hdhiveTrimLink(strings.TrimSpace(req.URL))
+	link := trimLinkTail(strings.TrimSpace(req.URL))
 	switch {
 	case is115ShareLink(link):
 		if cfg.Target == "" {
@@ -436,4 +436,12 @@ func (h *Handler) TgSearchSave(c *gin.Context) {
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "暂不支持该链接类型", "link": link})
 	}
+}
+
+// chromeUA 桌面 Chrome UA（站点对 Go 默认 UA 有 WAF 指纹拦截时使用）
+const chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+// trimLinkTail 去掉链接尾部被 HTML/正文带入的标点
+func trimLinkTail(s string) string {
+	return strings.TrimRight(s, ".,;。，；）】」\"'#")
 }

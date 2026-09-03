@@ -422,7 +422,7 @@ func pan123LoginGet(path string, query url.Values) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", hdhiveDefaultUA)
+	req.Header.Set("User-Agent", chromeUA)
 	req.Header.Set("Origin", "https://www.123pan.com")
 	req.Header.Set("Referer", "https://www.123pan.com/")
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
