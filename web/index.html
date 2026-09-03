@@ -1371,17 +1371,6 @@ av:
   <div style="padding:9px 14px;font-size:14px;cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="menuDocs()"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-1.5px;margin-right:6px"><path d="M8 2.5c-1.5-1-4-1-5.5 0v10c1.5-1 4-1 5.5 0 1.5-1 4-1 5.5 0v-10c-1.5-1-4-1-5.5 0z"/><line x1="8" y1="2.5" x2="8" y2="12.5"/></svg> 使用文档</div>
   <div style="padding:9px 14px;font-size:14px;color:var(--danger);cursor:pointer" onmouseover="this.style.background='var(--fill-2)'" onmouseout="this.style.background=''" onclick="logoutNow()">退出登录</div>
 </div>
-<div class="modal-mask" id="account-modal" style="display:none" onclick="if(event.target===this)closeAccountModal()">
-  <div class="modal" style="max-width:420px">
-    <h3>账号设置</h3>
-    <div class="alert alert-info" style="margin:10px 0">管理员账号由容器环境变量 <b>AUTH_USER</b> / <b>AUTH_PASSWORD</b> 管理（docker-compose 中修改后重启容器生效）。网页端不再提供修改入口。</div>
-    <div class="form-row" style="margin-bottom:12px"><div class="label" style="width:80px">当前用户</div><div class="control"><b id="acc-current-user">-</b></div></div>
-    <div class="form-row" style="margin-bottom:4px"><div class="label" style="width:80px">首次账号</div><div class="control"><span style="font-size:12px;color:var(--text-3)">未配置环境变量时，首次启动自动生成随机密码（见容器启动日志 <code>docker logs strmhub</code>）</span></div></div>
-    <div class="actions">
-      <button class="btn btn-outline" onclick="closeAccountModal()">关闭</button>
-    </div>
-  </div>
-</div>
 <div class="modal-mask" id="update-modal" style="display:none" onclick="if(event.target===this)closeUpdateModal()">
   <div class="modal" style="max-width:600px">
     <h3 id="update-modal-title">发现新版本</h3>

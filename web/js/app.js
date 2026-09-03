@@ -80,10 +80,8 @@ function toast(msg) {
 const PAGE_TITLES = {
   'sync': ['115 账号同步', '全量 / 增量 / 分享同步'],
   'organize': ['自动整理', '基础配置 / 识别规则 / 分类策略 / 洗版 / 重命名'],
-  'monitor-upload': ['上传下载', '上传 emby 生成的媒体图片 / 转存下载'],
   'upload-download': ['上传下载', '监控上传 / 转存下载'],
   'media-transfer': ['影视转存', '观影种子搜索 / 115 离线下载'],
-  'transfer': ['上传下载', '监控上传 / 转存下载'],
   'dashboard': ['总览面板', '容量 / STRM / 整理 / 任务总览'],
   'config-accounts': ['账号管理', '管理各云盘账号配置'],
   'config-system': ['系统配置', 'STRM / TMDB / 代理 / EMBY 配置'],
@@ -126,9 +124,7 @@ window.addEventListener('popstate', () => {
 function showPage(id) {
   if (!id) return;
   if (id === 'logs') {
-    startLogPoll();
-    // 立即加载一次（不等到 interval）
-    loadSystemLogs();
+    startLogPoll(); // 内部已首发加载，此前这里再调一次造成进页双请求
   } else { stopLogPoll(); }
   if (id === 'dashboard') loadDashboard();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -872,7 +868,8 @@ async function loadOfflineTasks() {
 }
 
 function offlineTaskRow(t) {
-  const name = escHtml(t.name || t.task_name || '?');
+  // name 同时进 title 属性：esc() 含引号转义（escHtml 不转引号，属性可被截断）
+  const name = esc(t.name || t.task_name || '?');
   const st = t.status;
   const pct = (() => {
     const p = t.percent;
@@ -1146,6 +1143,11 @@ function startQrCodePolling(uid, time, sign) {
 }
 
 function closeQrCode() {
+  // 123 扫码复用本弹窗：关闭时一并停掉它的轮询（否则最长空转 150 秒）
+  if (typeof pan123QrTimer !== 'undefined' && pan123QrTimer) {
+    clearInterval(pan123QrTimer);
+    pan123QrTimer = null;
+  }
   qrcodeTimer = null;  // 停止轮询
   document.getElementById('qrcode-modal').style.display = 'none';
 }
@@ -1211,7 +1213,7 @@ function updateAccCard(data) {
     const rows = data.devices.map(d => {
       const t = d.utime > 0 ? new Date(d.utime * 1000).toLocaleString() : '';
       return '<div style="padding:2px 0">' + (d.is_current ? '🟢 ' : '· ') +
-        (d.name || d.device || '未知设备') + '　' + (d.ip || '') + (d.city ? '（' + d.city + '）' : '') +
+        esc(d.name || d.device || '未知设备') + '　' + esc(d.ip || '') + (d.city ? '（' + esc(d.city) + '）' : '') +
         (t ? '　' + t : '') + '</div>';
     }).join('');
     devBox.innerHTML = '<summary style="cursor:pointer;color:var(--text-2)">登录设备（' + data.devices.length + '）</summary>' + rows;
@@ -1567,11 +1569,6 @@ async function pan123LoadUI() {
     if (st && c.token) renderLoginBadge(st, 'on', (c.token_exp || '') + ' 前有效');
     else if (st) renderLoginBadge(st, 'off');
   } catch (e) { /* 首次为空 */ }
-}
-
-function pan123GoAccount() {
-  showPage('config-accounts');
-  switchTab('page-config-accounts', 'acc-123');
 }
 
 let pan123QrTimer = null;
@@ -2635,7 +2632,6 @@ function loadEnrichOpts(v) {
   ['mode', 'missing', 'clow', 'chigh', 'full'].forEach(k => { if (norm[k]) setEnrichOpt(k, norm[k]); });
 }
 // org-basic 保存时附带补全配置
-const _origCollectOrgBasic = null;
 
 // ==================== 插件：一键创建 Emby 媒体库 ====================
 let embyLibItems = [];
@@ -2739,22 +2735,6 @@ function escHtml(t) {
 }
 
 // 值部分着色：字符串/数字/布尔/行内注释
-function hlYamlValue(v) {
-  if (v === '') return '';
-  if (/^\s*#/.test(v)) return '<span class="y-c">' + escHtml(v) + '</span>';
-  const hashIdx = v.search(/\s#/);
-  let val = v, comment = '';
-  if (hashIdx > 0 && !/["']/.test(v.slice(0, hashIdx))) {
-    val = v.slice(0, hashIdx);
-    comment = '<span class="y-c">' + escHtml(v.slice(hashIdx)) + '</span>';
-  }
-  let vh;
-  if (/^\s*["']/.test(val)) vh = '<span class="y-s">' + escHtml(val) + '</span>';
-  else if (/^\s*(true|false|null)\s*$/i.test(val)) vh = '<span class="y-n">' + escHtml(val) + '</span>';
-  else if (/^\s*-?\d+(\.\d+)?\s*$/.test(val)) vh = '<span class="y-n">' + escHtml(val) + '</span>';
-  else vh = escHtml(val);
-  return vh + comment;
-}
 // 把已有 textarea 升级为高亮编辑器：包一层 wrap，加着色 pre，输入/滚动同步
 function attachYamlHighlight(id) {
   const ta = document.getElementById(id);
@@ -2782,7 +2762,6 @@ function attachYamlHighlight(id) {
 }
 
 // ==================== 日志级别 ====================
-let logLevelVal = 'verbose';
 async function loadDashboard() {
   try {
     const d = await api('/dashboard');
@@ -2934,24 +2913,6 @@ function renderWeekly(weekly, total) {
   setTxt('dash-week-total', '最近一周入库 ' + total + ' 部' + (total ? ' 🎉' : ' 😴'));
 }
 // 快捷操作（复用既有确认与执行逻辑）
-async function startFullSyncQuick(btn) { showPage('sync'); }
-async function quickOrganize(btn) {
-  if (!confirm('立即执行自动整理？完成后可在任务状态查看进度')) return;
-  // 整理是长任务（同步接口）：发后不管，进度在上方任务状态卡实时展示
-  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
-  toast('整理任务已开始');
-  api('/organize/pipeline', { method: 'POST', body: JSON.stringify({ sync_after: true }) })
-    .then(() => toast('✓ 整理完成')).catch(e => toast('✗ ' + e.message));
-}
-async function quickIncr(btn) {
-  if (!confirm('立即执行增量同步？完成后可在任务状态查看进度')) return;
-  btn.disabled = true; setTimeout(() => btn.disabled = false, 3000);
-  toast('增量同步已开始');
-  api('/sync/incremental', { method: 'POST', body: '{}' })
-    .then(() => toast('✓ 增量同步完成')).catch(e => toast('✗ ' + e.message));
-}
-
-
 // 版本号（左下角 footer 显示）+ 刷新时自动检查 GitHub 是否有新版本
 // versionPollTimer 构建中的轮询定时器（构建完成后自动把灰标签换成「有新版本」）
 let versionPollTimer = null;
@@ -3031,12 +2992,6 @@ document.addEventListener('click', e => {
     m.style.display = 'none';
   }
 });
-
-function openAccountModal() {
-  document.getElementById('account-modal').style.display = '';
-  document.getElementById('acc-current-user').textContent = localStorage.getItem('username') || '-';
-}
-function closeAccountModal() { document.getElementById('account-modal').style.display = 'none'; }
 
 function logoutNow() {
   localStorage.clear();
@@ -3218,12 +3173,6 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-log').addEventListener('click', openLog);
   const btnLogMobile = document.getElementById('btn-log-mobile');
   if (btnLogMobile) btnLogMobile.addEventListener('click', openLog);
-  document.getElementById('btn-logout')?.addEventListener('click', () => {
-    localStorage.clear();
-    // 跳到 /login：地址栏立即反映登出状态，登录后回到仪表盘
-    history.pushState(null, '', '/login');
-    location.reload();
-  });
   // 输入框自适应高度
   document.querySelectorAll('textarea.auto-resize').forEach(ta => {
     ta.addEventListener('input', () => autoResizeTextarea(ta));
@@ -3414,8 +3363,7 @@ async function mukakuOpenResources(i) {
 
 function mukakuRenderResources() {
   const body = document.getElementById('mk-modal-body');
-  const rows = mukakuRes.map(it => {
-    const i = mukakuRes.indexOf(it);
+  const rows = mukakuRes.map((it, i) => {
     let side, click;
     if (it.action === 'transfer') {
       side = '<div class="otk-side" style="color:var(--primary)">转存 ›</div>';
@@ -3576,8 +3524,8 @@ function pansouRenderList() {
     + '</div>';
 
   const items = pansouFilter ? pansouItems.filter(it => it.cloud_type === pansouFilter) : pansouItems;
-  html += '<div class="otk">' + items.map(it => {
-    const i = pansouItems.indexOf(it);
+  html += '<div class="otk">' + items.map((it, pi) => {
+    const i = pansouItems.indexOf(it); // pi 是过滤副本下标，动作行需原数组下标
     const label = PANSOU_TYPE_LABEL[it.cloud_type] || it.cloud_type;
     const typeTag = '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(label) + '</span>';
     const pass = it.password ? '<span style="color:#b26a00">提取码 ' + esc(it.password) + '</span>' : '';
