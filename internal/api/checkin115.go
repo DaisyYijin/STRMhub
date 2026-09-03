@@ -221,13 +221,17 @@ func (h *Handler) checkinTick() {
 	if !CronMatch(cfg.Cron, now) {
 		return
 	}
-	cfg.LastRun = minute
-	_ = saveCheckin115Cfg(cfg)
+	// cfg 是共享缓存指针，不能原地写字段（与 HTTP 读侧构成竞态）：
+	// 拷贝后落盘，save 会刷新缓存
+	nc := *cfg
+	nc.LastRun = minute
+	_ = saveCheckin115Cfg(&nc)
 	ok, _ := h.run115CheckinOnce(true)
 	if ok {
 		cfg = loadCheckin115Cfg()
-		cfg.LastDone = now.Format("2006-01-02")
-		_ = saveCheckin115Cfg(cfg)
+		nc = *cfg
+		nc.LastDone = now.Format("2006-01-02")
+		_ = saveCheckin115Cfg(&nc)
 	}
 }
 

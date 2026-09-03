@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,9 +37,9 @@ import (
 )
 
 var (
-	embyTargetMu   sync.RWMutex
-	embyTargetURL  string
-	embyTargetAt   time.Time
+	embyTargetMu  sync.RWMutex
+	embyTargetURL string
+	embyTargetAt  time.Time
 )
 
 // getEmbyTarget 获取 Emby 服务器地址（EMBY管理 配置，5 分钟缓存）。
@@ -65,8 +66,8 @@ func getEmbyTarget(db *gorm.DB, cfg *config.Config) string {
 		}
 	}
 	// 2) 保存时的内存缓存
-	if target == "" && embyConfigYAML != "" {
-		if parseJSON(embyConfigYAML, &cfgRaw) == nil && cfgRaw.ServerURL != "" {
+	if y := embyConfigGet(); target == "" && y != "" {
+		if parseJSON(y, &cfgRaw) == nil && cfgRaw.ServerURL != "" {
 			target = strings.TrimRight(strings.TrimSpace(cfgRaw.ServerURL), "/")
 		}
 	}
@@ -87,12 +88,28 @@ func getEmbyTarget(db *gorm.DB, cfg *config.Config) string {
 	return target
 }
 
-// embyConfigYAML 从 yaml 配置读取的 emby 配置（由 UpdateEmbyConfig 更新）
-var embyConfigYAML string
+// embyConfigYAML 从 yaml 配置读取的 emby 配置（由 UpdateEmbyConfig 更新）。
+// 读写均需持 embyCfgMu（写侧为配置热更新，读侧在每次代理请求路径上）
+var (
+	embyConfigYAML string
+	embyCfgMu      sync.RWMutex
+)
+
+func embyConfigGet() string {
+	embyCfgMu.RLock()
+	defer embyCfgMu.RUnlock()
+	return embyConfigYAML
+}
+
+func embyConfigSet(v string) {
+	embyCfgMu.Lock()
+	embyConfigYAML = v
+	embyCfgMu.Unlock()
+}
 
 // UpdateEmbyConfig 外部调用：更新 yaml 配置缓存（保存 emby 配置时触发）
 func UpdateEmbyConfig(jsonStr string) {
-	embyConfigYAML = jsonStr
+	embyConfigSet(jsonStr)
 	embyTargetMu.Lock()
 	embyTargetURL = "" // 清缓存，下次重新读
 	embyTargetAt = time.Time{}
@@ -169,6 +186,22 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 					}
 					if directURL != "" {
 						strmURLCacheMu.Lock()
+						if len(strmURLCache) >= 4096 {
+							// 容量上限：淘汰最旧的四分之一（播放过的 strm 数量
+							// 无上限增长会吃内存）
+							type kv struct {
+								k string
+								t time.Time
+							}
+							var all []kv
+							for k, v := range strmURLCache {
+								all = append(all, kv{k, v.at})
+							}
+							sort.Slice(all, func(i, j int) bool { return all[i].t.Before(all[j].t) })
+							for _, e := range all[:len(all)/4] {
+								delete(strmURLCache, e.k)
+							}
+						}
 						strmURLCache[strmPath] = strmURLCacheEntry{url: directURL, at: time.Now()}
 						strmURLCacheMu.Unlock()
 					}
@@ -421,7 +454,7 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				// 客户端能连上这个地址访问 Emby，就一定能连上它取直链流
 				req.Header.Set("X-Original-Host", c.Request.Host)
 			},
-			FlushInterval: -1, // 流式响应立即刷新（视频播放需要）
+			FlushInterval:  -1, // 流式响应立即刷新（视频播放需要）
 			ModifyResponse: rewritePlaybackInfo(db, cfg),
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				log.Printf("[Emby反代] 转发失败: %v", err)

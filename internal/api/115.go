@@ -47,6 +47,7 @@ func ua115Unified() string {
 type qrSession struct {
 	app    string
 	device string
+	at     time.Time // 创建时间：生成新码时清理陈旧会话（放弃轮询的条目不再泄漏）
 }
 
 var (
@@ -113,23 +114,29 @@ func getAppVerCached() string {
 // fetchAppVer 从 115 官方接口获取当前版本号
 func fetchAppVer() string {
 	const api = "https://appversion.115.com/1/web/1.0/api/chrome"
+	// 兜底值读取走持锁快照（无锁读共享变量构成竞态）
+	fallback := func() string {
+		appVerMu.RLock()
+		defer appVerMu.RUnlock()
+		return appVerVal
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(api)
 	if err != nil {
-		return appVerVal
+		return fallback()
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return appVerVal
+		return fallback()
 	}
 	// 响应格式: {"state":true,"data":{"linux":{"version_code":"..."}...}}
 	var result struct {
-		State bool                          `json:"state"`
+		State bool                              `json:"state"`
 		Data  map[string]map[string]interface{} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil || !result.State {
-		return appVerVal
+		return fallback()
 	}
 	// 优先取 web/win 版本
 	for _, key := range []string{"web", "win", "chrome"} {
@@ -139,7 +146,7 @@ func fetchAppVer() string {
 			}
 		}
 	}
-	return appVerVal
+	return fallback()
 }
 
 type qrTokenResp struct {
@@ -159,7 +166,7 @@ type qrStatusResp struct {
 
 type qrResultResp struct {
 	State int `json:"state"`
-	Data struct {
+	Data  struct {
 		UserName string                 `json:"user_name"`
 		Cookie   map[string]interface{} `json:"cookie"`
 	} `json:"data"`
@@ -229,7 +236,12 @@ func (h *Handler) CreateQrCode(c *gin.Context) {
 	// 3. 保存会话（记住设备，供轮询时获取 cookie）
 	app := mapDeviceToApp(req.Device)
 	qrMu.Lock()
-	qrSessions[token.Data.Uid] = qrSession{app: app, device: req.Device}
+	for uid, v := range qrSessions {
+		if time.Since(v.at) > 10*time.Minute {
+			delete(qrSessions, uid)
+		}
+	}
+	qrSessions[token.Data.Uid] = qrSession{app: app, device: req.Device, at: time.Now()}
 	qrMu.Unlock()
 	log.Printf("[系统] ▶ 扫码登录二维码已生成（uid=%s，设备=%s，有效期约 2 分钟）", truncateStr(token.Data.Uid, 12), req.Device)
 

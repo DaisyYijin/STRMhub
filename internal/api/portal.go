@@ -792,7 +792,11 @@ func portalBackfillWorker() {
 			portalBackfillTMDB(&ml)
 			model.DB.Save(&ml)
 			done++
-			time.Sleep(3 * time.Second) // 限速，避免 TMDB 配额
+			select {
+			case <-stopCh:
+				return
+			case <-time.After(3 * time.Second): // 限速，避免 TMDB 配额
+			}
 			if done >= 200 {
 				break
 			}
@@ -801,7 +805,11 @@ func portalBackfillWorker() {
 		if done > 0 {
 			sleep = 30 * time.Second // 还有活干就快点回来
 		}
-		time.Sleep(sleep)
+		select {
+		case <-stopCh:
+			return // 进程退出：回填循环跟着停（不再打 TMDB）
+		case <-time.After(sleep):
+		}
 	}
 }
 

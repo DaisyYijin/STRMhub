@@ -276,6 +276,9 @@ const ua115Download = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) Ap
 // 首选 App 加密接口（pro.api/android/2.0/ufile/download，openStrm 同款），
 // webapi files/download 在部分 Cookie 类型下只返回元数据不含链接。
 // 返回的 headers 为 CDN 要求携带的请求头（下载 UA + 直链响应 Set-Cookie）
+// reJSONURL 115 响应兜底提取直链（每次 302 播放路径上，预编译）
+var reJSONURL = regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
+
 func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]string, error) {
 	if signUA == "" {
 		signUA = ua115Download // 默认浏览器 UA（附属文件下载等自有场景）
@@ -332,7 +335,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 					u = openParseDownloadURL(d.URL)
 				}
 				if u == "" {
-					if m := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`).FindSubmatch(plain); m != nil {
+					if m := reJSONURL.FindSubmatch(plain); m != nil {
 						u = string(m[1])
 					}
 				}
@@ -400,8 +403,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 		}
 	}
 	// 常规字段为空时用正则兜底提取任意位置的下载链接
-	re := regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
-	if m := re.FindSubmatch(body); m != nil {
+	if m := reJSONURL.FindSubmatch(body); m != nil {
 		return string(m[1]), nil, nil
 	}
 	return "", nil, fmt.Errorf("获取下载链接失败 [app接口]: %s；[webapi接口]: %s", appErr, truncateStr(string(body), 150))

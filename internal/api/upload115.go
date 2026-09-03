@@ -62,15 +62,15 @@ func (f *flexStatus) UnmarshalJSON(b []byte) error {
 
 // openUploadInit /open/upload/init 响应（data 内为平铺结构）
 type openUploadInit struct {
-	Status      flexStatus     `json:"status"`
-	FileID      string         `json:"file_id"`
-	Bucket      string         `json:"bucket"`
-	Object      string         `json:"object"`
+	Status      flexStatus      `json:"status"`
+	FileID      string          `json:"file_id"`
+	Bucket      string          `json:"bucket"`
+	Object      string          `json:"object"`
 	Callback    json.RawMessage `json:"callback"`
-	CallbackVar string         `json:"callback_var"`
-	SignKey     string         `json:"sign_key"`
-	SignCheck   string         `json:"sign_check"`
-	PickCode    string         `json:"pick_code"`
+	CallbackVar string          `json:"callback_var"`
+	SignKey     string          `json:"sign_key"`
+	SignCheck   string          `json:"sign_check"`
+	PickCode    string          `json:"pick_code"`
 }
 
 // openOSSCredential OSS 上传临时凭证（字段名兼容多种形态）
@@ -514,8 +514,8 @@ func monitorOnce(h *Handler) {
 	// 目标库根 cid 与绝对路径
 	rootCid := cfg.Target
 	var fullCfg struct {
-		Cid        string `json:"cid"`
-		LocalPath  string `json:"local_path"`
+		Cid       string `json:"cid"`
+		LocalPath string `json:"local_path"`
 	}
 	if err := json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg); err != nil {
 		return
@@ -769,7 +769,10 @@ func metaMissClear(key string) {
 }
 
 // isStandardMediaImageName Emby/Jellyfin 标准媒体图片命名
-//（poster/fanart/banner/logo/clearart/disc…及 seasonXX-poster 等变体）
+// （poster/fanart/banner/logo/clearart/disc…及 seasonXX-poster 等变体）
+// reSeasonImg 季海报命名（监控上传全目录树高频调用，预编译）
+var reSeasonImg = regexp.MustCompile(`^season(\d{1,2}|specials)-.+`)
+
 func isStandardMediaImageName(lowerName string) bool {
 	base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(
 		strings.TrimSuffix(strings.TrimSuffix(lowerName, ".jpg"), ".jpeg"),
@@ -781,7 +784,7 @@ func isStandardMediaImageName(lowerName string) bool {
 		}
 	}
 	// seasonXX-poster / season-specials-poster 变体
-	if regexp.MustCompile(`^season(\d{1,2}|specials)-.+`).MatchString(base) {
+	if reSeasonImg.MatchString(base) {
 		return true
 	}
 	// 剧集名-poster 等含分隔符的形态已由前后缀匹配覆盖

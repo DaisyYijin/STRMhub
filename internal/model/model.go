@@ -129,7 +129,7 @@ type MediaLibrary struct {
 	OriginalTitle string    `json:"original_title" gorm:"size:255"`
 	Year          string    `json:"year" gorm:"size:10"`
 	MediaType     string    `json:"media_type" gorm:"size:20;index"` // movie, tv
-	Category      string    `json:"category" gorm:"size:50"`
+	Category      string    `json:"category" gorm:"size:50;index"`   // 仪表盘/门户按分类聚合高频查询
 	TargetPath    string    `json:"target_path" gorm:"size:500"`
 	OrigLanguage  string    `json:"original_language" gorm:"size:20"`
 	OrigCountry   string    `json:"origin_country" gorm:"size:100"`
@@ -173,7 +173,7 @@ type SyncedFile struct {
 	PickCode  string    `json:"pick_code" gorm:"size:64"`
 	Sha1      string    `json:"sha1" gorm:"index;size:40"`               // 文件 sha1（整理去重用）
 	RelPath   string    `json:"rel_path" gorm:"size:500;not null;index"` // 相对本地库根的路径（含文件名）
-	Kind      string    `json:"kind" gorm:"size:10"`                     // video / asset
+	Kind      string    `json:"kind" gorm:"size:10;index"`               // video / asset
 	Size      int64     `json:"size"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

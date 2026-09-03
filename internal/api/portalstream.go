@@ -432,7 +432,11 @@ func portalExtractSub(c *gin.Context) {
 // hlsCleaner 空闲会话回收（2 分钟无访问即杀 ffmpeg 删分片）
 func hlsCleaner() {
 	for {
-		time.Sleep(30 * time.Second)
+		select {
+		case <-stopCh:
+			return // 进程退出：回收循环跟着停
+		case <-time.After(30 * time.Second):
+		}
 		type deadSession struct {
 			dir    string
 			cancel context.CancelFunc

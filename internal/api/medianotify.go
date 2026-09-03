@@ -24,13 +24,13 @@ import (
 
 // mediaNotifEntry 一条待聚合的入库通知
 type mediaNotifEntry struct {
-	Title       string
-	Year        string
-	Line        string // 一行描述（类型/分类/重命名/评分）
-	PosterURL   string // 公网封面 URL（TMDB）
-	PosterAlt   string // Emby 直链封面（内网，企微 picurl 可尝试）
-	PosterData  []byte // 封面字节（Emby 下载，TG 上传用）
-	Link        string
+	Title      string
+	Year       string
+	Line       string // 一行描述（类型/分类/重命名/评分）
+	PosterURL  string // 公网封面 URL（TMDB）
+	PosterAlt  string // Emby 直链封面（内网，企微 picurl 可尝试）
+	PosterData []byte // 封面字节（Emby 下载，TG 上传用）
+	Link       string
 }
 
 var mediaNotif struct {
@@ -146,7 +146,8 @@ func sendMediaNotifBatch(cfg *MessageConfig, items []mediaNotifEntry) {
 	if cfg.TG.isEnabled() && cfg.TG.Token != "" && cfg.TG.ChatID != "" {
 		list := strings.Join(lines, "\n")
 		if len(list) > 3800 {
-			list = list[:3800] + "\n…（超长截断）"
+			// 按 rune 截断：字节截断会把多字节中文劈成非法 UTF-8，TG 整条 400
+			list = string([]rune(list)[:3800]) + "\n…（超长截断）"
 		}
 		caption := title + "\n" + list
 		first := items[0]

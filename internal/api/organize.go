@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"strmhub/internal/model"
@@ -327,15 +328,34 @@ func mediaTypeCategory(mediaType string) string {
 	}
 }
 
+// 分类规则缓存：整理循环对每个媒体条目查一次规则表，规则极少变化（10s TTL）
+var (
+	classifyRuleMu    sync.Mutex
+	classifyRuleCache = map[string][]model.CategoryRule{}
+	classifyRuleAt    = map[string]time.Time{}
+)
+
+func classifyRules(mediaType string) []model.CategoryRule {
+	classifyRuleMu.Lock()
+	defer classifyRuleMu.Unlock()
+	if rs, ok := classifyRuleCache[mediaType]; ok && time.Since(classifyRuleAt[mediaType]) < 10*time.Second {
+		return rs
+	}
+	var categories []model.CategoryRule
+	model.DB.Where("media_type = ?", mediaType).Order("priority ASC").Find(&categories)
+	classifyRuleCache[mediaType] = categories
+	classifyRuleAt[mediaType] = time.Now()
+	return categories
+}
+
 // classifyMedia 根据分类规则判断二级分类
 func classifyMedia(media *TmdbMedia) string {
-	var categories []model.CategoryRule
 	// 电影和电视剧分开查询
 	mediaType := "movie"
 	if media.MediaType == "tv" {
 		mediaType = "tv"
 	}
-	model.DB.Where("media_type = ?", mediaType).Order("priority ASC").Find(&categories)
+	categories := classifyRules(mediaType)
 
 	for _, cat := range categories {
 		if matchCategory(&cat, media) {
@@ -2251,8 +2271,8 @@ func classifyAVNumber(avNum, hint string) string {
 // shortLogName 日志用短名：剥掉发布站广告前缀（【…】块/域名@），超长截断。
 // 纯粹为了日志可读——原始名在网盘里保持不变
 func shortLogName(s string) string {
-	s = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(s, "")
-	s = regexp.MustCompile(`(?i)[a-z0-9.-]+\.[a-z]{2,}@`).ReplaceAllString(s, "")
+	s = reAdBracket.ReplaceAllString(s, "")
+	s = reAdDomainTail.ReplaceAllString(s, "")
 	s = strings.Trim(s, " .@")
 	if r := []rune(s); len(r) > 46 {
 		s = string(r[:46]) + "…"
@@ -2275,16 +2295,16 @@ func sanitizeAVFilename(name string) string {
 		base = base[idx+1:]
 	}
 	// www.xxx.com 前缀
-	base = regexp.MustCompile(`(?i)^www\.[a-z0-9.-]+\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`).ReplaceAllString(base, "")
+	base = reAdWwwPrefix.ReplaceAllString(base, "")
 	// 纯域名前缀（4k688.com、avxxx.net 等）
-	base = regexp.MustCompile(`(?i)^[a-z0-9]{2,15}\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`).ReplaceAllString(base, "")
+	base = reAdDomPrefix.ReplaceAllString(base, "")
 
 	// ===== 2. 括号类广告 =====
 	// 【高清xxx网】【广告】等全角括号
-	base = regexp.MustCompile(`【[^】]*】`).ReplaceAllString(base, "")
+	base = reAdBracket.ReplaceAllString(base, "")
 	// (www.xxx.com) [4k688.com] 等半角括号（只清开头/结尾的，不清中间的标签）
-	base = regexp.MustCompile(`(?i)^\(\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\)[-_. ]*`).ReplaceAllString(base, "")
-	base = regexp.MustCompile(`(?i)^\[\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\][-_. ]*`).ReplaceAllString(base, "")
+	base = reAdParenHead.ReplaceAllString(base, "")
+	base = reAdSquareHead.ReplaceAllString(base, "")
 
 	// ===== 3. 文字类广告前缀/后缀 =====
 	// "高清剧集网"、"破解版"、"完整版"、"中文字幕" 等常见前缀
@@ -2303,8 +2323,8 @@ func sanitizeAVFilename(name string) string {
 
 	// ===== 4. URL 参数类后缀 =====
 	// "XXX-001?from=4k688" / "XXX-001 - www.4k688.com"
-	base = regexp.MustCompile(`[-_ ]+(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz|me|tv)$`).ReplaceAllString(base, "")
-	base = regexp.MustCompile(`\?[a-z=&0-9]+$`).ReplaceAllString(base, "")
+	base = reAdUrlTail.ReplaceAllString(base, "")
+	base = reAdQueryTail.ReplaceAllString(base, "")
 
 	// ===== 5. 多余分隔符 =====
 	base = strings.Trim(base, "-_. ")
@@ -2317,6 +2337,19 @@ func sanitizeAVFilename(name string) string {
 }
 
 // avNumRegex 匹配常见 AV 番号格式：ABC-123、ABCD-12 等
+// sanitizeAVFilename / shortLogName 的预编译正则（热路径：AV 整理对每个
+// 文件多阶段反复调用，此前每次执行编译 9 个正则）
+var (
+	reAdBracket    = regexp.MustCompile(`【[^】]*】`)
+	reAdDomainTail = regexp.MustCompile(`(?i)[a-z0-9.-]+\.[a-z]{2,}@`)
+	reAdWwwPrefix  = regexp.MustCompile(`(?i)^www\.[a-z0-9.-]+\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`)
+	reAdDomPrefix  = regexp.MustCompile(`(?i)^[a-z0-9]{2,15}\.(com|net|org|cc|xyz|me|tv|info)[-_.@]?`)
+	reAdParenHead  = regexp.MustCompile(`(?i)^\(\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\)[-_. ]*`)
+	reAdSquareHead = regexp.MustCompile(`(?i)^\[\s*(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz)\s*\][-_. ]*`)
+	reAdUrlTail    = regexp.MustCompile(`[-_ ]+(www\.)?[a-z0-9.-]+\.(com|net|cc|xyz|me|tv)$`)
+	reAdQueryTail  = regexp.MustCompile(`\?[a-z=&0-9]+$`)
+)
+
 var avNumRegex = regexp.MustCompile(`(?i)\b([A-Z]{2,6})-?(\d{2,5})\b`)
 
 // avNumLooseRe 番号后带发布标记的变体（hmn-898ch = HMN-898 中字版、
