@@ -39,13 +39,13 @@ var shareAPIOrigins = []string{
 	"https://115vod.com/webapi",
 }
 
-// postShareAPI 分享接口 POST：请求失败或命中 115 风控响应（开小差/频繁）
+// getShareAPI 分享接口 GET：请求失败或命中 115 风控响应（开小差/频繁）
 // 时切换下一镜像，全部镜像用尽后返回最后一次结果
-func postShareAPI(path string, form url.Values, cookie string, timeout time.Duration) ([]byte, error) {
+func getShareAPI(path string, query url.Values, cookie string, timeout time.Duration) ([]byte, error) {
 	var lastBody []byte
 	var lastErr error
 	for _, origin := range shareAPIOrigins {
-		body, err := httpPostForm115(origin+path, form, cookie, timeout)
+		body, err := httpGet115Full(origin+path, query, cookie, ua115Unified(), timeout, nil)
 		if err != nil {
 			lastErr = err
 			continue
@@ -133,45 +133,24 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 
 	log.Printf("[上传] ▶ 分享转存开始: %s（提取码 %q）", truncateStr(shareURL, 70), code)
 
-	// 1. 分享信息（校验链接与提取码）
-	infoBody, err := postShareAPI("/share/info",
-		url.Values{"share_code": {shareCode}}, cookie, 15*time.Second)
-	if err != nil {
-		log.Printf("[上传] ✗ 获取分享信息失败: %v", err)
-		return "", 0, 0, fmt.Errorf("获取分享信息失败: %s", err.Error())
-	}
-	var info struct {
-		State bool   `json:"state"`
-		Error string `json:"error"`
-		Data  struct {
-			ShareTitle string `json:"share_title"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(infoBody, &info) != nil || !info.State {
-		log.Printf("[上传] ✗ 分享信息校验失败: %s", truncateStr(string(infoBody), 120))
-		return "", 0, 0, fmt.Errorf("分享信息校验失败: %s", truncateStr(string(infoBody), 120))
-	}
-
-	// 2. 文件列表（顶层收全部；1150/页翻页收取——此前只取第一页，
-	// 超过 1150 项的分享被静默截断收不全）
+	// 1. 文件列表 + 分享信息（GET /share/snap）。
+	//    此前的 POST /share/info 与 POST /share/snap 均已失效（信息端点恒返
+	//    "开小差"、列表端点 405），p115client 权威协议为 GET + query
 	type snapItem struct {
 		Fid string `json:"fid"`
-		Fn  string `json:"fn"`
-		Fc  int    `json:"fc"`
-		Cid string `json:"cid"`
 	}
 	var allItems []snapItem
+	shareTitle := ""
 	for offset := 0; ; offset += 1150 {
-		snapBody, err := postShareAPI("/share/snap",
-			url.Values{
-				"share_code":   {shareCode},
-				"receive_code": {code},
-				"cid":          {"0"},
-				"offset":       {fmt.Sprint(offset)},
-				"limit":        {"1150"},
-				"asc":          {"1"},
-				"fc_mix":       {"0"},
-			}, cookie, 15*time.Second)
+		snapBody, err := getShareAPI("/share/snap", url.Values{
+			"share_code":   {shareCode},
+			"receive_code": {code},
+			"cid":          {"0"},
+			"offset":       {fmt.Sprint(offset)},
+			"limit":        {"1150"},
+			"asc":          {"1"},
+			"fc_mix":       {"0"},
+		}, cookie, 15*time.Second)
 		if err != nil {
 			return "", 0, 0, fmt.Errorf("获取分享文件列表失败: %s", err.Error())
 		}
@@ -179,12 +158,18 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 			State bool   `json:"state"`
 			Error string `json:"error"`
 			Data  struct {
-				List []snapItem `json:"list"`
+				List      []snapItem `json:"list"`
+				ShareInfo struct {
+					ShareTitle string `json:"share_title"`
+				} `json:"shareinfo"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(snapBody, &snap) != nil || !snap.State {
-			log.Printf("[上传] ✗ 文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
-			return "", 0, 0, fmt.Errorf("文件列表获取失败（提取码错误？）: %s", truncateStr(string(snapBody), 120))
+			log.Printf("[上传] ✗ 文件列表获取失败（链接失效或提取码错误）: %s", truncateStr(string(snapBody), 120))
+			return "", 0, 0, fmt.Errorf("文件列表获取失败（链接失效或提取码错误）: %s", truncateStr(string(snapBody), 120))
+		}
+		if shareTitle == "" {
+			shareTitle = snap.Data.ShareInfo.ShareTitle
 		}
 		allItems = append(allItems, snap.Data.List...)
 		if len(snap.Data.List) < 1150 {
@@ -194,68 +179,33 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	if len(allItems) == 0 {
 		return "分享为空", 0, 0, nil
 	}
-	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", info.Data.ShareTitle, len(allItems))
+	log.Printf("[上传] ▣ 分享「%s」共 %d 项，开始转存...", shareTitle, len(allItems))
 
-	// 3. sharepost 拿 pick_code
-	form := url.Values{
+	// 2. 一次性转存到目标目录：GET /share/receive（file_id 逗号分隔）。
+	//    此前的 POST /share/sharepost + files/receive 逐个转存为失效端点
+	fids := make([]string, 0, len(allItems))
+	for _, f := range allItems {
+		fids = append(fids, f.Fid)
+	}
+	rBody, err := getShareAPI("/share/receive", url.Values{
 		"share_code":   {shareCode},
 		"receive_code": {code},
-	}
-	for i, f := range allItems {
-		form.Set(fmt.Sprintf("file_id[%d]", i), f.Fid)
-	}
-	postBody, err := postShareAPI("/share/sharepost", form, cookie, 20*time.Second)
+		"file_id":      {strings.Join(fids, ",")},
+		"cid":          {target},
+	}, cookie, 30*time.Second)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("sharepost 失败: %s", err.Error())
+		return "", 0, 0, fmt.Errorf("转存提交失败: %s", err.Error())
 	}
-	var post struct {
+	var r struct {
 		State bool   `json:"state"`
 		Error string `json:"error"`
-		Data  struct {
-			List []struct {
-				Fid      string `json:"fid"`
-				PickCode string `json:"pick_code"`
-				FileName string `json:"file_name"`
-			} `json:"list"`
-		} `json:"data"`
 	}
-	if json.Unmarshal(postBody, &post) != nil || !post.State {
-		log.Printf("[上传] ✗ sharepost 被拒: %s", truncateStr(string(postBody), 120))
-		return "", 0, 0, fmt.Errorf("sharepost 被拒: %s", truncateStr(string(postBody), 120))
+	if json.Unmarshal(rBody, &r) != nil || !r.State {
+		log.Printf("[上传] ✗ 转存被拒: %s", truncateStr(string(rBody), 120))
+		return "", 0, 0, fmt.Errorf("转存被拒: %s", truncateStr(string(rBody), 120))
 	}
-
-	// 4. 逐个转存到目标目录
-	userid := cookieUserID(cookie)
-	success, fail = 0, 0
-	for _, item := range post.Data.List {
-		rForm := url.Values{
-			"user_id":   {fmt.Sprint(userid)},
-			"file_id":   {item.Fid},
-			"pick_code": {item.PickCode},
-			"cid":       {target},
-		}
-		rBody, err := httpPostForm115("https://webapi.115.com/files/receive", rForm, cookie, 20*time.Second)
-		if err != nil {
-			fail++
-			log.Printf("[上传] ✗ 转存失败: %s: %v", item.FileName, err)
-			continue
-		}
-		var r struct {
-			State bool   `json:"state"`
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(rBody, &r)
-		if r.State {
-			success++
-			log.Printf("[上传] ✓ 转存: %s", item.FileName)
-		} else {
-			fail++
-			log.Printf("[上传] ✗ 转存被拒: %s: %s", item.FileName, r.Error)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	msg = fmt.Sprintf("「%s」转存完成: 成功 %d，失败 %d（共 %d 项）", info.Data.ShareTitle, success, fail, len(post.Data.List))
+	success, fail = len(allItems), 0
+	msg = fmt.Sprintf("「%s」转存完成: 成功 %d（共 %d 项）", shareTitle, success, len(allItems))
 	log.Printf("[上传] %s", msg)
 
 	// 转存成功且开启自动整理 → 触发「整理+增量」

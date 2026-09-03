@@ -334,7 +334,6 @@ func portalFacets(mt string) (countries, langs, genres []map[string]interface{})
 		}
 	}
 	return facetList(cCount), facetList(lCount), facetList(gCount)
-	return
 }
 
 // portalNav 分类导航（按台账实际内容聚合）
