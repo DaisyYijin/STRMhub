@@ -122,6 +122,7 @@ var pansouTypeRank = map[string]int{
 }
 
 // PansouSearch GET /pansou/search?kw=
+// 公开实例可能瞬时过载/限流（503）：失败自动重试一次（换 15s 短超时）
 func (h *Handler) PansouSearch(c *gin.Context) {
 	kw := strings.TrimSpace(c.Query("kw"))
 	if kw == "" {
@@ -131,23 +132,38 @@ func (h *Handler) PansouSearch(c *gin.Context) {
 	cfg := loadPansouCfg()
 	api := cfg.BaseURL + "/api/search?kw=" + url.QueryEscape(kw) + "&res=merged_by_type"
 
-	req, err := http.NewRequest(http.MethodGet, api, nil)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
+	var body []byte
+	var lastErr string
+	for attempt := 1; attempt <= 2; attempt++ {
+		if attempt == 2 {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		timeout := time.Duration(30-15*(attempt-1)) * time.Second // 30s → 重试 15s
+		req, err := http.NewRequest(http.MethodGet, api, nil)
+		if err != nil {
+			lastErr = err.Error()
+			break
+		}
+		req.Header.Set("User-Agent", chromeUA)
+		req.Header.Set("Accept", "application/json")
+		resp, err := (&http.Client{Timeout: timeout}).Do(req)
+		if err != nil {
+			lastErr = "连接 PanSou 失败: " + sanitizeWecomErr(err)
+			continue
+		}
+		body, _ = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			lastErr = ""
+			break
+		}
+		lastErr = fmt.Sprintf("PanSou 返回 HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 100))
 	}
-	req.Header.Set("User-Agent", chromeUA)
-	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second} // 聚合多源耗时较长
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "连接 PanSou 失败: " + sanitizeWecomErr(err)})
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("PanSou 返回 HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 120))})
+	if lastErr != "" {
+		if strings.Contains(lastErr, "503") || strings.Contains(lastErr, "502") {
+			lastErr += "——公开实例可能过载/限流，请稍后重试；也可在上方配置里改用自建实例（docker run ghcr.io/fish2018/pansou）"
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": lastErr})
 		return
 	}
 	var out struct {
