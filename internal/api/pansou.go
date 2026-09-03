@@ -122,13 +122,44 @@ var pansouTypeRank = map[string]int{
 }
 
 // PansouSearch GET /pansou/search?kw=
-// 公开实例可能瞬时过载/限流（503）：失败自动重试一次（换 15s 短超时）
 func (h *Handler) PansouSearch(c *gin.Context) {
 	kw := strings.TrimSpace(c.Query("kw"))
 	if kw == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入搜索关键词"})
 		return
 	}
+	items, err := pansouSearchItems(kw)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	cfg := loadPansouCfg()
+	log.Printf("[PanSou] ✓ 「%s」：%d 条结果", kw, len(items))
+	c.JSON(http.StatusOK, gin.H{"data": items, "base": cfg.BaseURL})
+}
+
+// pansouTypeLabel 类型中文名（机器人/前端共用）
+func pansouTypeLabel(t string) string {
+	switch t {
+	case "115":
+		return "115 网盘"
+	case "quark":
+		return "夸克网盘"
+	case "aliyun":
+		return "阿里云盘"
+	case "baidu":
+		return "百度网盘"
+	case "uc":
+		return "UC 网盘"
+	case "xunlei":
+		return "迅雷云盘"
+	}
+	return t
+}
+
+// pansouSearchItems 聚合搜索核心（HTTP 与企微机器人共用）。
+// 公开实例可能瞬时过载/限流（503）：失败自动重试一次（换 15s 短超时）
+func pansouSearchItems(kw string) ([]PansouItem, error) {
 	cfg := loadPansouCfg()
 	api := cfg.BaseURL + "/api/search?kw=" + url.QueryEscape(kw) + "&res=merged_by_type"
 
@@ -161,10 +192,9 @@ func (h *Handler) PansouSearch(c *gin.Context) {
 	}
 	if lastErr != "" {
 		if strings.Contains(lastErr, "503") || strings.Contains(lastErr, "502") {
-			lastErr += "——公开实例可能过载/限流，请稍后重试；也可在上方配置里改用自建实例（docker run ghcr.io/fish2018/pansou）"
+			lastErr += "——公开实例可能过载/限流，请稍后重试；也可在配置里改用自建实例（docker run ghcr.io/fish2018/pansou）"
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": lastErr})
-		return
+		return nil, fmt.Errorf("%s", lastErr)
 	}
 	var out struct {
 		Code    int    `json:"code"`
@@ -179,8 +209,7 @@ func (h *Handler) PansouSearch(c *gin.Context) {
 		if msg == "" {
 			msg = truncateStr(string(body), 120)
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "PanSou 响应异常: " + msg})
-		return
+		return nil, fmt.Errorf("PanSou 响应异常: %s", msg)
 	}
 
 	items := make([]PansouItem, 0, out.Data.Total)
@@ -222,8 +251,7 @@ func (h *Handler) PansouSearch(c *gin.Context) {
 		}
 		return items[i].Datetime > items[j].Datetime
 	})
-	log.Printf("[PanSou] ✓ 「%s」：%d 条结果", kw, len(items))
-	c.JSON(http.StatusOK, gin.H{"data": items, "base": cfg.BaseURL})
+	return items, nil
 }
 
 // pansouActionFor 按链接协议决定行内动作

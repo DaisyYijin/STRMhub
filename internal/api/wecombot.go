@@ -220,11 +220,18 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		h.wecomHandleLink(strings.TrimSpace(text), reply)
 		return
 	}
-	// 观影会话中的序号回复（1-2 位纯数字）：选片 / 选种子
-	if len(text) <= 2 && regexpPureDigits.MatchString(text) && wecomGySessionGet(user) != nil {
-		n, _ := strconv.Atoi(text)
-		h.wecomHandleGyPick(user, n, reply)
-		return
+	// 观影/网盘会话中的序号回复（1-2 位纯数字）：选片 / 选资源
+	if len(text) <= 2 && regexpPureDigits.MatchString(text) {
+		if wecomGySessionGet(user) != nil {
+			n, _ := strconv.Atoi(text)
+			h.wecomHandleGyPick(user, n, reply)
+			return
+		}
+		if wecomPansouSessionGet(user) != nil {
+			n, _ := strconv.Atoi(text)
+			h.wecomHandlePansouPick(user, n, reply)
+			return
+		}
 	}
 	switch {
 	case lower == "帮助" || lower == "help" || lower == "?":
@@ -234,6 +241,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 			"状态 — 任务状态 + 转存目录 + 离线任务",
 			"搜索 <片名> — TMDB 搜片",
 			"观影 <片名> — TMDB 选片 → 观影搜资源（大小/做种/中字）→ 回序号离线下载",
+			"网盘 <片名> — TMDB 选片 → PanSou 聚合搜网盘分享（夸克/阿里/百度等）→ 回序号转存/离线",
 			"整理 / 同步 / 补全 — 手动触发整理、增量同步、画质补全",
 		)
 
@@ -261,7 +269,10 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		}
 		if cid := h.shareFolderCid(); cid != "" {
 			// 115 目录查询加超时保护：网盘响应慢时不能拖住整个状态回复
-			type listRes struct{ count int; ok bool }
+			type listRes struct {
+				count int
+				ok    bool
+			}
 			ch := make(chan listRes, 1)
 			go func() {
 				if ops, err := h.newPan115Ops(); err == nil {
@@ -304,7 +315,7 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		}
 		results := h.wecomSearchTMDB(q)
 		if len(results) == 0 {
-			reply("未找到: "+q)
+			reply("未找到: " + q)
 			return
 		}
 		lines := []string{fmt.Sprintf("TMDB 搜索 %q：", q)}
@@ -313,6 +324,14 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 		}
 		reply(lines...)
 
+	case strings.HasPrefix(text, "网盘"), strings.HasPrefix(lower, "wp "):
+		kw := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(text, "网盘"), "wp "))
+		if kw == "" {
+			reply("用法：网盘 <片名>，例如：网盘 蜘蛛侠")
+			return
+		}
+		h.wecomHandlePansouSearch(user, kw, reply)
+		return
 	case strings.HasPrefix(text, "观影"), strings.HasPrefix(lower, "gy "):
 		kw := strings.TrimSpace(strings.TrimPrefix(text, "观影"))
 		if strings.HasPrefix(lower, "gy ") {
