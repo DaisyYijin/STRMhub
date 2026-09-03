@@ -164,7 +164,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') gyLoadPage();
+  if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); }
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -3281,6 +3281,154 @@ function renderLoginBadge(el, state, sub) {
   const text = state === 'on' ? '已登录' : (state === 'warn' ? '即将过期' : '未登录');
   el.innerHTML = '<span class="login-badge ' + cls + '"><span class="dot"></span>' + text
     + (sub ? ' <span class="sub">' + esc(sub) + '</span>' : '') + '</span>';
+}
+
+// ==================== 影视转存 · PanSou 网盘聚合搜索 ====================
+// 开源项目 PanSou 实例聚合 TG 频道/插件的网盘分享。115 分享行点击转存、
+// 磁力/ed2k 行点击离线下载、其他网盘行打开原链接手动转存。
+
+let pansouItems = [];
+let pansouFilter = '';
+
+async function pansouLoadPage() {
+  try {
+    const d = await api('/pansou/config');
+    document.getElementById('pansou-base').value = d.base_url || 'https://pansou.app';
+  } catch (e) { console.error('[PanSou] 配置回填失败:', e.message); }
+}
+
+async function pansouSaveConfig(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    const d = await api('/pansou/config', {
+      method: 'POST',
+      body: JSON.stringify({ base_url: document.getElementById('pansou-base').value.trim() }),
+    });
+    document.getElementById('pansou-base').value = d.base_url || '';
+    toast('保存成功');
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function pansouResetConfig(btn) {
+  document.getElementById('pansou-base').value = 'https://pansou.app';
+  await pansouSaveConfig(btn);
+}
+
+async function pansouSearch() {
+  const kw = document.getElementById('pansou-query').value.trim();
+  const box = document.getElementById('pansou-results');
+  if (!kw) { toast('请输入搜索关键词'); return; }
+  box.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索中（多源并发，约需数秒）…</span>';
+  pansouItems = [];
+  pansouFilter = '';
+  try {
+    const d = await api('/pansou/search?kw=' + encodeURIComponent(kw));
+    pansouItems = d.data || [];
+    if (!pansouItems.length) {
+      box.innerHTML = '<span style="color:var(--text-3)">没有搜索到「' + esc(kw) + '」的网盘分享</span>';
+      return;
+    }
+    pansouRenderList();
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>';
+  }
+}
+
+const PANSOU_TYPE_LABEL = { '115': '115 网盘', quark: '夸克网盘', aliyun: '阿里云盘', baidu: '百度网盘', uc: 'UC 网盘', xunlei: '迅雷云盘' };
+
+function pansouSetFilter(key) {
+  pansouFilter = key;
+  pansouRenderList();
+}
+
+function pansouRenderList() {
+  const box = document.getElementById('pansou-results');
+  if (!box) return;
+  // 类型计数（按服务端排序顺序）
+  const counts = {};
+  for (const it of pansouItems) counts[it.cloud_type] = (counts[it.cloud_type] || 0) + 1;
+  const types = [...new Set(pansouItems.map(it => it.cloud_type))];
+  const pill = (label, key, count) => {
+    const active = pansouFilter === key;
+    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+    const fg = active ? '#fff' : 'var(--text-2)';
+    return '<span onclick="pansouSetFilter(\'' + key + '\')" '
+      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+      + label + ' ' + count + '</span>';
+  };
+  let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">类型'
+    + pill('全部', '', pansouItems.length)
+    + types.map(t => pill(PANSOU_TYPE_LABEL[t] || t, t, counts[t])).join('')
+    + '</div>';
+
+  const items = pansouFilter ? pansouItems.filter(it => it.cloud_type === pansouFilter) : pansouItems;
+  html += '<div class="otk">' + items.map(it => {
+    const i = pansouItems.indexOf(it);
+    const label = PANSOU_TYPE_LABEL[it.cloud_type] || it.cloud_type;
+    const typeTag = '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(label) + '</span>';
+    const pass = it.password ? '<span style="color:#b26a00">提取码 ' + esc(it.password) + '</span>' : '';
+    const meta = [pass, (it.datetime || '').replace('T', ' ').slice(0, 16)].filter(Boolean)
+      .join('<span class="otk-dot">·</span>');
+    let side, click;
+    if (it.action === 'transfer') {
+      side = '<div class="otk-side" style="color:var(--primary)">转存 ›</div>';
+      click = 'onclick="pansouTransfer(' + i + ',this)"';
+    } else if (it.action === 'offline') {
+      side = '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>';
+      click = 'onclick="pansouOffline(' + i + ',this)"';
+    } else {
+      side = '<div class="otk-side" style="color:var(--text-3)">打开链接 ↗</div>';
+      click = 'onclick="window.open(\'' + esc(it.url) + '\',\'_blank\')"';
+    }
+    return '<div class="otk-row" style="cursor:pointer" ' + click + '>'
+    + typeTag
+    + '<div class="otk-main"><div class="otk-name" title="' + esc(it.url) + '">' + esc(it.note || it.url) + '</div>'
+    + '<div class="otk-sub">' + meta + '</div>'
+    + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+    + side
+    + '</div>';
+  }).join('') + '</div>';
+  box.innerHTML = html;
+}
+
+// 115 分享行：转存到目标目录（提取码可能为空 = 无密码分享）
+async function pansouTransfer(i, el) {
+  const it = pansouItems[i];
+  if (!it) return;
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已转存过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '转存中…'; }
+  try {
+    const r = await api('/share/receive', {
+      method: 'POST',
+      body: JSON.stringify({ url: it.url, code: it.password || '', target_cid: '', organize: true }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '已转存'); }
+    toast('已转存 115，完成后自动整理入库');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
+}
+
+// 磁力/ed2k 行：提交 115 离线下载
+async function pansouOffline(i, el) {
+  const it = pansouItems[i];
+  if (!it) return;
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已提交过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提交 115 离线下载中…'; }
+  try {
+    await api('/offline/add', {
+      method: 'POST',
+      body: JSON.stringify({ url: it.url, organize: true }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ 已提交离线下载'; }
+    toast('已提交 115 离线下载，完成后自动整理入库');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
 }
 
 // ==================== 影视转存 · 观影 ====================

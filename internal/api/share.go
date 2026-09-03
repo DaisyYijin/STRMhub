@@ -84,10 +84,8 @@ func (h *Handler) ShareReceive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写分享链接"})
 		return
 	}
-	if req.Code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写提取码"})
-		return
-	}
+	// 提取码允许为空：无密码分享可直接转存（与机器人通道一致），
+	// 码错误时 115 会返回明确报错
 	msg, success, fail, err := h.shareReceiveCore(req.URL, req.Code, req.Target, req.Organize)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})

@@ -410,6 +410,11 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/tgsub/config", h.TgSubSaveConfig)
 		protected.POST("/tgsub/run", h.TgSubRun)
 
+		// 影视转存 · PanSou 网盘聚合搜索（开源项目公开实例，免认证）
+		protected.GET("/pansou/config", h.PansouGetConfig)
+		protected.POST("/pansou/config", h.PansouSaveConfig)
+		protected.GET("/pansou/search", h.PansouSearch)
+
 		// 离线下载（磁力/ed2k/HTTP）
 		protected.POST("/offline/add", h.offlineAddTask)
 		protected.GET("/offline/tasks", h.offlineTaskList)
