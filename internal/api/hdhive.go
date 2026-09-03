@@ -2,9 +2,14 @@ package api
 
 // ==================== HDHive（影巢）网页通道接入 ====================
 //
-// 影巢的官方凭证（API Key / OAuth 应用）全部需要站方审核，因此本通道走
-// 网页账号密码（零审核），对齐 MoviePilot agentresourceofficer / p115strmhelper
-// 的网页实现：
+// 主通道（2026-09 站点改版后）：种子聚合搜索 torrentclaw——实测免签名
+// 免登录（签名墙只在 /api/customer/* 旧接口），浏览器普通 fetch 即 200：
+//
+//   - 搜索：GET /api/torrentclaw/torrents?tmdbId=&type=&title=&page=&pageSize=&sort=quality
+//     返回媒体信息（海报/评分/中英标题）+ 种子列表（磁力/做种/规格/威胁等级）
+//   - 转存：磁力提交 115 离线下载（offlineSubmitCore），完成后自动整理入库
+//
+// 辅助通道（旧版 115 网盘资源，页面仍存在时可用，走网页账号登录）：
 //
 //   - 登录：POST /api/customer/user/login {username,password}（备选
 //     /api/customer/auth/login），取 Set-Cookie（token/refresh_token/...）
@@ -12,12 +17,9 @@ package api
 //   - 会话：Cookie（含 cf_clearance）+ 绑定 UA 持久化，失效自动重登
 //   - Cloudflare：影巢对数据中心 IP/非浏览器指纹可能 403 封禁页，
 //     直连（Chrome 指纹 tls-client）被拦时会给出明确报错
-//   - 搜索：GET /tmdb/{movie|tv}/{tmdb_id} 渲染页 → 解析资源卡片
-//     （标题/大小/分辨率/积分/发布时间，规则对齐 _SCRAPE_CARDS_JS）
 //   - 解锁：GET /resource/115/{slug} 渲染页 → 正则提取 115 分享链接；
-//     免费/已解锁资源直接出链接，付费资源需先在影巢网页解锁（点「确定
-//     解锁」的动作只有真实浏览器能触发），解锁后回到本页重试即可转存
-//   - 转存：115 分享链接走 shareReceiveCore 四步转存 → 自动整理入库
+//     免费/已解锁资源直接出链接，付费资源需先在影巢网页解锁，解锁后
+//     回到本页重试即可转存
 
 import (
 	"bytes"
@@ -29,6 +31,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1160,6 +1163,220 @@ func (h *Handler) HdhiveResources(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cards})
 }
 
+// ==================== 种子聚合搜索（改版主通道：torrentclaw 免签名免登录） ====================
+//
+// 影巢搜索页的资源列表数据源是 /api/torrentclaw/torrents。实测（2026-09）
+// 该接口不经过站点安全签名层（missing_signature 仅出现在 /api/customer/*），
+// 也不依赖登录会话（credentials: omit 照样 200），服务端直连只剩
+// Cloudflare 一层，由 hdhiveDirect 的 Chrome TLS 指纹负责。
+
+// hdhiveTorrent 归一化后的种子条目
+type hdhiveTorrent struct {
+	RawTitle     string `json:"raw_title"`
+	MagnetURL    string `json:"magnet_url"`
+	InfoHash     string `json:"info_hash"`
+	Quality      string `json:"quality"`
+	QualityScore int    `json:"quality_score"`
+	SizeText     string `json:"size_text"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Seeders      int64  `json:"seeders"`
+	Leechers     int64  `json:"leechers"`
+	Source       string `json:"source"`
+	Season       *int   `json:"season,omitempty"`
+	Episode      *int   `json:"episode,omitempty"`
+	UploadedAt   string `json:"uploaded_at"`
+	ThreatLevel  string `json:"threat_level"` // clean / dangerous / ""
+	ScanStatus   string `json:"scan_status"`
+}
+
+// HdhiveTorrents GET /hdhive/torrents?media_type=movie|tv&tmdb_id=&title=&page=&page_size=
+// 影巢聚合种子搜索（免登录）。返回归一化种子列表 + 媒体信息（海报/评分/中英标题）。
+func (h *Handler) HdhiveTorrents(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	mediaType := strings.ToLower(strings.TrimSpace(c.Query("media_type")))
+	if mediaType != "movie" && mediaType != "tv" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "media_type 必须是 movie 或 tv"})
+		return
+	}
+	tmdbID := strings.TrimSpace(c.Query("tmdb_id"))
+	title := strings.TrimSpace(c.Query("title"))
+	if tmdbID == "" || title == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需要 tmdb_id 与 title 参数"})
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "24"))
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 24
+	}
+	q := url.Values{
+		"tmdbId":   {tmdbID},
+		"type":     {mediaType},
+		"title":    {title},
+		"page":     {strconv.Itoa(page)},
+		"pageSize": {strconv.Itoa(pageSize)},
+		"sort":     {"quality"},
+	}
+	status, body, _, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/api/torrentclaw/torrents?"+q.Encode(), "", map[string]string{
+		"Accept":  "application/json",
+		"Referer": cfg.BaseURL + "/search",
+	})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "连接影巢失败: " + sanitizeWecomErr(err)})
+		return
+	}
+	if hdhiveIsCFBlock(status, body) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("影巢被 Cloudflare 拦截（HTTP %d）——当前服务器 IP 无法直连影巢", status)})
+		return
+	}
+	if status != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("影巢搜索接口异常（HTTP %d）: %s", status, truncateStr(body, 160))})
+		return
+	}
+	var out struct {
+		Result *struct {
+			Title         string             `json:"title"`
+			TitleOriginal string             `json:"titleOriginal"`
+			Year          int                `json:"year"`
+			PosterURL     string             `json:"posterUrl"`
+			Rating        string             `json:"rating"`
+			IMDbID        string             `json:"imdbId"`
+			HasTorrents   bool               `json:"hasTorrents"`
+			Torrents      []hdhiveTorrentRaw `json:"torrents"`
+		} `json:"result"`
+	}
+	if json.Unmarshal([]byte(body), &out) != nil || out.Result == nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢搜索响应解析失败: " + truncateStr(body, 160)})
+		return
+	}
+	items := hdhiveNormalizeTorrents(out.Result.Torrents)
+	log.Printf("[影巢] ✓ 聚合搜索「%s」(%s tmdb=%s)：%d 条种子", title, mediaType, tmdbID, len(items))
+	c.JSON(http.StatusOK, gin.H{
+		"data": items,
+		"media": gin.H{
+			"title":          out.Result.Title,
+			"title_original": out.Result.TitleOriginal,
+			"year":           out.Result.Year,
+			"poster":         out.Result.PosterURL,
+			"rating":         out.Result.Rating,
+			"imdb_id":        out.Result.IMDbID,
+		},
+		"page": page,
+	})
+}
+
+// hdhiveTorrentRaw torrentclaw 响应的原始条目（字段名为驼峰）
+type hdhiveTorrentRaw struct {
+	RawTitle     string  `json:"rawTitle"`
+	MagnetURL    string  `json:"magnetUrl"`
+	InfoHash     string  `json:"infoHash"`
+	Quality      string  `json:"quality"`
+	QualityScore int     `json:"qualityScore"`
+	SizeBytes    int64   `json:"sizeBytes"`
+	Seeders      int64   `json:"seeders"`
+	Leechers     int64   `json:"leechers"`
+	Source       string  `json:"source"`
+	Season       *int    `json:"season"`
+	Episode      *int    `json:"episode"`
+	UploadedAt   string  `json:"uploadedAt"`
+	ThreatLevel  *string `json:"threatLevel"`
+	ScanStatus   *string `json:"scanStatus"`
+}
+
+// hdhiveNormalizeTorrents 原始条目 → 归一化列表：
+// 磁力缺失时用 infoHash 兜底、来源 "knaben:The" 截断为站点名、
+// 站点 quality 序保留但确认危险的（假种/可执行文件）沉底，前端标红
+func hdhiveNormalizeTorrents(raw []hdhiveTorrentRaw) []hdhiveTorrent {
+	items := make([]hdhiveTorrent, 0, len(raw))
+	for _, t := range raw {
+		if t.RawTitle == "" && t.InfoHash == "" {
+			continue
+		}
+		it := hdhiveTorrent{
+			RawTitle:     t.RawTitle,
+			MagnetURL:    t.MagnetURL,
+			InfoHash:     t.InfoHash,
+			Quality:      t.Quality,
+			QualityScore: t.QualityScore,
+			SizeText:     hdhiveHumanSize(t.SizeBytes),
+			SizeBytes:    t.SizeBytes,
+			Seeders:      t.Seeders,
+			Leechers:     t.Leechers,
+			Season:       t.Season,
+			Episode:      t.Episode,
+			UploadedAt:   t.UploadedAt,
+		}
+		if it.MagnetURL == "" && it.InfoHash != "" {
+			it.MagnetURL = "magnet:?xt=urn:btih:" + it.InfoHash
+		}
+		if i := strings.IndexByte(t.Source, ':'); i > 0 {
+			it.Source = t.Source[:i]
+		} else {
+			it.Source = t.Source
+		}
+		if t.ThreatLevel != nil {
+			it.ThreatLevel = *t.ThreatLevel
+		}
+		if t.ScanStatus != nil {
+			it.ScanStatus = *t.ScanStatus
+		}
+		items = append(items, it)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		di, dj := items[i].ThreatLevel == "dangerous", items[j].ThreatLevel == "dangerous"
+		if di != dj {
+			return !di
+		}
+		return false
+	})
+	return items
+}
+
+// hdhiveHumanSize 字节数 → 人类可读（1.07 GB / 863 MB）
+func hdhiveHumanSize(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.2f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
+	case n > 0:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	}
+	return ""
+}
+
+// HdhiveGrab POST /hdhive/grab {magnet}
+// 影巢种子磁力 → 115 离线下载：目标目录用影巢配置（空则分享接收文件夹），
+// 完成后自动整理入库（跟随影巢配置 organize，默认开）。
+func (h *Handler) HdhiveGrab(c *gin.Context) {
+	var req struct {
+		Magnet string `json:"magnet"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Magnet) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少磁力链接"})
+		return
+	}
+	magnet := strings.TrimSpace(req.Magnet)
+	if !strings.HasPrefix(magnet, "magnet:") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "只支持磁力链接（magnet:）"})
+		return
+	}
+	cfg := loadHdhiveCfg()
+	status, msg := h.offlineSubmitCore(magnet, cfg.TargetDir, cfg.Organize)
+	if status != http.StatusOK {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	log.Printf("[影巢] ✓ 磁力已提交 115 离线下载: %s", truncateStr(magnet, 60))
+	c.JSON(http.StatusOK, gin.H{
+		"message": msg,
+		"note":    "秒传命中约 1 分钟后 STRM 生成；新下载需等 115 下载完成后由定时任务接管",
+	})
+}
+
 // HdhiveDiagSign GET /hdhive/diag/sign
 // 摘取含握手/签名的 JS chunk 关键代码段，用于评估 Go 侧复刻签名可行性
 func (h *Handler) HdhiveDiagSign(c *gin.Context) {
@@ -1265,11 +1482,11 @@ func (h *Handler) HdhiveDiag(c *gin.Context) {
 	}
 	// 扫描全部 chunk：API 路径、action ID、关键词上下文摘要
 	type chunkFinding struct {
-		URL     string   `json:"url"`
-		Status  string   `json:"status,omitempty"`
-		Size    int      `json:"size,omitempty"`
-		APIs    []string `json:"apis,omitempty"`
-		Actions []string `json:"actions,omitempty"`
+		URL      string   `json:"url"`
+		Status   string   `json:"status,omitempty"`
+		Size     int      `json:"size,omitempty"`
+		APIs     []string `json:"apis,omitempty"`
+		Actions  []string `json:"actions,omitempty"`
 		Excerpts []string `json:"excerpts,omitempty"`
 	}
 	excerptAround := func(body, kw string) string {

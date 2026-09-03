@@ -164,7 +164,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') gyLoadPage(); // 影巢已暂停（待开发），不再加载其配置
+  if (id === 'media-transfer') { gyLoadPage(); loadHdhivePage(); }
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -3268,10 +3268,9 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==================== 影视转存 · 影巢 ====================
-// ==================== 影视转存 · 影巢 ====================
-// 网页账号密码登录（影巢官方凭证需审核，走零门槛网页通道）：
-// TMDB 选片 → 影巢搜资源 → 点资源行提取 115 分享链接自动转存，完成后自动整理入库。
-// 服务器直连被 Cloudflare 拦截时会给出明确报错。
+// 主通道：TMDB 选片 → 影巢聚合种子搜索（/api/torrentclaw 免签名免登录）
+// → 点击种子行提交 115 离线下载，完成后自动整理入库。账号登录仅旧版
+// 115 网盘资源解锁通道需要。服务器被 Cloudflare 拦截时给出明确报错。
 async function loadHdhivePage() {
   try {
     const d = await api('/hdhive/config');
@@ -3279,7 +3278,6 @@ async function loadHdhivePage() {
     document.getElementById('hd-username').value = d.username || '';
     document.getElementById('hd-password').value = d.password || '';
     document.getElementById('hdhive-target-dir').value = d.target_dir || '';
-    setHdhiveAllowPoints(!!d.allow_points);
     hdRenderLogin(d.logged_in, d.login_at, d.user);
     // 配置已即时回填；登录态异步校准（不阻塞输入框显示）
     api('/hdhive/check').then(r => hdRenderLogin(r.logged_in, r.login_at, r.user)).catch(() => {});
@@ -3315,17 +3313,10 @@ function hdRenderLogin(loggedIn, loginAt, user) {
   }
 }
 
-function setHdhiveAllowPoints(v) {
-  document.querySelectorAll('#hdhive-allow-points .seg-item').forEach(el => {
-    el.classList.toggle('active', String(el.dataset.value) === String(v));
-  });
-}
-
 async function hdSaveConfig(btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
   try {
-    const allowEl = document.querySelector('#hdhive-allow-points .seg-item.active');
     await api('/hdhive/config', {
       method: 'POST',
       body: JSON.stringify({
@@ -3333,7 +3324,6 @@ async function hdSaveConfig(btn) {
         username: document.getElementById('hd-username').value.trim(),
         password: document.getElementById('hd-password').value,
         target_dir: document.getElementById('hdhive-target-dir').value.trim(),
-        allow_points: allowEl ? allowEl.dataset.value === 'true' : false,
       }),
     });
     toast('保存成功');
@@ -3503,13 +3493,13 @@ function hdhivePickTmdb(id, mediaType, el) {
 
 async function hdhiveSearchSite() {
   const body = document.getElementById('hdhive-modal-body');
-  body.innerHTML = '<div id="hdhive-res-list"><span style="color:var(--text-3)">搜索影巢资源中…</span></div>';
+  body.innerHTML = '<div id="hdhive-res-list"><span style="color:var(--text-3)">影巢聚合搜索中…</span></div>';
   document.getElementById('hdhive-modal-title').textContent = '影巢资源 · ' + hdhiveCur.title;
   try {
-    const d = await api('/hdhive/resources?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id);
+    const d = await api('/hdhive/torrents?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id + '&title=' + encodeURIComponent(hdhiveCur.title));
     const items = d.data || [];
     if (!items.length) {
-      body.innerHTML = '<span style="color:var(--text-3)">影巢站内没有找到「' + esc(hdhiveCur.title) + '」的资源</span>'
+      body.innerHTML = '<span style="color:var(--text-3)">影巢聚合搜索没有找到「' + esc(hdhiveCur.title) + '」的种子资源</span>'
         + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
       return;
     }
@@ -3518,13 +3508,11 @@ async function hdhiveSearchSite() {
     hdhiveRenderList();
   } catch (e) {
     body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
-      + (e.message && e.message.indexOf('签名') >= 0
-        ? ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag(\'sign\')">复制签名诊断</a>'
-        : '');
+      + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
   }
 }
 
-// 点表头排序：默认=推荐序（服务端已排：115 优先/免费优先/4K 优先），大小/积分可切换
+// 点表头排序：默认=推荐序（站点画质序 + 危险沉底），做种/大小可切换
 function hdhiveSortBy(key) {
   hdhiveSortKey = hdhiveSortKey === key ? '' : key;
   hdhiveRenderList();
@@ -3533,7 +3521,7 @@ function hdhiveSortBy(key) {
 function hdhiveRenderList() {
   const list = document.getElementById('hdhive-res-list');
   if (!list) return;
-  // 排序按钮：与资源分类 tab 同款胶囊样式（推荐=服务端序：115 优先/免费优先/4K 优先）
+  // 排序按钮：与资源分类 tab 同款胶囊样式
   const pill = (label, key) => {
     const active = hdhiveSortKey === key && key !== '';
     const bg = active ? 'var(--primary)' : 'var(--fill-2)';
@@ -3542,46 +3530,50 @@ function hdhiveRenderList() {
       + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
       + label + '</span>';
   };
-  const items = hdhiveItems.slice();
-  if (hdhiveSortKey === 'size') items.sort((a, b) => gySizeBytes(b.size) - gySizeBytes(a.size));
-  if (hdhiveSortKey === 'points') items.sort((a, b) => (a.unlock_points || 0) - (b.unlock_points || 0));
+  // 就地排序：行下标即 hdhiveItems 下标（hdhiveGrab 按下标取条目）
+  const items = hdhiveItems;
+  if (hdhiveSortKey === 'size') items.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+  if (hdhiveSortKey === 'seeds') items.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
   list.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">排序'
-    + pill('推荐', '') + pill('大小', 'size') + pill('积分', 'points')
+    + pill('推荐', '') + pill('做种', 'seeds') + pill('大小', 'size')
+    + '<span style="margin-left:auto">共 ' + items.length + ' 条 · 点击行提交 115 离线下载</span>'
     + '</div>'
-    + '<div class="otk">' + items.map(it => {
-      const slug = String(it.slug || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      const pts = parseInt(it.unlock_points, 10) || 0;
-      const pan = String(it.pan_type || it.drive_type || '').toLowerCase();
-      const panTag = pan === '115'
-        ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">115</span>'
-        : pan === 'quark'
-          ? '<span class="otag" style="background:#fff0e8;color:#d9571c">夸克</span>'
-          : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(pan || '网盘') + '</span>';
-      const meta = [it.size, (it.video_resolution || []).slice(0, 2).join('/'), (it.source || []).slice(0, 1).join(''),
-        pts > 0 ? '<span style="color:#b26a00">' + pts + ' 积分</span>' : '<span style="color:#00874a">免费</span>']
+    + '<div class="otk">' + items.map((it, i) => {
+      const q = String(it.quality || '').toUpperCase();
+      const qTag = q.indexOf('2160') >= 0 || q === '4K'
+        ? '<span class="otag" style="background:#f3e8ff;color:#7c3aed">4K</span>'
+        : q.indexOf('1080') >= 0
+          ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">1080P</span>'
+          : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(q || '未知') + '</span>';
+      const danger = it.threat_level === 'dangerous';
+      const ep = it.season ? 'S' + it.season + (it.episode ? 'E' + it.episode : '') : '';
+      const meta = [it.size_text || '', (it.seeders || 0) + ' 做种', it.source || '', ep]
         .filter(Boolean).join('<span class="otk-dot">·</span>');
-      return '<div class="otk-row" style="cursor:pointer" onclick="hdhiveSubmit(\'' + slug + '\',' + pts + ',this)">'
-      + panTag
-      + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title || '') + '">' + esc(it.title || slug) + '</div>'
+      return '<div class="otk-row" style="cursor:pointer;' + (danger ? 'opacity:.55' : '') + '" onclick="hdhiveGrab(' + i + ',this)">'
+      + qTag
+      + '<div class="otk-main"><div class="otk-name" title="' + esc(it.raw_title || '') + '">' + esc(it.raw_title || it.info_hash) + '</div>'
       + '<div class="otk-sub">' + meta + '</div>'
       + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-      + '<div class="otk-side" style="color:var(--primary)">解锁转存 ›</div>'
+      + (danger ? '<span class="otag" style="background:#fdecec;color:#c0392b;flex:none">⚠ 可疑</span>' : '')
+      + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
       + '</div>';
     }).join('') + '</div>';
 }
 
-// 点击资源行：解锁 → 115 自动转存（一步完成）
-async function hdhiveSubmit(slug, points, el) {
+// 点击种子行：磁力 → 115 离线下载（完成后自动整理入库）
+async function hdhiveGrab(i, el) {
+  const it = hdhiveItems[i];
+  if (!it || !it.magnet_url) { toast('该条目没有可用磁力链接'); return; }
   const st = el.querySelector('.gy-st');
-  if (st && st.dataset.done === '1') { toast('该资源已转存过'); return; }
-  if (st) { st.style.color = 'var(--text-3)'; st.textContent = points > 0 ? '解锁中（消耗 ' + points + ' 积分）…' : '解锁中…'; }
+  if (st && st.dataset.done === '1') { toast('该种子已提交过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提交 115 离线下载中…'; }
   try {
-    const r = await api('/hdhive/unlock', {
+    await api('/hdhive/grab', {
       method: 'POST',
-      body: JSON.stringify({ slug: slug, points: points }),
+      body: JSON.stringify({ magnet: it.magnet_url }),
     });
-    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '完成'); }
-    toast(r.manual ? (r.message || '已解锁') : '已解锁并转存 115，完成后自动整理入库');
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ 已提交离线下载'; }
+    toast('已提交 115 离线下载，完成后自动整理入库');
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
   }

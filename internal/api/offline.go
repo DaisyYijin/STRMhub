@@ -23,80 +23,57 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// offlineAddTask 添加离线下载任务（磁力/ed2k/HTTP/FTP）
-// POST /offline/add  body: {"url":"magnet:?xt=...", "target_cid":"可选"}
-func (h *Handler) offlineAddTask(c *gin.Context) {
-	var req struct {
-		URL      string `json:"url"`
-		Target   string `json:"target_cid"`
-		Organize bool   `json:"organize"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写链接"})
-		return
-	}
-
+// offlineSubmitCore 提交离线下载任务核心（/offline/add 与影巢磁力转存共用）。
+// target 空则回落分享同步接收文件夹；organize 时挂秒传试探与延迟整理。
+// 返回 (HTTP 状态码, 成功消息或错误信息)。
+func (h *Handler) offlineSubmitCore(rawURL, target string, organize bool) (int, string) {
 	// 验证链接类型
-	linkType := classifyLink(req.URL)
+	linkType := classifyLink(rawURL)
 	if linkType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的链接类型（仅支持磁力/ed2k/HTTP/FTP）"})
-		return
+		return http.StatusBadRequest, "不支持的链接类型（仅支持磁力/ed2k/HTTP/FTP）"
 	}
 	if linkType == "share" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "115 分享链接不支持离线下载，请使用「分享转存」功能（或把链接发给机器人自动转存）"})
-		return
+		return http.StatusBadRequest, "115 分享链接不支持离线下载，请使用「分享转存」功能（或把链接发给机器人自动转存）"
 	}
 
 	cookie, err := h.get115Cookie()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		return http.StatusBadRequest, err.Error()
 	}
 
 	// 目标目录：参数优先，否则用分享同步配置的接收文件夹
-	if req.Target == "" {
+	if target == "" {
 		var cfg struct {
 			Folder string `json:"folder"`
 		}
 		_ = json.Unmarshal([]byte(h.getSettingValue("share")), &cfg)
-		req.Target = cfg.Folder
-	}
-
-	// 构造载荷
-	payload := map[string]string{
-		"url": req.URL,
-	}
-	if req.Target != "" {
-		payload["wp_path_id"] = req.Target
+		target = cfg.Folder
 	}
 
 	// 用 web 版离线下载接口（Cookie 认证，表单提交）
-	form := url.Values{"url": {req.URL}}
-	if req.Target != "" {
-		form.Set("wp_path_id", req.Target)
+	form := url.Values{"url": {rawURL}}
+	if target != "" {
+		form.Set("wp_path_id", target)
 	}
-	// 先尝试 115.com 的 web 离线下载接口
 	body, err := post115Form("https://115.com/web/lixian/?ac=add_task_url", form, cookie, ua115Unified(), 20*time.Second)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "离线下载请求失败: " + err.Error()})
-		return
+		return http.StatusBadGateway, "离线下载请求失败: " + err.Error()
 	}
 	vlog("[上传] 离线下载响应: %s", truncateStr(string(body), 150))
 
 	// 解析响应（兼容多种错误字段名）
 	var resp struct {
-		State    bool   `json:"state"`
-		Error    string `json:"error"`
-		ErrorMsg string `json:"error_msg"`
-		ErrNo    int    `json:"errno"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errMsg"`
-		Message string `json:"message"`
-		Data    json.RawMessage `json:"data"`
+		State    bool            `json:"state"`
+		Error    string          `json:"error"`
+		ErrorMsg string          `json:"error_msg"`
+		ErrNo    int             `json:"errno"`
+		ErrCode  int             `json:"errcode"`
+		ErrMsg   string          `json:"errMsg"`
+		Message  string          `json:"message"`
+		Data     json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "解析响应失败: " + truncateStr(string(body), 300)})
-		return
+		return http.StatusBadGateway, "解析响应失败: " + truncateStr(string(body), 300)
 	}
 	if !resp.State {
 		// 按优先级取错误信息：error_msg > error > errMsg > message > 错误码
@@ -119,17 +96,16 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 		if errMsg == "" {
 			errMsg = "未知原因（响应: " + truncateStr(string(body), 100) + "）"
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
-		return
+		return http.StatusBadGateway, errMsg
 	}
 
-	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(req.URL, 60), linkType)
-	offlineMineAdd(h, req.URL) // 归属标记：完成通知只发给 StrmHub 内提交的任务
+	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(rawURL, 60), linkType)
+	offlineMineAdd(h, rawURL) // 归属标记：完成通知只发给 StrmHub 内提交的任务
 
 	// 离线下载是异步的：提交后 10 秒先试探一轮（115 秒传命中时文件已就位，
 	// CMS 同款极速响应——秒传场景 ~15 秒即开始整理）；未命中则 60 秒后再试，
 	// 仍没好就交给守望者/离线任务监视器（下载完成时触发）
-	if req.Organize {
+	if organize {
 		go func() {
 			time.Sleep(10 * time.Second)
 			if cid := h.shareFolderCid(); cid != "" {
@@ -145,10 +121,29 @@ func (h *Handler) offlineAddTask(c *gin.Context) {
 			h.triggerOrganizeAndSync()
 		}()
 	}
+	return http.StatusOK, "离线下载任务已提交，下载完成后自动生成 STRM"
+}
 
+// offlineAddTask 添加离线下载任务（磁力/ed2k/HTTP/FTP）
+// POST /offline/add  body: {"url":"magnet:?xt=...", "target_cid":"可选"}
+func (h *Handler) offlineAddTask(c *gin.Context) {
+	var req struct {
+		URL      string `json:"url"`
+		Target   string `json:"target_cid"`
+		Organize bool   `json:"organize"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写链接"})
+		return
+	}
+	status, msg := h.offlineSubmitCore(req.URL, req.Target, req.Organize)
+	if status != http.StatusOK {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"message": "离线下载任务已提交，下载完成后自动生成 STRM",
-		"type":    linkType,
+		"message": msg,
+		"type":    classifyLink(req.URL),
 		"note":    "秒传命中约 1 分钟后 STRM 生成；新下载需等 115 下载完成后由定时任务接管",
 	})
 }
@@ -338,7 +333,7 @@ func offlineMineSave(h *Handler, marks map[string]int64) {
 
 // offlineMineAdd 提交成功后登记任务指纹（magnet→btih、ed2k→hash、以及原始 URL）
 // offlineFastPolls 快速轮询预算：新任务提交后 10 秒一轮、最多 5 次
-//（覆盖提交后第一分钟，秒传/小任务即刻被发现），用尽回 30 秒常规节奏
+// （覆盖提交后第一分钟，秒传/小任务即刻被发现），用尽回 30 秒常规节奏
 // 守 115 风控；任务从排队转为下载中时重新给满 5 次
 var offlineFastPolls atomic.Int64
 
@@ -419,7 +414,7 @@ func offlineMineMatch(h *Handler, marks map[string]int64, key, name string) bool
 func StartTransferWatcher(h *Handler) {
 	go func() {
 		lastTrigger := time.Time{}
-		failCount := 0    // 整理后目录仍未清空的连续次数
+		failCount := 0 // 整理后目录仍未清空的连续次数
 		pauseUntil := time.Time{}
 		for {
 			select {
@@ -484,10 +479,11 @@ func StartTransferWatcher(h *Handler) {
 // 磁力下载不是百分百成功（资源失效/任务报错都常见），且完成时间不可控：
 //   - 任务完成（status=2）→ 立即触发整理（不等 60 秒目录轮询）
 //   - 任务失败（status=-1）→ 日志告警（此前静默失败，用户永远等不到）
+//
 // 状态码语义与 LitePan/openapi 一致：-1 失败 / 0 排队 / 1 下载中 / 2 完成
 func StartOfflineTaskMonitor(h *Handler) {
 	go func() {
-		bootAt := time.Now().Unix() // 只处理本进程启动之后完成的任务
+		bootAt := time.Now().Unix()    // 只处理本进程启动之后完成的任务
 		lastStatus := map[string]int{} // info_hash/url → 上次状态
 		notified := map[string]bool{}  // 已处理过的终态任务（避免重复告警/触发）
 		for {
@@ -649,9 +645,9 @@ func unwrapItems(v interface{}) ([]map[string]interface{}, bool) {
 
 // offlineTaskInfo 离线任务摘要
 type offlineTaskInfo struct {
-	key    string // info_hash 优先，空则 name
-	name   string
-	status int
+	key     string // info_hash 优先，空则 name
+	name    string
+	status  int
 	delTime int64 // 完成时间戳（秒；115 任务列表会长期保留历史任务，用它区分新旧）
 }
 

@@ -32,7 +32,9 @@ func TestHdhiveParseCards(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || len(sub) == 0 || indexOf(s, sub) >= 0) }
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || indexOf(s, sub) >= 0)
+}
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -75,5 +77,41 @@ func TestHdhive115Link(t *testing.T) {
 		if got := hdhiveTrimLink(m); got != tc.want {
 			t.Errorf("提取 %q want %q", got, tc.want)
 		}
+	}
+}
+
+// TestHdhiveNormalizeTorrents 归一化：磁力兜底/来源截断/危险沉底/大小文本
+func TestHdhiveNormalizeTorrents(t *testing.T) {
+	danger := "dangerous"
+	raw := []hdhiveTorrentRaw{
+		{RawTitle: "Fake.Setup.exe", InfoHash: "aaaa", ThreatLevel: &danger, SizeBytes: 1200 * 1024 * 1024, Seeders: 19},
+		{RawTitle: "Movie 2160p HDR GB", MagnetURL: "magnet:?xt=urn:btih:bbbb", InfoHash: "bbbb", Quality: "2160p", SizeBytes: 42 * 1024 * 1024 * 1024, Seeders: 240, Source: "knaben:The"},
+		{RawTitle: "No magnet item", InfoHash: "cccc", Quality: "1080p", SizeBytes: 800 * 1024 * 1024, Seeders: 12, Source: "eztv"},
+		{RawTitle: "", InfoHash: ""}, // 空条目应被丢弃
+	}
+	items := hdhiveNormalizeTorrents(raw)
+	if len(items) != 3 {
+		t.Fatalf("期望 3 条（空条目丢弃），实得 %d", len(items))
+	}
+	// 危险条目沉底
+	if items[2].ThreatLevel != "dangerous" {
+		t.Fatalf("危险条目应沉底，实得顺序: %s / %s / %s", items[0].RawTitle, items[1].RawTitle, items[2].RawTitle)
+	}
+	first := items[0]
+	if first.MagnetURL != "magnet:?xt=urn:btih:bbbb" {
+		t.Fatalf("保留原始磁力，实得 %s", first.MagnetURL)
+	}
+	if first.SizeText != "42.00 GB" {
+		t.Fatalf("大小文本应为 42.00 GB，实得 %s", first.SizeText)
+	}
+	if first.Source != "knaben" {
+		t.Fatalf("来源应截断为 knaben，实得 %s", first.Source)
+	}
+	third := items[1]
+	if third.MagnetURL != "magnet:?xt=urn:btih:cccc" {
+		t.Fatalf("缺磁力时应用 infoHash 兜底，实得 %s", third.MagnetURL)
+	}
+	if third.SizeText != "800 MB" || third.Source != "eztv" {
+		t.Fatalf("800 MB/eztv 期望，实得 %s/%s", third.SizeText, third.Source)
 	}
 }

@@ -752,20 +752,19 @@ av:
     <!-- 影视转存（资源站搜索 → 解锁 → 115 转存 → 自动整理） -->
     <div class="page" id="page-media-transfer">
       <div class="tabs">
-        <div class="tab" data-tab="mt-hdhive" style="opacity:.45;pointer-events:none">影巢（待开发）</div>
-        <div class="tab active" data-tab="mt-gy">观影</div>
+        <div class="tab active" data-tab="mt-hdhive">影巢</div>
+        <div class="tab" data-tab="mt-gy">观影</div>
         <div class="tab" style="opacity:.45;pointer-events:none">更多资源站（待开发）</div>
       </div>
-      <div class="tab-panel" data-panel="mt-hdhive">
+      <div class="tab-panel active" data-panel="mt-hdhive">
         <div class="card">
-          <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢官方地址 https://hdhive.com，被墙或换域名时可自行修改，保存后需重新登录。</span></i></div><div class="control"><input type="text" id="hd-base" placeholder="影巢站点地址"></div></div>
-          <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢站内账号。登录即测试账号有效性，会话 Cookie 持久化，失效后重新登录即可。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hd-username" placeholder="影巢账号" style="flex:1" autocomplete="off"><input type="password" id="hd-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="hd-auth-btn" onclick="hdAuthClick(this)">登录</button></div></div></div>
-          <div class="form-row"><div class="label">转存目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">解锁资源后 115 自动转存的目标目录。留空则使用「分享同步」里配置的接收文件夹。转存成功后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-target-dir" placeholder="解锁转存的目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('hdhive-target-dir')">选择目录</button></div></div></div>
-          <div class="form-row"><div class="label">允许消耗积分<i class="help-tip" tabindex="0">?<span class="tip-bubble">付费资源需要在影巢网页端点「确定解锁」（站方限制，只有真实浏览器能触发）。解锁过一次的资源，这里点重试即可自动转存。</span></i></div><div class="control"><div class="segmented-control" id="hdhive-allow-points"><div class="seg-item" data-value="false" onclick="setHdhiveAllowPoints(false)">关闭</div><div class="seg-item" data-value="true" onclick="setHdhiveAllowPoints(true)">开启</div></div></div></div>
+          <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢官方地址 https://hdhive.com，被墙或换域名时可自行修改。</span></i></div><div class="control"><input type="text" id="hd-base" placeholder="影巢站点地址"></div></div>
+          <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">影巢站内账号。聚合种子搜索无需登录；登录仅旧版 115 网盘资源解锁通道需要。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hd-username" placeholder="影巢账号" style="flex:1" autocomplete="off"><input type="password" id="hd-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="hd-auth-btn" onclick="hdAuthClick(this)">登录</button></div></div></div>
+          <div class="form-row"><div class="label">转存目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">种子磁力提交 115 离线下载的目标目录。留空则使用「分享同步」里配置的接收文件夹。下载完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-target-dir" placeholder="离线下载转存的目标目录" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('hdhive-target-dir')">选择目录</button></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="hdSaveConfig(this)">保存配置</button> <button class="btn btn-warning" onclick="hdResetConfig(this)">重置配置</button> <span id="hd-login-status" style="font-size:13px;color:var(--text-3);align-self:center;margin-left:6px"></span></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目（支持直接填 TMDB ID），选定具体影片后搜影巢资源：点击资源行自动提取 115 分享链接并转存到目标目录，完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')hdhiveSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="hdhiveSearch()">搜索</button></div></div></div>
+          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目（支持直接填 TMDB ID），选定影片后影巢聚合搜索全网种子资源（免登录）。点击资源行自动提交 115 离线下载，完成后自动整理入库。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="hdhive-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')hdhiveSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="hdhiveSearch()">搜索</button></div></div></div>
         </div>
         <div class="modal-mask" id="hdhive-modal" style="display:none" onclick="if(event.target===this)hdhiveModalClose()">
           <div class="modal" style="max-width:720px">
@@ -777,7 +776,7 @@ av:
           </div>
         </div>
       </div>
-      <div class="tab-panel active" data-panel="mt-gy">
+      <div class="tab-panel" data-panel="mt-gy">
         <div class="card">
           <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">观影常更换域名（gying.in 已失效），默认观影.com。搜索失败时到站点首页看最新地址，改这里后保存并重新登录。</span></i></div><div class="control"><input type="text" id="gy-base" placeholder="观影站点地址"></div></div>
           <div class="form-row"><div class="label">账号<i class="help-tip" tabindex="0">?<span class="tip-bubble">观影站内账号（搜索/详情需登录）。登录即测试账号有效性；服务端自动通过站点反爬验证并保持登录态，会话失效后自动重登。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="gy-username" placeholder="观影用户名 / 邮箱" style="flex:1" autocomplete="off"><input type="password" id="gy-password" placeholder="密码" style="flex:1" autocomplete="new-password"><button class="btn btn-primary" id="gy-auth-btn" onclick="gyAuthClick(this)">登录</button></div></div></div>

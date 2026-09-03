@@ -12,14 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"strmhub/internal/config"
 	"strmhub/internal/model"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
 	"github.com/golang-jwt/jwt/v5"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -315,7 +315,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		// QQ OneBot 事件回调（NapCat 等推送事件；token 鉴权，私聊管理 QQ 触发指令）
 		r.POST("/onebot/event", h.OneBotEvent)
 
-						
 		// 刮削整理
 		protected.GET("/scrape/rules", h.ListScrapeRules)
 		protected.POST("/scrape/rules", h.SaveScrapeRules)
@@ -411,13 +410,15 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/tgsub/config", h.TgSubSaveConfig)
 		protected.POST("/tgsub/run", h.TgSubRun)
 
-		// 影视转存 · 影巢（网页账号密码登录 → 搜资源 → 解锁 → 115 转存）
+		// 影视转存 · 影巢（聚合种子搜索免登录；旧版网盘资源走网页账号）
 		protected.GET("/hdhive/config", h.HdhiveGetConfig)
 		protected.GET("/hdhive/check", h.HdhiveCheck)
 		protected.POST("/hdhive/config", h.HdhiveSaveConfig)
 		protected.POST("/hdhive/test", h.HdhiveTest)
 		protected.POST("/hdhive/login", h.HdhiveLogin)
 		protected.POST("/hdhive/logout", h.HdhiveLogout)
+		protected.GET("/hdhive/torrents", h.HdhiveTorrents)
+		protected.POST("/hdhive/grab", h.HdhiveGrab)
 		protected.GET("/hdhive/resources", h.HdhiveResources)
 		protected.GET("/hdhive/diag", h.HdhiveDiag)
 		protected.GET("/hdhive/diag/sign", h.HdhiveDiagSign)
@@ -737,12 +738,12 @@ func (h *Handler) CheckStorage(c *gin.Context) {
 		_ = json.Unmarshal(resp.Data, &d)
 		userName = d.UserName
 		accInfo = gin.H{
-			"avatar":        d.Face,
-			"user_id":       d.UserID,
-			"vip":           d.Vip,
-			"vip_expire":    d.Expire,
-			"vip_forever":   d.Forever,
-			"is_privilege":  d.IsPrivilege,
+			"avatar":       d.Face,
+			"user_id":      d.UserID,
+			"vip":          d.Vip,
+			"vip_expire":   d.Expire,
+			"vip_forever":  d.Forever,
+			"is_privilege": d.IsPrivilege,
 		}
 	}
 	if !resp.State || userName == "" {
