@@ -1121,7 +1121,7 @@ av:
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
           <select id="tgsub-f-type" class="inline-input" style="max-width:150px" onchange="tgSubRenderAll()">
             <option value="">全部类型</option>
-            <option value="source">订阅源</option>
+            <option value="source">TG群</option>
             <option value="item">关键词订阅</option>
           </select>
           <select id="tgsub-f-status" class="inline-input" style="max-width:130px" onchange="tgSubRenderAll()">
@@ -1143,11 +1143,11 @@ av:
           <h3 id="tgsub-edit-title">新增订阅</h3>
           <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 类型</div><div class="control">
             <label style="font-size:13px;margin-right:18px"><input type="radio" name="tgsub-etype" value="item" checked onchange="tgSubEditTypeSwitch()"> 关键词订阅</label>
-            <label style="font-size:13px"><input type="radio" name="tgsub-etype" value="source" onchange="tgSubEditTypeSwitch()"> 订阅源（TG 频道）</label>
+            <label style="font-size:13px"><input type="radio" name="tgsub-etype" value="source" onchange="tgSubEditTypeSwitch()"> TG群</label>
           </div></div>
           <div id="tgsub-edit-item">
             <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 关键词</div><div class="control"><input type="text" id="tgsub-e-keyword" placeholder="片名 / 番号" class="inline-input"></div></div>
-            <div class="form-row"><div class="label">指定频道</div><div class="control"><textarea id="tgsub-e-channels" class="auto-resize" rows="2" placeholder="留空使用全部订阅源；如：@channel1&#10;@channel2"></textarea></div></div>
+            <div class="form-row"><div class="label">指定频道</div><div class="control"><textarea id="tgsub-e-channels" class="auto-resize" rows="2" placeholder="留空使用全部TG群；如：@channel1&#10;@channel2"></textarea></div></div>
             <div class="form-row"><div class="label">自动转存</div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-e-auto"> 命中后自动转存/离线</label></div></div>
           </div>
           <div id="tgsub-edit-source" style="display:none">
@@ -1297,7 +1297,7 @@ av:
   </div>
 </div>
 
-<!-- 新增订阅源弹窗 -->
+<!-- 订阅源新增/编辑弹窗 -->
 
 
 <!-- TG 频道搜索弹窗 -->

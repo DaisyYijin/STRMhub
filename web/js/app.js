@@ -1768,7 +1768,7 @@ async function tgSubPersist(cfg, btn, doneMsg) {
   if (btn) btn.disabled = false;
 }
 
-// 渲染统一表格：类型/状态筛选 → 订阅源+关键词订阅合并列表（对齐管理端表格范式）
+// 渲染统一表格：类型/状态筛选 → TG群+关键词订阅合并列表（对齐管理端表格范式）
 function tgSubFilterVals() {
   const t = document.getElementById('tgsub-f-type');
   const st = document.getElementById('tgsub-f-status');
@@ -1816,7 +1816,7 @@ async function tgSubRenderAll(forceQuery) {
   } else {
     const trs = rows.map(r => {
       const kindTag = r._kind === 'source'
-        ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">订阅源</span>'
+        ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">TG群</span>'
         : '<span class="otag" style="background:#fff4e5;color:#b26a00">关键词订阅</span>';
       let main, sub;
       if (r._kind === 'source') {
@@ -1825,7 +1825,7 @@ async function tgSubRenderAll(forceQuery) {
           .join('<span class="otk-dot">·</span>');
       } else {
         main = esc(r.keyword);
-        sub = [r.channels ? esc(String(r.channels).split('\n').join(' ')) : '全部订阅源',
+        sub = [r.channels ? esc(String(r.channels).split('\n').join(' ')) : '全部TG群',
           r.auto ? '<span style="color:#00874a">自动转存</span>' : '',
           r.last_hit ? '最近命中 ' + esc(r.last_hit) : ''].filter(Boolean)
           .join('<span class="otk-dot">·</span>');
@@ -1877,7 +1877,7 @@ function tgSubEditModal(kind, id) {
   tgSubEditKind = kind;
   tgSubEditId = id || 0;
   const isEdit = tgSubEditId > 0;
-  document.getElementById('tgsub-edit-title').textContent = (isEdit ? '编辑' : '新增') + (kind === 'source' ? '订阅源' : '关键词订阅');
+  document.getElementById('tgsub-edit-title').textContent = (isEdit ? '编辑' : '新增') + (kind === 'source' ? 'TG群' : '关键词订阅');
   const rbSource = document.querySelector('input[name="tgsub-etype"][value="source"]');
   const rbItem = document.querySelector('input[name="tgsub-etype"][value="item"]');
   if (isEdit) {
@@ -1947,7 +1947,7 @@ async function tgSubEditSave(btn) {
     } else {
       cfg.sources.push(Object.assign({ enabled: true, last_id: 0 }, fields));
     }
-    await tgSubPersist(cfg, btn, tgSubEditId > 0 ? '订阅源已更新' : '订阅源已添加');
+    await tgSubPersist(cfg, btn, tgSubEditId > 0 ? 'TG群已更新' : 'TG群已添加');
   } else {
     const kw = document.getElementById('tgsub-e-keyword').value.trim();
     if (!kw) { toast('请填写关键词'); return; }
