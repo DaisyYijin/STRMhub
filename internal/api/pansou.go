@@ -14,6 +14,7 @@ package api
 // 手动转存到对应网盘。
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -116,6 +117,9 @@ type PansouItem struct {
 	Action    string `json:"action"` // transfer=115 转存 / offline=离线下载 / open=打开链接
 }
 
+// pansouHTTP 包级复用客户端（连接池共享；单次超时用请求级 context 控制）
+var pansouHTTP = &http.Client{}
+
 // pansouTypeRank 类型展示顺序（1 起；未知类型 map 缺省 0 → 归一为 9 沉底）
 var pansouTypeRank = map[string]int{
 	"115": 1, "quark": 2, "aliyun": 3, "baidu": 4, "uc": 5, "xunlei": 6,
@@ -169,7 +173,6 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 		if attempt == 2 {
 			time.Sleep(1500 * time.Millisecond)
 		}
-		timeout := time.Duration(30-15*(attempt-1)) * time.Second // 30s → 重试 15s
 		req, err := http.NewRequest(http.MethodGet, api, nil)
 		if err != nil {
 			lastErr = err.Error()
@@ -177,7 +180,10 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 		}
 		req.Header.Set("User-Agent", chromeUA)
 		req.Header.Set("Accept", "application/json")
-		resp, err := (&http.Client{Timeout: timeout}).Do(req)
+		// 30s → 重试 15s：请求级超时（客户端为包级复用，不能设整体 Timeout）
+		ctx, cancel := context.WithTimeout(req.Context(), time.Duration(30-15*(attempt-1))*time.Second)
+		resp, err := pansouHTTP.Do(req.WithContext(ctx))
+		cancel()
 		if err != nil {
 			lastErr = "连接盘搜失败: " + sanitizeWecomErr(err)
 			continue
@@ -192,7 +198,7 @@ func pansouSearchItems(kw string) ([]PansouItem, error) {
 	}
 	if lastErr != "" {
 		if strings.Contains(lastErr, "503") || strings.Contains(lastErr, "502") {
-			lastErr += "——公开实例可能过载/限流，请稍后重试；也可在配置里改用自建实例（docker run ghcr.io/fish2018/pansou）"
+			lastErr += "——公开实例可能过载/限流，请稍后重试；或到 StrmHub 网页端「影视转存 → 盘搜」配置自建实例（docker run ghcr.io/fish2018/pansou）"
 		}
 		return nil, fmt.Errorf("%s", lastErr)
 	}

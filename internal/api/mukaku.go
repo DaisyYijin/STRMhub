@@ -92,6 +92,9 @@ func saveMukakuCfg(cfg *mukakuCfg) error {
 	return nil
 }
 
+// mukakuHTTP 包级复用客户端（连接池共享）
+var mukakuHTTP = &http.Client{Timeout: 25 * time.Second}
+
 // mukakuAPI 带 app_id/identity/access_token 的站点 API 请求
 func mukakuAPI(cfg *mukakuCfg, method, path string, params url.Values, body any) ([]byte, error) {
 	if params == nil {
@@ -119,8 +122,7 @@ func mukakuAPI(cfg *mukakuCfg, method, path string, params url.Values, body any)
 	if cfg.AccessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
 	}
-	client := &http.Client{Timeout: 25 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := mukakuHTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +176,13 @@ func (h *Handler) MukakuSaveConfig(c *gin.Context) {
 		if !strings.Contains(base, "://") {
 			base = "https://" + base
 		}
-		cfg.BaseURL = strings.TrimRight(base, "/")
+		newBase := strings.TrimRight(base, "/")
+		if newBase != cfg.BaseURL && cfg.AccessToken != "" {
+			// 站点地址变更：旧站 token 作废（web1-web5 镜像同源，但换了部署就不可信）
+			cfg.AccessToken = ""
+			cfg.TokenAt = ""
+		}
+		cfg.BaseURL = newBase
 	}
 	if req.AccessToken != nil {
 		cfg.AccessToken = strings.TrimSpace(*req.AccessToken)
@@ -348,8 +356,13 @@ func mukakuScanResources(data json.RawMessage) ([]gin.H, bool) {
 	}
 	var out []gin.H
 	seen := map[string]bool{}
-	var walk func(node any)
-	walk = func(node any) {
+	// 深度上限 20：响应有 8MB LimitReader 兜底，但深嵌套 JSON 仍可能打爆
+	// 递归栈，限定层数防御
+	var walk func(node any, depth int)
+	walk = func(node any, depth int) {
+		if depth > 20 {
+			return
+		}
 		switch v := node.(type) {
 		case map[string]any:
 			link, _ := v["link"].(string)
@@ -368,14 +381,14 @@ func mukakuScanResources(data json.RawMessage) ([]gin.H, bool) {
 				})
 			}
 			for _, child := range v {
-				walk(child)
+				walk(child, depth+1)
 			}
 		case []any:
 			for _, child := range v {
-				walk(child)
+				walk(child, depth+1)
 			}
 		}
 	}
-	walk(root)
+	walk(root, 0)
 	return out, len(out) > 0
 }

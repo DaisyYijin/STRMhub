@@ -53,44 +53,11 @@ func wecomPansouSessionSet(user string, s *wecomPansouSession) {
 
 // wecomHandlePansouSearch 「网盘 <片名>」：TMDB 搜索并下发选片单
 func (h *Handler) wecomHandlePansouSearch(user, keyword string, reply func(...string)) {
-	movies, err := h.wecomTmdbMulti(keyword)
-	if err != nil {
-		reply("✗ TMDB 搜索失败: " + err.Error() + "（确认系统配置里 TMDB 可用）")
+	movies := h.wecomTmdbSendPickList(keyword, reply)
+	if movies == nil {
 		return
 	}
-	if len(movies) == 0 {
-		reply("TMDB 未找到「" + keyword + "」")
-		return
-	}
-	typName := func(kind string) string {
-		if kind == "tv" {
-			return "剧集"
-		}
-		return "电影"
-	}
-	lines := []string{fmt.Sprintf("TMDB 搜索「%s」，回复序号选片：", keyword)}
-	var cards []NewsArticle
-	for i, m := range movies {
-		meta := fmt.Sprintf("(%s) [%s]", m.Year, typName(m.Type))
-		if m.Vote > 0 {
-			meta += fmt.Sprintf(" %.1f分", m.Vote)
-		}
-		lines = append(lines, fmt.Sprintf("%d. %s %s", i+1, m.Title, meta))
-		a := NewsArticle{
-			Title: fmt.Sprintf("%d. %s (%s)", i+1, m.Title, m.Year),
-			Desc:  typName(m.Type) + voteSuffix(m.Vote),
-			Link:  fmt.Sprintf("https://www.themoviedb.org/%s/%d", m.Type, m.ID),
-		}
-		if m.Poster != "" {
-			a.PicURL = tmdbImageBase() + "/t/p/w300" + m.Poster
-		}
-		cards = append(cards, a)
-	}
-	lines = append(lines, "（回复 1-"+strconv.Itoa(len(movies))+" 选择，5 分钟内有效）")
 	wecomPansouSessionSet(user, &wecomPansouSession{Stage: "movie", Keyword: keyword, Movies: movies, At: time.Now()})
-	if !NotifyMessageNews(cards) {
-		reply(lines...)
-	}
 }
 
 // wecomHandlePansouPick 会话进行中收到序号：按阶段分流（选片 → 选资源）

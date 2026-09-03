@@ -3377,51 +3377,6 @@ async function mukakuLogin(btn) {
   finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
 
-async function mukakuSearch() {
-  const q = document.getElementById('mk-query').value.trim();
-  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
-  mukakuModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
-  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuPickTmdb(document.getElementById(&quot;mk-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜不太灵影视</a>';
-  try {
-    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
-    const items = d.data || [];
-    if (!items.length) {
-      mukakuModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>' + skipLink, '选择影视');
-      return;
-    }
-    const cards = items.map(it => {
-      const poster = it.poster
-        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
-          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
-        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
-      const typeTag = it.media_type === 'tv'
-        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
-        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
-      const overview = String(it.overview || '').slice(0, 100);
-      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      return '<div onclick="mukakuPickTmdb(\'' + safeTitle + '\')" '
-        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
-        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
-        + poster
-        + '<div style="min-width:0;flex:1">'
-        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
-        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
-        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
-        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
-        + '</div>'
-        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
-        + '</div></div>';
-    }).join('');
-    mukakuModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
-  } catch (e) {
-    mukakuModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>' + skipLink, '选择影视');
-  }
-}
-
-function mukakuPickTmdb(title) {
-  mukakuSearchSite(String(title || '').trim());
-}
-
 // 站内影片搜索（结果即弹窗列表，点击进资源）
 async function mukakuSearchSite(kw) {
   const body = document.getElementById('mk-modal-body');
@@ -3602,51 +3557,6 @@ function pansouModalClose() {
   document.getElementById('pansou-modal').style.display = 'none';
 }
 
-async function pansouSearch() {
-  const q = document.getElementById('pansou-query').value.trim();
-  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
-  pansouModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
-  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="pansouPickTmdb(document.getElementById(&quot;pansou-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜网盘</a>';
-  try {
-    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
-    const items = d.data || [];
-    if (!items.length) {
-      pansouModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>' + skipLink, '选择影视');
-      return;
-    }
-    const cards = items.map(it => {
-      const poster = it.poster
-        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
-          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
-        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
-      const typeTag = it.media_type === 'tv'
-        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
-        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
-      const overview = String(it.overview || '').slice(0, 100);
-      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      return '<div onclick="pansouPickTmdb(\'' + safeTitle + '\')" '
-        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
-        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
-        + poster
-        + '<div style="min-width:0;flex:1">'
-        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
-        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
-        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
-        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
-        + '</div>'
-        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
-        + '</div></div>';
-    }).join('');
-    pansouModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
-  } catch (e) {
-    pansouModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>' + skipLink, '选择影视');
-  }
-}
-
-function pansouPickTmdb(title) {
-  pansouSearchSite(String(title || '').trim());
-}
-
 async function pansouSearchSite(kw) {
   const body = document.getElementById('pansou-modal-body');
   if (!kw) { toast('请输入搜索关键词'); return; }
@@ -3762,6 +3672,102 @@ async function pansouOffline(i, el) {
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
   }
+}
+
+// ==================== TMDB 选片弹窗（观影/盘搜/不太灵影视共用） ====================
+// 关键词 → /tmdb/search → 海报选片卡片弹窗；onPick(标题) 回调、onSkip 兜底。
+// 行内 onclick 只带数组下标，标题转义问题天然规避。
+
+let _tmdbPickItems = [];
+let _tmdbPickCb = null;
+let _tmdbPickSkip = null;
+
+function tmdbPickCardClick(i) {
+  const it = _tmdbPickItems[i];
+  if (it && _tmdbPickCb) _tmdbPickCb(it.title, it);
+}
+
+function tmdbPickSkipClick() {
+  if (_tmdbPickSkip) _tmdbPickSkip();
+}
+
+async function tmdbPickFlow(query, opts) {
+  // opts: { openModal(html,title), onPick(title), onSkip?, skipLabel? }
+  const open = opts.openModal;
+  _tmdbPickCb = opts.onPick;
+  _tmdbPickSkip = opts.onSkip || null;
+  open('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
+  const skipLink = _tmdbPickSkip
+    ? '<br><a href="javascript:void(0)" style="font-size:13px" onclick="tmdbPickSkipClick()">' + esc(opts.skipLabel || '跳过 TMDB，直接用关键词搜索') + '</a>'
+    : '';
+  try {
+    const d = await api('/tmdb/search?query=' + encodeURIComponent(query));
+    const items = d.data || [];
+    if (!items.length) {
+      open('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>' + skipLink, '选择影视');
+      return;
+    }
+    _tmdbPickItems = items;
+    const cards = items.map((it, i) => {
+      const poster = it.poster
+        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
+          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
+      const typeTag = it.media_type === 'tv'
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
+      const overview = String(it.overview || '').slice(0, 100);
+      return '<div onclick="tmdbPickCardClick(' + i + ')" '
+        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
+        + poster
+        + '<div style="min-width:0;flex:1">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
+        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
+        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
+        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
+        + '</div>'
+        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
+        + '</div></div>';
+    }).join('');
+    open('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
+  } catch (e) {
+    open('<span style="color:var(--danger)">' + esc(e.message) + '</span>' + skipLink, '选择影视');
+  }
+}
+
+// —— 三个渠道的搜索入口（共用 tmdbPickFlow）——
+async function gySearch() {
+  const q = document.getElementById('gy-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  tmdbPickFlow(q, {
+    openModal: gyModalOpen,
+    onPick: title => gySearchSite(title, ''),
+    onSkip: () => gySearchSite(document.getElementById('gy-query').value.trim(), ''),
+    skipLabel: '跳过 TMDB，直接用关键词搜观影',
+  });
+}
+
+async function pansouSearch() {
+  const q = document.getElementById('pansou-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  tmdbPickFlow(q, {
+    openModal: pansouModalOpen,
+    onPick: title => pansouSearchSite(title),
+    onSkip: () => pansouSearchSite(document.getElementById('pansou-query').value.trim()),
+    skipLabel: '跳过 TMDB，直接用关键词搜盘搜',
+  });
+}
+
+async function mukakuSearch() {
+  const q = document.getElementById('mk-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  tmdbPickFlow(q, {
+    openModal: mukakuModalOpen,
+    onPick: title => mukakuSearchSite(title),
+    onSkip: () => mukakuSearchSite(document.getElementById('mk-query').value.trim()),
+    skipLabel: '跳过 TMDB，直接用关键词搜不太灵影视',
+  });
 }
 
 // ==================== 影视转存 · 观影 ====================
@@ -3886,54 +3892,7 @@ let gyCurZy = '';     // 当前资源分类（空=全部）
 let gyLastZy = {};    // 最近一次的分类分组（切分类时高亮用）
 
 // 搜索入口：TMDB 匹配条目，弹窗海报墙 + 简介让用户选择
-async function gySearch() {
-  const q = document.getElementById('gy-query').value.trim();
-  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
-  gyModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
-  try {
-    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
-    const items = d.data || [];
-    if (!items.length) {
-      gyModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>', '选择影视');
-      return;
-    }
-    const cards = items.map(it => {
-      const poster = it.poster
-        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
-          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
-        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
-      const typeTag = it.media_type === 'tv'
-        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
-        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
-      const overview = String(it.overview || '').slice(0, 100);
-      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-      return '<div onclick="gyPickTmdb(\'' + safeTitle + '\')" '
-        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
-        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
-        + poster
-        + '<div style="min-width:0;flex:1">'
-        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
-        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
-        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
-        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
-        + '</div>'
-        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
-        + '</div></div>';
-    }).join('');
-    gyModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
-  } catch (e) {
-    gyModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span><br>'
-      + '<a href="javascript:void(0)" style="font-size:13px" onclick="gySearchSite(document.getElementById(\'gy-query\').value.trim(), \'\')">跳过 TMDB，直接用关键词搜观影</a>', '选择影视');
-  }
-}
-
 // 选定影片 → 弹窗切到观影种子列表（按资源分类分组）
-function gyPickTmdb(title) {
-  gyCurTitle = title;
-  gyCurZy = '';
-  gySearchSite(title, '');
-}
-
 async function gySearchSite(title, zy) {
   gyCurTitle = title;
   gyCurZy = zy || '';
