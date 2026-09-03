@@ -3480,6 +3480,7 @@ let hdhivePanItems = [];
 let hdhivePanError = '';
 let hdhiveTorError = '';
 let hdhiveSortKey = '';
+let hdhiveFilter = ''; // 资源类型筛选：''=全部 / 115 / aliPan / torrent
 
 function hdhivePickTmdb(id, mediaType, el) {
   if (el) {
@@ -3508,6 +3509,7 @@ async function hdhiveSearchSite() {
   hdhiveItems = torRes.status === 'fulfilled' ? (torRes.value.data || []) : [];
   hdhiveTorError = torRes.status === 'rejected' ? (torRes.reason.message || '未知错误') : '';
   hdhiveSortKey = '';
+  hdhiveFilter = '';
   if (!hdhivePanItems.length && !hdhiveItems.length && !hdhivePanError && !hdhiveTorError) {
     body.innerHTML = '<span style="color:var(--text-3)">影巢没有找到「' + esc(hdhiveCur.title) + '」的网盘/种子资源</span>'
       + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
@@ -3522,89 +3524,120 @@ function hdhiveSortBy(key) {
   hdhiveRenderList();
 }
 
+// 资源类型筛选：''=全部 / 115 / aliPan / torrent
+function hdhiveSetFilter(key) {
+  hdhiveFilter = key;
+  hdhiveRenderList();
+}
+
 function hdhiveRenderList() {
   const list = document.getElementById('hdhive-res-list');
   if (!list) return;
-  let html = '';
+  const n115 = hdhivePanItems.filter(p => p.pan === '115').length;
+  const nAli = hdhivePanItems.length - n115;
+  const nTor = hdhiveItems.length;
+  const showPan = hdhiveFilter === '' || hdhiveFilter === '115' || hdhiveFilter === 'aliPan';
+  const showTor = hdhiveFilter === '' || hdhiveFilter === 'torrent';
+
+  // 胶囊按钮（类型筛选 / 种子排序通用样式）
+  const pill = (label, key, count) => {
+    const active = hdhiveFilter === key;
+    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+    const fg = active ? '#fff' : 'var(--text-2)';
+    return '<span onclick="hdhiveSetFilter(\'' + key + '\')" '
+      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+      + label + (count ? ' ' + count : '') + '</span>';
+  };
+
+  let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 12px;font-size:12px;color:var(--text-3)">类型'
+    + pill('全部', '', n115 + nAli + nTor)
+    + pill('115 网盘', '115', n115)
+    + pill('阿里云盘', 'aliPan', nAli)
+    + pill('磁力', 'torrent', nTor)
+    + '</div>';
 
   // —— 网盘资源（115 一键转存；阿里云盘跳站内解锁）——
-  if (hdhivePanError) {
-    html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">网盘资源读取失败：' + esc(hdhivePanError) + '</div>';
-  } else if (hdhivePanItems.length) {
-    const n115 = hdhivePanItems.filter(p => p.pan === '115').length;
-    html += '<div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:var(--text-3)">网盘资源 · 共 '
-      + hdhivePanItems.length + ' 条（115 ' + n115 + '）· 115 行点击自动提取链接转存</div>'
-      + '<div class="otk" style="margin-bottom:14px">' + hdhivePanItems.map((it, i) => {
-        const is115 = it.pan === '115';
-        const panTag = is115
-          ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">115</span>'
-          : '<span class="otag" style="background:#fff0e8;color:#d9571c">阿里云盘</span>';
-        const fee = it.free
-          ? '<span style="color:#00874a">免费</span>'
-          : '<span style="color:#b26a00">' + it.points + ' 积分</span>';
-        const meta = [it.size || '', (it.quality || []).join('/'), (it.spec || []).join('/'),
-          (it.subtitle || []).join('·'), it.user || '', fee]
-          .filter(Boolean).join('<span class="otk-dot">·</span>');
-        const name = (it.remark || '').trim() || it.title || it.slug;
-        const side = is115
-          ? '<div class="otk-side" style="color:var(--primary)">转存 ›</div>'
-          : '<div class="otk-side" style="color:var(--text-3)">站内打开 ↗</div>';
-        return '<div class="otk-row" style="cursor:pointer" '
-          + (is115 ? 'onclick="hdhiveRedeem(' + i + ',this)"' : 'onclick="window.open(\'' + esc(it.page || '') + '\',\'_blank\')"')
-          + '>'
-        + panTag
-        + '<div class="otk-main"><div class="otk-name" title="' + esc(name) + '">' + esc(name) + '</div>'
-        + '<div class="otk-sub">' + meta + '</div>'
-        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-        + side
-        + '</div>';
-      }).join('') + '</div>';
+  if (showPan) {
+    const pans = hdhiveFilter === '' ? hdhivePanItems : hdhivePanItems.filter(p => p.pan === hdhiveFilter);
+    if (hdhivePanError) {
+      html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">网盘资源读取失败：' + esc(hdhivePanError) + '</div>';
+    } else if (pans.length) {
+      html += '<div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:var(--text-3)">网盘资源 · 共 '
+        + pans.length + ' 条 · 115 行点击自动提取链接转存</div>'
+        + '<div class="otk" style="margin-bottom:14px">' + pans.map(it => {
+          const i = hdhivePanItems.indexOf(it);
+          const is115 = it.pan === '115';
+          const panTag = is115
+            ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">115</span>'
+            : '<span class="otag" style="background:#fff0e8;color:#d9571c">阿里云盘</span>';
+          const fee = it.free
+            ? '<span style="color:#00874a">免费</span>'
+            : '<span style="color:#b26a00">' + it.points + ' 积分</span>';
+          const meta = [it.size || '', (it.quality || []).join('/'), (it.spec || []).join('/'),
+            (it.subtitle || []).join('·'), it.user || '', fee]
+            .filter(Boolean).join('<span class="otk-dot">·</span>');
+          const name = (it.remark || '').trim() || it.title || it.slug;
+          const side = is115
+            ? '<div class="otk-side" style="color:var(--primary)">转存 ›</div>'
+            : '<div class="otk-side" style="color:var(--text-3)">站内打开 ↗</div>';
+          return '<div class="otk-row" style="cursor:pointer" '
+            + (is115 ? 'onclick="hdhiveRedeem(' + i + ',this)"' : 'onclick="window.open(\'' + esc(it.page || '') + '\',\'_blank\')"')
+            + '>'
+          + panTag
+          + '<div class="otk-main"><div class="otk-name" title="' + esc(name) + '">' + esc(name) + '</div>'
+          + '<div class="otk-sub">' + meta + '</div>'
+          + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+          + side
+          + '</div>';
+        }).join('') + '</div>';
+    } else if (hdhiveFilter !== '') {
+      html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--text-3)">该类型暂无网盘资源</div>';
+    }
   }
 
   // —— 聚合种子 ——
-  if (hdhiveTorError) {
-    html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">种子搜索失败：' + esc(hdhiveTorError) + '</div>';
-  } else if (hdhiveItems.length) {
-    const pill = (label, key) => {
-      const active = hdhiveSortKey === key && key !== '';
-      const bg = active ? 'var(--primary)' : 'var(--fill-2)';
-      const fg = active ? '#fff' : 'var(--text-2)';
-      return '<span onclick="hdhiveSortBy(\'' + key + '\')" '
-        + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
-        + label + '</span>';
-    };
-    // 就地排序：行下标即 hdhiveItems 下标（hdhiveGrab 按下标取条目）
-    const items = hdhiveItems;
-    if (hdhiveSortKey === 'size') items.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
-    if (hdhiveSortKey === 'seeds') items.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
-    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">聚合种子 · 排序'
-      + pill('推荐', '') + pill('做种', 'seeds') + pill('大小', 'size')
-      + '<span style="margin-left:auto">共 ' + items.length + ' 条 · 点击行提交 115 离线下载</span>'
-      + '</div>'
-      + '<div class="otk">' + items.map((it, i) => {
-        const q = String(it.quality || '').toUpperCase();
-        const qTag = q.indexOf('2160') >= 0 || q === '4K'
-          ? '<span class="otag" style="background:#f3e8ff;color:#7c3aed">4K</span>'
-          : q.indexOf('1080') >= 0
-            ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">1080P</span>'
-            : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(q || '未知') + '</span>';
-        const danger = it.threat_level === 'dangerous';
-        const ep = it.season ? 'S' + it.season + (it.episode ? 'E' + it.episode : '') : '';
-        const meta = [it.size_text || '', (it.seeders || 0) + ' 做种', it.source || '', ep]
-          .filter(Boolean).join('<span class="otk-dot">·</span>');
-        return '<div class="otk-row" style="cursor:pointer;' + (danger ? 'opacity:.55' : '') + '" onclick="hdhiveGrab(' + i + ',this)">'
-        + qTag
-        + '<div class="otk-main"><div class="otk-name" title="' + esc(it.raw_title || '') + '">' + esc(it.raw_title || it.info_hash) + '</div>'
-        + '<div class="otk-sub">' + meta + '</div>'
-        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-        + (danger ? '<span class="otag" style="background:#fdecec;color:#c0392b;flex:none">⚠ 可疑</span>' : '')
-        + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
-        + '</div>';
-      }).join('') + '</div>';
+  if (showTor) {
+    if (hdhiveTorError) {
+      html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">种子搜索失败：' + esc(hdhiveTorError) + '</div>';
+    } else if (hdhiveItems.length) {
+      // 就地排序：行下标即 hdhiveItems 下标（hdhiveGrab 按下标取条目）
+      const items = hdhiveItems;
+      if (hdhiveSortKey === 'size') items.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+      if (hdhiveSortKey === 'seeds') items.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">聚合种子 · 排序'
+        + '<span onclick="hdhiveSortBy(\'\')" '
+        + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + (hdhiveSortKey === '' ? 'var(--primary)' : 'var(--fill-2)') + ';color:' + (hdhiveSortKey === '' ? '#fff' : 'var(--text-2)') + ';font-size:12.5px;line-height:20px">推荐</span>'
+        + '<span onclick="hdhiveSortBy(\'seeds\')" '
+        + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + (hdhiveSortKey === 'seeds' ? 'var(--primary)' : 'var(--fill-2)') + ';color:' + (hdhiveSortKey === 'seeds' ? '#fff' : 'var(--text-2)') + ';font-size:12.5px;line-height:20px">做种</span>'
+        + '<span onclick="hdhiveSortBy(\'size\')" '
+        + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + (hdhiveSortKey === 'size' ? 'var(--primary)' : 'var(--fill-2)') + ';color:' + (hdhiveSortKey === 'size' ? '#fff' : 'var(--text-2)') + ';font-size:12.5px;line-height:20px">大小</span>'
+        + '<span style="margin-left:auto">共 ' + items.length + ' 条 · 点击行提交 115 离线下载</span>'
+        + '</div>'
+        + '<div class="otk">' + items.map((it, i) => {
+          const q = String(it.quality || '').toUpperCase();
+          const qTag = q.indexOf('2160') >= 0 || q === '4K'
+            ? '<span class="otag" style="background:#f3e8ff;color:#7c3aed">4K</span>'
+            : q.indexOf('1080') >= 0
+              ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">1080P</span>'
+              : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(q || '未知') + '</span>';
+          const danger = it.threat_level === 'dangerous';
+          const ep = it.season ? 'S' + it.season + (it.episode ? 'E' + it.episode : '') : '';
+          const meta = [it.size_text || '', (it.seeders || 0) + ' 做种', it.source || '', ep]
+            .filter(Boolean).join('<span class="otk-dot">·</span>');
+          return '<div class="otk-row" style="cursor:pointer;' + (danger ? 'opacity:.55' : '') + '" onclick="hdhiveGrab(' + i + ',this)">'
+          + qTag
+          + '<div class="otk-main"><div class="otk-name" title="' + esc(it.raw_title || '') + '">' + esc(it.raw_title || it.info_hash) + '</div>'
+          + '<div class="otk-sub">' + meta + '</div>'
+          + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+          + (danger ? '<span class="otag" style="background:#fdecec;color:#c0392b;flex:none">⚠ 可疑</span>' : '')
+          + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
+          + '</div>';
+        }).join('') + '</div>';
+    }
   }
 
-  if (!html) {
-    html = '<span style="color:var(--text-3)">没有可显示的资源</span>'
+  if (!html.includes('otk-row')) {
+    html += '<span style="color:var(--text-3)">没有可显示的资源</span>'
       + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
   }
   list.innerHTML = html;
