@@ -1132,16 +1132,9 @@ av:
           <button class="btn btn-primary" style="padding:6px 18px" onclick="tgSubRenderAll(true)">查询</button>
           <button class="btn btn-outline" style="padding:6px 18px" onclick="tgSubFilterReset()">重置</button>
           <span style="flex:1"></span>
-          <button class="btn btn-outline" style="padding:6px 16px" onclick="tgSubRunNow(this)">立即检查</button>
           <button class="btn btn-primary" style="padding:6px 18px" onclick="tgSubAddModal()">＋ 新增</button>
         </div>
         <div id="tgsub-table"></div>
-        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-          <span style="font-size:12.5px;color:var(--text-3)">检查间隔</span>
-          <input type="number" id="tgsub-interval" value="30" min="5" class="inline-input" style="max-width:90px">
-          <span style="font-size:12.5px;color:var(--text-3)">分钟</span>
-          <button class="btn btn-outline" style="padding:3px 12px;font-size:12px" onclick="tgSubSaveInterval(this)">保存</button>
-        </div>
       </div>
 
       <!-- 新增/编辑弹窗：类型单选 → 表单自适应 -->

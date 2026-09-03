@@ -1842,8 +1842,6 @@ async function tgSubRenderAll(forceQuery) {
     }).join('');
     box.innerHTML = '<div class="otk">' + trs + '</div>';
   }
-  const iv = document.getElementById('tgsub-interval');
-  if (iv) iv.value = cfg.interval_min || 30;
 }
 
 // 启用/停用切换
@@ -1870,6 +1868,10 @@ async function tgSubDelRow(kind, id) {
 // ========== 新增/编辑弹窗 ==========
 let tgSubEditKind = 'item';
 let tgSubEditId = 0; // 0=新增
+
+function tgSubAddModal() {
+  tgSubEditModal('item', 0); // 默认关键词订阅，弹窗内可切类型
+}
 
 function tgSubEditModal(kind, id) {
   tgSubEditKind = kind;
@@ -1973,20 +1975,7 @@ async function tgSubDel(id) {
   await tgSubPersist(cfg, null, '已删除');
 }
 
-async function tgSubRunNow(btn) {
-  btn.disabled = true;
-  try {
-    const d = await api('/tgsub/run', { method: 'POST' });
-    toast(d.message || '检查已开始');
-  } catch (e) { toast(e.message); }
-  btn.disabled = false;
-}
 
-async function tgSubSaveInterval(btn) {
-  const cfg = await tgSubFetchCfg();
-  cfg.interval_min = parseInt(val('tgsub-interval'), 10) || 30;
-  await tgSubPersist(cfg, btn, '检查间隔已保存');
-}
 
 // ==================== GPT 测试连接 ====================
 async function testGPT() {
