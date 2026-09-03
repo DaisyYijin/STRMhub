@@ -418,6 +418,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/hdhive/login", h.HdhiveLogin)
 		protected.POST("/hdhive/logout", h.HdhiveLogout)
 		protected.GET("/hdhive/torrents", h.HdhiveTorrents)
+		protected.GET("/hdhive/pans", h.HdhivePans)
 		protected.POST("/hdhive/grab", h.HdhiveGrab)
 		protected.GET("/hdhive/resources", h.HdhiveResources)
 		protected.GET("/hdhive/diag", h.HdhiveDiag)

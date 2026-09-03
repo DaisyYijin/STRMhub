@@ -1377,6 +1377,217 @@ func (h *Handler) HdhiveGrab(c *gin.Context) {
 	})
 }
 
+// ==================== 网盘资源（影片页 SSR 直出通道） ====================
+//
+// 改版后网盘资源（115/阿里云盘）没有开放的 JSON 接口（/api/customer/* 有
+// 签名墙，/api/public/resources 不存在），但影片详情页把全量资源列表 SSR 进
+// HTML 的 RSC flight 数据（浏览器匿名实测可读），无需登录无需签名：
+//
+//	GET /tmdb/{type}/{tmdbid}      → HTML 内嵌 meta refresh → /movie/{uuid}
+//	GET /movie/{uuid}              → flight 转义 JSON：
+//	  {"websites":["115","aliPan"],"groupData":{"115":[{...}],"aliPan":[...]}}
+//	资源项字段：slug/share_size/video_resolution/source/subtitle_type/
+//	            unlock_points(费用，0=免费)/remark/submitted_at/user.nickname
+
+// hdhivePan 归一化后的网盘资源
+type hdhivePan struct {
+	Pan         string   `json:"pan"` // 115 / aliPan
+	Slug        string   `json:"slug"`
+	Title       string   `json:"title"`
+	Size        string   `json:"size"`
+	Quality     []string `json:"quality"`  // video_resolution（1080P/4K）
+	Spec        []string `json:"spec"`     // source（蓝光原盘/REMUX/WEB-DL…）
+	Subtitle    []string `json:"subtitle"` // subtitle_type（内封/外挂…）
+	Remark      string   `json:"remark"`
+	Points      int64    `json:"points"` // 解锁费用（积分）
+	Free        bool     `json:"free"`
+	User        string   `json:"user"`
+	SubmittedAt string   `json:"submitted_at"`
+	Page        string   `json:"page"` // 资源页 URL（转存/手动打开用）
+}
+
+// hdhivePanRaw flight 数据里的原始资源项
+type hdhivePanRaw struct {
+	Slug            string   `json:"slug"`
+	Title           string   `json:"title"`
+	ShareSize       string   `json:"share_size"`
+	VideoResolution []string `json:"video_resolution"`
+	Source          []string `json:"source"`
+	SubtitleType    []string `json:"subtitle_type"`
+	Remark          string   `json:"remark"`
+	UnlockPoints    int64    `json:"unlock_points"`
+	SubmittedAt     string   `json:"submitted_at"`
+	User            struct {
+		Nickname string `json:"nickname"`
+	} `json:"user"`
+}
+
+// hdhiveUnescapeJSString 还原 flight 数据 JS 字符串层面的转义（\" \\ \n 等）
+func hdhiveUnescapeJSString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// hdhiveExtractFlightObject 从页面 HTML 的 RSC flight 转义 JSON 里定位以
+// marker（如 `\"websites\":`）所属的完整对象并解出。flight 数据整段是 JS
+// 字符串：所有 JSON 引号都是 \" 形式，花括号只会出现在 JSON 结构上
+// （标题/简介不含花括号），因此按深度配平即可，上限 256KB 防失控
+func hdhiveExtractFlightObject(html, marker string) (string, bool) {
+	i := strings.Index(html, marker)
+	if i < 0 {
+		return "", false
+	}
+	start := strings.LastIndex(html[:i], "{")
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	for j := start; j < len(html) && j-start < 256<<10; j++ {
+		switch html[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return hdhiveUnescapeJSString(html[start : j+1]), true
+			}
+		}
+	}
+	return "", false
+}
+
+// hdhiveResolveMediaPage 由 tmdb id 定位影巢影片页：
+// /tmdb/{type}/{id} 渲染页内嵌 meta refresh（或 RSC NEXT_REDIRECT 摘要）
+// 指向真正的 /movie|tv/{uuid} 页。返回路径与该路径对应的 HTML——路径为空
+// 表示 /tmdb 页本身就带网盘数据（站点行为变化兜底），此时 html 直接可用
+func (h *Handler) hdhiveResolveMediaPage(cfg *hdhiveCfg, mediaType, tmdbID string) (string, string, error) {
+	pageHTML, _, err := h.hdhivePage(cfg, "/tmdb/"+mediaType+"/"+url.PathEscape(tmdbID))
+	if err != nil {
+		return "", "", err
+	}
+	reJump := regexp.MustCompile(`url=(/(?:movie|tv)/[a-f0-9-]+)`)
+	if m := reJump.FindStringSubmatch(pageHTML); m != nil {
+		return m[1], pageHTML, nil
+	}
+	// 已直接返回内容页
+	if strings.Contains(pageHTML, `\"websites\":`) {
+		return "", pageHTML, nil
+	}
+	return "", "", fmt.Errorf("未能从 /tmdb/%s/%s 定位影片页（站点可能又改版）", mediaType, tmdbID)
+}
+
+// HdhivePans GET /hdhive/pans?media_type=movie|tv&tmdb_id=
+// 影巢网盘资源（115/阿里云盘，含费用）。数据来自影片页 SSR，免登录。
+func (h *Handler) HdhivePans(c *gin.Context) {
+	cfg := loadHdhiveCfg()
+	mediaType := strings.ToLower(strings.TrimSpace(c.Query("media_type")))
+	if mediaType != "movie" && mediaType != "tv" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "media_type 必须是 movie 或 tv"})
+		return
+	}
+	tmdbID := strings.TrimSpace(c.Query("tmdb_id"))
+	if tmdbID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 tmdb_id"})
+		return
+	}
+	pagePath, pageHTML, err := h.hdhiveResolveMediaPage(cfg, mediaType, tmdbID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	if pagePath != "" {
+		pageHTML, _, err = h.hdhivePage(cfg, pagePath)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if hdhiveLoginWall(pageHTML) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "影巢对当前服务器返回了安全验证页，无法读取网盘资源（站点风控）"})
+		return
+	}
+	pans := hdhiveParsePans(pageHTML)
+	for i := range pans {
+		pans[i].Page = cfg.BaseURL + pans[i].Page // 阿里云盘等资源前端直接开页用
+	}
+	log.Printf("[影巢] ✓ 网盘资源 tmdb=%s/%s：%d 条（115 %d / 阿里 %d）",
+		mediaType, tmdbID, len(pans), hdhivePanCount(pans, "115"), hdhivePanCount(pans, "aliPan"))
+	mediaPage := pagePath
+	if mediaPage == "" {
+		mediaPage = "/tmdb/" + mediaType + "/" + url.PathEscape(tmdbID)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":       pans,
+		"media_page": cfg.BaseURL + mediaPage,
+	})
+}
+
+// hdhiveParsePans 从影片页 HTML 提取归一化的网盘资源（115 在前）
+func hdhiveParsePans(pageHTML string) []hdhivePan {
+	obj, ok := hdhiveExtractFlightObject(pageHTML, `\"websites\":`)
+	if !ok {
+		return nil
+	}
+	var wrapper struct {
+		GroupData map[string][]hdhivePanRaw `json:"groupData"`
+	}
+	if json.Unmarshal([]byte(obj), &wrapper) != nil || wrapper.GroupData == nil {
+		return nil
+	}
+	var pans []hdhivePan
+	for _, group := range []string{"115", "aliPan"} {
+		for _, r := range wrapper.GroupData[group] {
+			if r.Slug == "" {
+				continue
+			}
+			pans = append(pans, hdhivePan{
+				Pan:         group,
+				Slug:        r.Slug,
+				Title:       r.Title,
+				Size:        r.ShareSize,
+				Quality:     r.VideoResolution,
+				Spec:        r.Source,
+				Subtitle:    r.SubtitleType,
+				Remark:      r.Remark,
+				Points:      r.UnlockPoints,
+				Free:        r.UnlockPoints <= 0,
+				User:        r.User.Nickname,
+				SubmittedAt: r.SubmittedAt,
+				Page:        "/resource/" + group + "/" + r.Slug,
+			})
+		}
+	}
+	return pans
+}
+
+func hdhivePanCount(pans []hdhivePan, group string) int {
+	n := 0
+	for _, p := range pans {
+		if p.Pan == group {
+			n++
+		}
+	}
+	return n
+}
+
 // HdhiveDiagSign GET /hdhive/diag/sign
 // 摘取含握手/签名的 JS chunk 关键代码段，用于评估 Go 侧复刻签名可行性
 func (h *Handler) HdhiveDiagSign(c *gin.Context) {

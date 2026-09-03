@@ -115,3 +115,38 @@ func TestHdhiveNormalizeTorrents(t *testing.T) {
 		t.Fatalf("800 MB/eztv 期望，实得 %s/%s", third.SizeText, third.Source)
 	}
 }
+
+// TestHdhiveParsePans flight 转义 JSON 的提取与归一化（115 在前、费用、免费标记）
+func TestHdhiveParsePans(t *testing.T) {
+	// 对齐影巢影片页 flight 数据的真实形态：整段在一个 JS 字符串里，引号均为 \" 转义
+	page := `<script>self.__next_f.push([1,"25:[\"$\",\"$L4c\",null,{\"websites\":[\"115\",\"aliPan\"],\"groupData\":{\"115\":[{\"id\":191861,\"slug\":\"abc123\",\"title\":\"影子武士 (1980)\",\"share_size\":\"40.95 GB\",\"video_resolution\":[\"1080P\"],\"source\":[\"蓝光原盘/ISO\"],\"subtitle_type\":[\"内封\"],\"remark\":\"[原生中字原盘]\",\"unlock_points\":0,\"submitted_at\":\"2026-08-23 09:00:11\",\"user\":{\"nickname\":\"宝宝\"}}],\"aliPan\":[{\"slug\":\"def456\",\"title\":\"影武者 阿里\",\"share_size\":\"22.1 GB\",\"video_resolution\":[\"4K\"],\"source\":[\"REMUX\"],\"subtitle_type\":[],\"remark\":\"\",\"unlock_points\":4,\"submitted_at\":\"2026-07-01 10:00:00\",\"user\":{\"nickname\":\"路人\"}}]}}\n"])</script>`
+	pans := hdhiveParsePans(page)
+	if len(pans) != 2 {
+		t.Fatalf("期望 2 条网盘资源，实得 %d", len(pans))
+	}
+	if pans[0].Pan != "115" || pans[0].Slug != "abc123" {
+		t.Fatalf("115 组应在前，实得 %+v", pans[0])
+	}
+	if !pans[0].Free || pans[0].Points != 0 {
+		t.Fatalf("unlock_points=0 应标记免费，实得 free=%v points=%d", pans[0].Free, pans[0].Points)
+	}
+	if pans[0].Size != "40.95 GB" || pans[0].User != "宝宝" {
+		t.Fatalf("字段归一化错误：size=%s user=%s", pans[0].Size, pans[0].User)
+	}
+	if pans[0].Page != "/resource/115/abc123" {
+		t.Fatalf("资源页路径错误：%s", pans[0].Page)
+	}
+	if pans[1].Pan != "aliPan" || pans[1].Free || pans[1].Points != 4 {
+		t.Fatalf("阿里组费用解析错误：free=%v points=%d", pans[1].Free, pans[1].Points)
+	}
+}
+
+// TestHdhiveExtractFlightObject 无数据/坏数据页面的容错
+func TestHdhiveExtractFlightObject(t *testing.T) {
+	if _, ok := hdhiveExtractFlightObject("<html>登录页</html>", `\"websites\":`); ok {
+		t.Fatal("无标记页面不应提取到对象")
+	}
+	if _, ok := hdhiveExtractFlightObject(`x{\"websites\":[\"115\"],\"groupData\":{\"115\":[`, `\"websites\":`); ok {
+		t.Fatal("未闭合对象不应提取成功")
+	}
+}

@@ -3476,6 +3476,9 @@ async function hdhiveDiag(mode) {
 
 let hdhiveCur = { title: '', type: 'movie', id: 0 };
 let hdhiveItems = [];
+let hdhivePanItems = [];
+let hdhivePanError = '';
+let hdhiveTorError = '';
 let hdhiveSortKey = '';
 
 function hdhivePickTmdb(id, mediaType, el) {
@@ -3493,23 +3496,24 @@ function hdhivePickTmdb(id, mediaType, el) {
 
 async function hdhiveSearchSite() {
   const body = document.getElementById('hdhive-modal-body');
-  body.innerHTML = '<div id="hdhive-res-list"><span style="color:var(--text-3)">影巢聚合搜索中…</span></div>';
+  body.innerHTML = '<div id="hdhive-res-list"><span style="color:var(--text-3)">影巢搜索中（网盘资源 + 聚合种子）…</span></div>';
   document.getElementById('hdhive-modal-title').textContent = '影巢资源 · ' + hdhiveCur.title;
-  try {
-    const d = await api('/hdhive/torrents?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id + '&title=' + encodeURIComponent(hdhiveCur.title));
-    const items = d.data || [];
-    if (!items.length) {
-      body.innerHTML = '<span style="color:var(--text-3)">影巢聚合搜索没有找到「' + esc(hdhiveCur.title) + '」的种子资源</span>'
-        + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
-      return;
-    }
-    hdhiveItems = items;
-    hdhiveSortKey = '';
-    hdhiveRenderList();
-  } catch (e) {
-    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+  // 网盘资源（影片页 SSR 通道）与聚合种子并行查询，互不阻塞
+  const [panRes, torRes] = await Promise.allSettled([
+    api('/hdhive/pans?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id),
+    api('/hdhive/torrents?media_type=' + hdhiveCur.type + '&tmdb_id=' + hdhiveCur.id + '&title=' + encodeURIComponent(hdhiveCur.title)),
+  ]);
+  hdhivePanItems = panRes.status === 'fulfilled' ? (panRes.value.data || []) : [];
+  hdhivePanError = panRes.status === 'rejected' ? (panRes.reason.message || '未知错误') : '';
+  hdhiveItems = torRes.status === 'fulfilled' ? (torRes.value.data || []) : [];
+  hdhiveTorError = torRes.status === 'rejected' ? (torRes.reason.message || '未知错误') : '';
+  hdhiveSortKey = '';
+  if (!hdhivePanItems.length && !hdhiveItems.length && !hdhivePanError && !hdhiveTorError) {
+    body.innerHTML = '<span style="color:var(--text-3)">影巢没有找到「' + esc(hdhiveCur.title) + '」的网盘/种子资源</span>'
       + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
+    return;
   }
+  hdhiveRenderList();
 }
 
 // 点表头排序：默认=推荐序（站点画质序 + 危险沉底），做种/大小可切换
@@ -3521,43 +3525,108 @@ function hdhiveSortBy(key) {
 function hdhiveRenderList() {
   const list = document.getElementById('hdhive-res-list');
   if (!list) return;
-  // 排序按钮：与资源分类 tab 同款胶囊样式
-  const pill = (label, key) => {
-    const active = hdhiveSortKey === key && key !== '';
-    const bg = active ? 'var(--primary)' : 'var(--fill-2)';
-    const fg = active ? '#fff' : 'var(--text-2)';
-    return '<span onclick="hdhiveSortBy(\'' + key + '\')" '
-      + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
-      + label + '</span>';
-  };
-  // 就地排序：行下标即 hdhiveItems 下标（hdhiveGrab 按下标取条目）
-  const items = hdhiveItems;
-  if (hdhiveSortKey === 'size') items.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
-  if (hdhiveSortKey === 'seeds') items.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
-  list.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">排序'
-    + pill('推荐', '') + pill('做种', 'seeds') + pill('大小', 'size')
-    + '<span style="margin-left:auto">共 ' + items.length + ' 条 · 点击行提交 115 离线下载</span>'
-    + '</div>'
-    + '<div class="otk">' + items.map((it, i) => {
-      const q = String(it.quality || '').toUpperCase();
-      const qTag = q.indexOf('2160') >= 0 || q === '4K'
-        ? '<span class="otag" style="background:#f3e8ff;color:#7c3aed">4K</span>'
-        : q.indexOf('1080') >= 0
-          ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">1080P</span>'
-          : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(q || '未知') + '</span>';
-      const danger = it.threat_level === 'dangerous';
-      const ep = it.season ? 'S' + it.season + (it.episode ? 'E' + it.episode : '') : '';
-      const meta = [it.size_text || '', (it.seeders || 0) + ' 做种', it.source || '', ep]
-        .filter(Boolean).join('<span class="otk-dot">·</span>');
-      return '<div class="otk-row" style="cursor:pointer;' + (danger ? 'opacity:.55' : '') + '" onclick="hdhiveGrab(' + i + ',this)">'
-      + qTag
-      + '<div class="otk-main"><div class="otk-name" title="' + esc(it.raw_title || '') + '">' + esc(it.raw_title || it.info_hash) + '</div>'
-      + '<div class="otk-sub">' + meta + '</div>'
-      + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
-      + (danger ? '<span class="otag" style="background:#fdecec;color:#c0392b;flex:none">⚠ 可疑</span>' : '')
-      + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
-      + '</div>';
-    }).join('') + '</div>';
+  let html = '';
+
+  // —— 网盘资源（115 一键转存；阿里云盘跳站内解锁）——
+  if (hdhivePanError) {
+    html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">网盘资源读取失败：' + esc(hdhivePanError) + '</div>';
+  } else if (hdhivePanItems.length) {
+    const n115 = hdhivePanItems.filter(p => p.pan === '115').length;
+    html += '<div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;color:var(--text-3)">网盘资源 · 共 '
+      + hdhivePanItems.length + ' 条（115 ' + n115 + '）· 115 行点击自动提取链接转存</div>'
+      + '<div class="otk" style="margin-bottom:14px">' + hdhivePanItems.map((it, i) => {
+        const is115 = it.pan === '115';
+        const panTag = is115
+          ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">115</span>'
+          : '<span class="otag" style="background:#fff0e8;color:#d9571c">阿里云盘</span>';
+        const fee = it.free
+          ? '<span style="color:#00874a">免费</span>'
+          : '<span style="color:#b26a00">' + it.points + ' 积分</span>';
+        const meta = [it.size || '', (it.quality || []).join('/'), (it.spec || []).join('/'),
+          (it.subtitle || []).join('·'), it.user || '', fee]
+          .filter(Boolean).join('<span class="otk-dot">·</span>');
+        const name = (it.remark || '').trim() || it.title || it.slug;
+        const side = is115
+          ? '<div class="otk-side" style="color:var(--primary)">转存 ›</div>'
+          : '<div class="otk-side" style="color:var(--text-3)">站内打开 ↗</div>';
+        return '<div class="otk-row" style="cursor:pointer" '
+          + (is115 ? 'onclick="hdhiveRedeem(' + i + ',this)"' : 'onclick="window.open(\'' + esc(it.page || '') + '\',\'_blank\')"')
+          + '>'
+        + panTag
+        + '<div class="otk-main"><div class="otk-name" title="' + esc(name) + '">' + esc(name) + '</div>'
+        + '<div class="otk-sub">' + meta + '</div>'
+        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+        + side
+        + '</div>';
+      }).join('') + '</div>';
+  }
+
+  // —— 聚合种子 ——
+  if (hdhiveTorError) {
+    html += '<div style="margin:0 0 12px;font-size:12.5px;color:var(--danger)">种子搜索失败：' + esc(hdhiveTorError) + '</div>';
+  } else if (hdhiveItems.length) {
+    const pill = (label, key) => {
+      const active = hdhiveSortKey === key && key !== '';
+      const bg = active ? 'var(--primary)' : 'var(--fill-2)';
+      const fg = active ? '#fff' : 'var(--text-2)';
+      return '<span onclick="hdhiveSortBy(\'' + key + '\')" '
+        + 'style="cursor:pointer;padding:3px 12px;border-radius:999px;background:' + bg + ';color:' + fg + ';font-size:12.5px;line-height:20px">'
+        + label + '</span>';
+    };
+    // 就地排序：行下标即 hdhiveItems 下标（hdhiveGrab 按下标取条目）
+    const items = hdhiveItems;
+    if (hdhiveSortKey === 'size') items.sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0));
+    if (hdhiveSortKey === 'seeds') items.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px;color:var(--text-3)">聚合种子 · 排序'
+      + pill('推荐', '') + pill('做种', 'seeds') + pill('大小', 'size')
+      + '<span style="margin-left:auto">共 ' + items.length + ' 条 · 点击行提交 115 离线下载</span>'
+      + '</div>'
+      + '<div class="otk">' + items.map((it, i) => {
+        const q = String(it.quality || '').toUpperCase();
+        const qTag = q.indexOf('2160') >= 0 || q === '4K'
+          ? '<span class="otag" style="background:#f3e8ff;color:#7c3aed">4K</span>'
+          : q.indexOf('1080') >= 0
+            ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">1080P</span>'
+            : '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(q || '未知') + '</span>';
+        const danger = it.threat_level === 'dangerous';
+        const ep = it.season ? 'S' + it.season + (it.episode ? 'E' + it.episode : '') : '';
+        const meta = [it.size_text || '', (it.seeders || 0) + ' 做种', it.source || '', ep]
+          .filter(Boolean).join('<span class="otk-dot">·</span>');
+        return '<div class="otk-row" style="cursor:pointer;' + (danger ? 'opacity:.55' : '') + '" onclick="hdhiveGrab(' + i + ',this)">'
+        + qTag
+        + '<div class="otk-main"><div class="otk-name" title="' + esc(it.raw_title || '') + '">' + esc(it.raw_title || it.info_hash) + '</div>'
+        + '<div class="otk-sub">' + meta + '</div>'
+        + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+        + (danger ? '<span class="otag" style="background:#fdecec;color:#c0392b;flex:none">⚠ 可疑</span>' : '')
+        + '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>'
+        + '</div>';
+      }).join('') + '</div>';
+  }
+
+  if (!html) {
+    html = '<span style="color:var(--text-3)">没有可显示的资源</span>'
+      + ' <a href="javascript:void(0)" style="font-size:12.5px;color:var(--primary)" onclick="hdhiveDiag()">复制诊断信息</a>';
+  }
+  list.innerHTML = html;
+}
+
+// 点击网盘 115 资源行：提取分享链接 → 自动转存（付费资源会提示先站内解锁）
+async function hdhiveRedeem(i, el) {
+  const it = hdhivePanItems[i];
+  if (!it || it.pan !== '115') return;
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已转存过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = it.free ? '提取分享链接并转存中…' : '解锁转存中（' + it.points + ' 积分）…'; }
+  try {
+    const r = await api('/hdhive/unlock', {
+      method: 'POST',
+      body: JSON.stringify({ slug: it.slug }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '已转存'); }
+    toast(r.manual ? (r.message || '已处理') : '已转存 115，完成后自动整理入库');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
 }
 
 // 点击种子行：磁力 → 115 离线下载（完成后自动整理入库）
