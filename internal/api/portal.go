@@ -8,19 +8,23 @@ package api
 // 局网客户端无需访问 TMDB。
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"strmhub/internal/config"
@@ -119,10 +123,19 @@ func portalAuthLogin(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	_ = c.ShouldBindJSON(&req)
+	// 防爆破：与管理后台共用 loginGuard（portal: 前缀区分来源）。
+	// 门户与后台同一套凭据，不能让公网在这里无限速试密码
+	key := "portal:" + c.ClientIP()
+	if remain := loginGuardCheck(key); remain > 0 {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "失败次数过多，请 " + remain.Truncate(time.Second).String() + " 后再试"})
+		return
+	}
 	if !portalCfg.VerifyAuth(strings.TrimSpace(req.Username), req.Password) {
+		loginGuardFail(key)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号或密码错误"})
 		return
 	}
+	loginGuardPass(key)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"scope": "portal",
 		"exp":   time.Now().Add(30 * 24 * time.Hour).Unix(),
@@ -171,6 +184,25 @@ type portalTitleEntry struct {
 	MediaType string
 	Category  string
 	LastAt    time.Time
+}
+
+// 台账扫描缓存：门户列表/详情/排行榜/回填共享同一份结果（30 秒 TTL），
+// 避免每次请求都全表扫描 SyncedFile。缓存条目视为只读，调用方不得修改。
+var (
+	portalLedgerMu    sync.Mutex
+	portalLedgerCache map[string]*portalTitleEntry
+	portalLedgerAt    time.Time
+)
+
+func portalScanLedgerCached() map[string]*portalTitleEntry {
+	portalLedgerMu.Lock()
+	defer portalLedgerMu.Unlock()
+	if portalLedgerCache != nil && time.Since(portalLedgerAt) < 30*time.Second {
+		return portalLedgerCache
+	}
+	portalLedgerCache = portalScanLedger()
+	portalLedgerAt = time.Now()
+	return portalLedgerCache
 }
 
 // portalScanLedger 全量扫描台账，按"标题目录"聚合（库名/电影|剧集/分类/标题目录/…）
@@ -338,7 +370,7 @@ func portalFacets(mt string) (countries, langs, genres []map[string]interface{})
 
 // portalNav 分类导航（按台账实际内容聚合）
 func portalNav(c *gin.Context) {
-	entries := portalScanLedger()
+	entries := portalScanLedgerCached()
 	counts := map[string]map[string]int{}
 	for _, e := range entries {
 		if counts[e.MediaType] == nil {
@@ -399,7 +431,7 @@ func portalList(c *gin.Context) {
 		}
 	}
 	entries := make([]enriched, 0)
-	for _, e := range portalScanLedger() {
+	for _, e := range portalScanLedgerCached() {
 		if e.MediaType != mt {
 			continue
 		}
@@ -530,7 +562,7 @@ func portalDetail(c *gin.Context) {
 			vote   float64
 		}
 		var rels []relEnt
-		for _, e2 := range portalScanLedger() {
+		for _, e2 := range portalScanLedgerCached() {
 			if e2.Key == key || e2.MediaType != mediaType || e2.Category != category {
 				continue
 			}
@@ -603,7 +635,7 @@ func portalPlayed(c *gin.Context) {
 	var stat model.PortalStat
 	if model.DB.Where("key = ?", req.Key).First(&stat).Error != nil {
 		// 新行：从台账补标题/类型
-		e, ok := portalScanLedger()[req.Key]
+		e, ok := portalScanLedgerCached()[req.Key]
 		if !ok {
 			c.JSON(http.StatusNotFound, gin.H{"error": "条目不存在"})
 			return
@@ -622,7 +654,7 @@ func portalPlayed(c *gin.Context) {
 			stat.YearViews, stat.YearStart = 0, year
 		}
 		if stat.Title == "" {
-			if e, ok := portalScanLedger()[req.Key]; ok {
+			if e, ok := portalScanLedgerCached()[req.Key]; ok {
 				stat.Title, stat.MediaType = e.Title, e.MediaType
 			}
 		}
@@ -667,7 +699,7 @@ func portalTrending(c *gin.Context) {
 		ov     string
 	}
 	items := []item{}
-	for k, e := range portalScanLedger() {
+	for k, e := range portalScanLedgerCached() {
 		s := stats[k]
 		pv := s.Views
 		switch period {
@@ -726,7 +758,7 @@ func portalBackfillWorker() {
 	for {
 		done := 0
 		tc, tcErr := loadTmdbClient()
-		for _, e := range portalScanLedger() {
+		for _, e := range portalScanLedgerCached() {
 			if e.TmdbID <= 0 {
 				// 老内容目录名没有 tmdb 标记：按标题+年份搜索一次补 ID
 				if tcErr != nil || e.Title == "" {
@@ -837,6 +869,33 @@ func portalPoster(c *gin.Context) {
 
 // serveTMDBPoster TMDB 海报服务端代理（带 7 天磁盘缓存；portalCfg 来自门户，
 // 管理后台仪表盘复用同一逻辑，DataDir 由调用方传入）
+// ipIsPublic 公网地址判定（回环/私网/链路本地/组播/未指定全拒）
+func ipIsPublic(ip net.IP) bool {
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() ||
+		ip.IsInterfaceLocalMulticast())
+}
+
+// avCoverClient AV 封面专用客户端：DialContext 在连接层校验目标 IP 为
+// 公网地址——DNS 解析后的实际连接目标才作数（防 DNS rebinding 式 SSRF），
+// 重定向的每一跳同样经过该 Transport
+var avCoverClient = &http.Client{
+	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			if ip := net.ParseIP(host); ip != nil && !ipIsPublic(ip) {
+				return nil, fmt.Errorf("SSRF 防护：拒绝内网地址 %s", host)
+			}
+			d := net.Dialer{Timeout: 10 * time.Second}
+			return d.DialContext(ctx, network, addr)
+		},
+	},
+}
+
 func serveTMDBPoster(c *gin.Context, dataDir string) {
 	p := strings.TrimPrefix(c.Param("path"), "/")
 	if p == "" || strings.Contains(p, "..") {
@@ -846,10 +905,11 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 	cacheDir := filepath.Join(dataDir, "posters")
 	_ = os.MkdirAll(cacheDir, 0755)
 	// ---- AV 封面分支（MetaTube 刮削结果，PosterPath = "av:<完整URL>"）----
-	// 直接代理原始封面 URL（只缓存到 /data/posters，不写媒体目录），规则与 TMDB 相同
+	// 直接代理原始封面 URL（只缓存到 /data/posters，不写媒体目录），规则与 TMDB 相同。
+	// 本端点无鉴权（门户海报），SSRF 防护：仅 http(s) + 连接层校验目标为公网地址
 	if strings.HasPrefix(p, "av:") {
 		coverURL := strings.TrimPrefix(p, "av:")
-		if coverURL == "" || !strings.HasPrefix(coverURL, "http") {
+		if u, err := url.Parse(coverURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			avPosterPlaceholder(c)
 			return
 		}
@@ -860,7 +920,7 @@ func serveTMDBPoster(c *gin.Context, dataDir string) {
 			c.File(avCache)
 			return
 		}
-		resp, err := metatubeClient.Get(coverURL)
+		resp, err := avCoverClient.Get(coverURL)
 		if err != nil {
 			log.Printf("[海报] ✗ AV 封面拉取失败 %s: %v", coverURL, err)
 		} else {

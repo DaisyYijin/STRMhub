@@ -601,42 +601,6 @@ async function loadGuide() {
   } catch (e) { /* 引导失败静默 */ }
 }
 
-// ==================== 密钥输入遮罩 ====================
-// 所有 type=password 的输入框支持双击切换明文（title 提示）
-document.addEventListener('dblclick', e => {
-  const el = e.target;
-  if (el && el.tagName === 'INPUT' && el.type === 'password') {
-    el.type = 'text';
-    el.dataset.masked = '1';
-    el.title = '双击恢复遮罩';
-  } else if (el && el.tagName === 'INPUT' && el.type === 'text' && el.dataset.masked === '1') {
-    el.type = 'password';
-    el.title = '双击显示明文';
-  }
-});
-
-// ==================== 首启引导 ====================
-async function loadGuide() {
-  const card = document.getElementById('guide-card');
-  if (!card) return;
-  try {
-    const g = await api('/system/guide');
-    if (g.coreDone) { card.style.display = 'none'; return; }
-    const steps = [
-      [g.pan115, '绑定 115 账号（账号管理 → 扫码登录）', 'config-accounts'],
-      [g.tmdb, '填写 TMDB API Key（系统配置 → TMDB 配置）', 'config-system'],
-      [g.orgDirs, '选择待整理目录（自动整理 → 基础配置）', 'organize'],
-      [g.synced, '执行首次全量同步（账号同步 → 开始全量同步）', 'sync'],
-      [g.emby, '对接 Emby（可选，系统配置 → EMBY 管理）', 'config-system'],
-      [g.notify, '配置通知（可选，消息配置）', 'config-message'],
-    ];
-    document.getElementById('guide-steps').innerHTML = steps.map(([ok, text, page]) =>
-      '<div>' + (ok ? '✅' : '⬜') + ' <span style="' + (ok ? 'text-decoration:line-through;color:var(--text-3)' : '') + '">' + text + '</span>'
-      + (ok ? '' : ' <a href="javascript:void(0)" onclick="showPage(\'' + page + '\')" style="color:var(--primary)">去设置 →</a>') + '</div>').join('');
-    card.style.display = '';
-  } catch (e) { /* 引导失败静默 */ }
-}
-
 // ==================== 目录选择器 ====================
 let dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [] }; // trail: 115 逐级目录名
 let dirPickerTarget = 'full-cid'; // 选择后回填的输入框 id
@@ -3461,7 +3425,7 @@ function mukakuRenderResources() {
       click = 'onclick="mukakuOffline(' + i + ',this)"';
     } else {
       side = '<div class="otk-side" style="color:var(--text-3)">打开链接 ↗</div>';
-      click = 'onclick="window.open(\'' + esc(it.link) + '\',\'_blank\')"';
+      click = 'onclick="mukakuOpenLink(' + i + ')"'; // 下标回调防注入（esc 在事件属性上下文无效）
     }
     const meta = [it.code ? '<span style="color:#b26a00">提取码 ' + esc(it.code) + '</span>' : '']
       .filter(Boolean).join('<span class="otk-dot">·</span>');
@@ -3477,6 +3441,11 @@ function mukakuRenderResources() {
     + '<div class="otk">' + rows + '</div>'
     + '<div style="margin-top:12px"><a href="javascript:void(0)" style="font-size:13px;color:var(--primary)" onclick="mukakuSearchSite(mukakuCurTitle)">← 返回影片列表</a></div>',
     '不太灵影视 · ' + mukakuCurTitle);
+}
+
+function mukakuOpenLink(i) {
+  const it = mukakuRes[i];
+  if (it && it.link) window.open(it.link, '_blank');
 }
 
 async function mukakuTransfer(i, el) {
@@ -3623,7 +3592,7 @@ function pansouRenderList() {
       click = 'onclick="pansouOffline(' + i + ',this)"';
     } else {
       side = '<div class="otk-side" style="color:var(--text-3)">打开链接 ↗</div>';
-      click = 'onclick="window.open(\'' + esc(it.url) + '\',\'_blank\')"';
+      click = 'onclick="pansouOpenLink(' + i + ')"'; // 下标回调防注入（esc 在事件属性上下文无效）
     }
     return '<div class="otk-row" style="cursor:pointer" ' + click + '>'
     + typeTag
@@ -3637,6 +3606,11 @@ function pansouRenderList() {
 }
 
 // 115 分享行：转存到目标目录（提取码可能为空 = 无密码分享）
+function pansouOpenLink(i) {
+  const it = pansouItems[i];
+  if (it && it.url) window.open(it.url, '_blank');
+}
+
 async function pansouTransfer(i, el) {
   const it = pansouItems[i];
   if (!it) return;
@@ -3978,10 +3952,10 @@ function gyRenderTorrentList() {
     + pill('默认', '') + pill('大小', 'size') + pill('做种', 'seeds') + pill('时间', 'time')
     + '</div>'
     + '<div class="otk">' + items.map(it => {
-      const safePath = String(it.path).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const gi = gyLastItems.indexOf(it); // 行点击走下标，path 不再拼进内联事件
       const meta = [it.size, it.time, it.seeds !== undefined && it.seeds !== '' ? '做种 ' + it.seeds : '']
         .filter(Boolean).map(esc).join('</span><span class="otk-dot">·</span><span>');
-      return '<div class="otk-row" style="cursor:pointer" onclick="gySubmit(\'' + safePath + '\',this)">'
+      return '<div class="otk-row" style="cursor:pointer" onclick="gySubmitIdx(' + gi + ',this)">'
       + '<span class="otag" style="background:#eafaf0;color:#00874a">种子</span>'
       + '<div class="otk-main"><div class="otk-name" title="' + esc(it.title) + '">' + esc(it.title) + '</div>'
       + '<div class="otk-sub"><span>' + meta + '</span></div>'

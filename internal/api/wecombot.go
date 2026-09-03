@@ -350,7 +350,9 @@ func (h *Handler) wecomHandleCommand(user, text string) {
 				NotifyMessage("", "✗ 无法获取最新版本信息（GitHub 不可达），请稍后再试")
 				return
 			}
-			if strings.HasPrefix(latest, buildVersion[:7]) {
+			// dev 构建 buildVersion 长度不足 7，切片会越界 panic（本 goroutine
+			// 无 recover，会带崩整个进程）
+			if len(buildVersion) >= 7 && strings.HasPrefix(latest, buildVersion[:7]) {
 				NotifyMessage("", "✓ 当前 v"+shortSha(buildVersion)+" 已是最新版本")
 				return
 			}

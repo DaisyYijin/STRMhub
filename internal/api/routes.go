@@ -30,12 +30,52 @@ var buildVersion = "dev"
 type loginGuardEntry struct {
 	fails     int
 	lockUntil time.Time
+	lastFail  time.Time
 }
 
 var (
 	loginGuard   = map[string]loginGuardEntry{}
 	loginGuardMu sync.Mutex
 )
+
+// loginGuardCheck 防爆破闸门：命中锁定返回剩余时间，未锁定返回 0。
+// key 由调用方区分来源（后台登录用 IP，门户登录加 "portal:" 前缀）
+func loginGuardCheck(key string) time.Duration {
+	loginGuardMu.Lock()
+	defer loginGuardMu.Unlock()
+	if g, ok := loginGuard[key]; ok && time.Now().Before(g.lockUntil) {
+		return time.Until(g.lockUntil)
+	}
+	return 0
+}
+
+// loginGuardFail 记一次失败：连续 5 次锁 10 分钟；顺带清理过期条目防无界增长
+func loginGuardFail(key string) {
+	loginGuardMu.Lock()
+	defer loginGuardMu.Unlock()
+	now := time.Now()
+	for k, v := range loginGuard {
+		// 锁定已过期且 10 分钟内无新失败的条目可删
+		if now.After(v.lockUntil) && now.Sub(v.lastFail) > 10*time.Minute {
+			delete(loginGuard, k)
+		}
+	}
+	g := loginGuard[key]
+	g.fails++
+	g.lastFail = now
+	if g.fails >= 5 {
+		g.lockUntil = now.Add(10 * time.Minute)
+		g.fails = 0
+	}
+	loginGuard[key] = g
+}
+
+// loginGuardPass 登录成功：清除记录
+func loginGuardPass(key string) {
+	loginGuardMu.Lock()
+	defer loginGuardMu.Unlock()
+	delete(loginGuard, key)
+}
 
 // SetVersion 注入构建版本号
 func SetVersion(v string) { buildVersion = v }
@@ -505,32 +545,18 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	// 防爆破：同 IP 连续 5 次失败锁定 10 分钟
+	// （ClientIP 的可信度由 main.go SetTrustedProxies(nil) 保证：XFF 不可伪造）
 	ip := c.ClientIP()
-	loginGuardMu.Lock()
-	g, ok := loginGuard[ip]
-	if ok && time.Now().Before(g.lockUntil) {
-		remain := time.Until(g.lockUntil).Truncate(time.Second)
-		loginGuardMu.Unlock()
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("失败次数过多，已锁定，请 %s 后再试", remain)})
+	if remain := loginGuardCheck(ip); remain > 0 {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("失败次数过多，已锁定，请 %s 后再试", remain.Truncate(time.Second))})
 		return
 	}
-	loginGuardMu.Unlock()
 	if !h.Config.VerifyAuth(req.Username, req.Password) {
-		loginGuardMu.Lock()
-		g := loginGuard[ip]
-		g.fails++
-		if g.fails >= 5 {
-			g.lockUntil = time.Now().Add(10 * time.Minute)
-			g.fails = 0
-		}
-		loginGuard[ip] = g
-		loginGuardMu.Unlock()
+		loginGuardFail(ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
-	loginGuardMu.Lock()
-	delete(loginGuard, ip)
-	loginGuardMu.Unlock()
+	loginGuardPass(ip)
 
 	token := h.generateToken(1, req.Username)
 	c.JSON(http.StatusOK, gin.H{

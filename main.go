@@ -25,7 +25,7 @@ import (
 var BuildSHA = "dev"
 
 // rotatingWriter 大小轮转日志写入器：超过 maxBytes 时切割
-//（app.log → app.log.1 → .2 → .3，最旧的丢弃）
+// （app.log → app.log.1 → .2 → .3，最旧的丢弃）
 type rotatingWriter struct {
 	mu       sync.Mutex
 	f        *os.File
@@ -144,6 +144,10 @@ func main() {
 	// 启动 Gin（不用 gin.Default：其自带的请求访问日志每个 HTTP 请求一行，噪音大）
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// 不信任任何代理头：ClientIP 一律取实际连接地址。默认（信任所有代理）下
+	// X-Forwarded--For 可被客户端伪造，登录防爆破会被轮换 XFF 绕过。
+	// 若未来部署到反代之后，把反代 IP 加进来即可
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery())
 
 	// CORS

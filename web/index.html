@@ -145,7 +145,7 @@
           <div style="font-size:12px;color:var(--text-3);margin-top:4px" id="pan123-dir-result"></div>
         </div></div>
         <div class="form-row"><div class="label">本地媒体库目录</div><div class="control">
-          <div class="form-inline-group"><input type="text" id="pan123-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openDirPicker('local','pan123-local')">选择目录</button></div>
+          <div class="form-inline-group"><input type="text" id="pan123-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('pan123-local')">选择目录</button></div>
         </div></div>
         <div style="font-size:12px;color:var(--text-3);line-height:1.7;background:var(--border);border-radius:8px;padding:8px 12px;margin-bottom:10px">官方限制：免费账号播放直链自用流量 1GB/天，超出当日会报错；域名与命名格式使用「重命名规则」里的全局 STRM 设置。</div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="pan123SyncSave(this)">保存配置</button> <button class="btn btn-success" onclick="pan123ScanRun(this)">立即扫描</button></div></div>
@@ -1300,7 +1300,7 @@ av:
     <h3 id="tgsearch-title">TG 频道搜索</h3>
     <div id="tgsearch-config-area" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
       <div class="form-row" style="margin-bottom:8px"><div class="label">频道列表</div><div class="control"><textarea id="tgsearch-channels" class="auto-resize" rows="3" placeholder="每行一个，如：&#10;@quanquan_115&#10;dianyingku"></textarea></div></div>
-      <div class="form-row" style="margin-bottom:8px"><div class="label">转存目录</div><div class="control"><div class="form-inline-group"><input type="text" id="tgsearch-target" readonly placeholder="未选择" style="flex:1"><button class="btn btn-outline" onclick="openDirPicker('115','tgsearch-target')">选择</button></div></div></div>
+      <div class="form-row" style="margin-bottom:8px"><div class="label">转存目录</div><div class="control"><div class="form-inline-group"><input type="text" id="tgsearch-target" readonly placeholder="未选择" style="flex:1"><button class="btn btn-outline" onclick="open115DirPicker('tgsearch-target')">选择</button></div></div></div>
       <div class="form-row" style="margin-bottom:0"><div class="label">转存后自动整理</div><div class="control"><div class="segmented-control" id="tgsearch-organize"><div class="seg-item" data-value="false" onclick="tgSegPick(this)">关闭</div><div class="seg-item" data-value="true" onclick="tgSegPick(this)">开启</div></div></div></div>
       <div class="actions" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
         <button class="btn btn-primary" onclick="tgSearchSaveConfig(this)">保存配置</button>
