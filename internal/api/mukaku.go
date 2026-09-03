@@ -220,9 +220,14 @@ func (h *Handler) MukakuLogin(c *gin.Context) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Code     string `json:"code"`
+		Key      string `json:"key"` // getCaptcha 返回的验证码会话 key
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写用户名和密码"})
+		return
+	}
+	if req.Key == "" || req.Code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先获取并输入图形验证码"})
 		return
 	}
 	cfg := loadMukakuCfg()
@@ -234,6 +239,7 @@ func (h *Handler) MukakuLogin(c *gin.Context) {
 		"username": req.Username,
 		"password": req.Password,
 		"code":     req.Code,
+		"key":      req.Key,
 	})
 	if err != nil {
 		saveMukakuCfg(cfg)

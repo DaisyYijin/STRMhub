@@ -3358,13 +3358,15 @@ async function mukakuLogin(btn) {
   const password = document.getElementById('mk-password').value;
   const code = document.getElementById('mk-code').value.trim();
   if (!username || !password) { toast('请填写账号和密码'); return; }
-  if (!code) { toast('请先获取并输入图形验证码'); return; }
+  const img = document.getElementById('mk-captcha-img');
+  const key = img ? (img.dataset.key || '') : '';
+  if (!key || !code) { toast('请先获取并输入图形验证码'); return; }
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '登录中…'; }
   try {
     await api('/mukaku/login', {
       method: 'POST',
-      body: JSON.stringify({ username: username, password: password, code: code }),
+      body: JSON.stringify({ username: username, password: password, code: code, key: key }),
     });
     toast('登录成功，token 已保存');
     await mukakuLoadPage();
