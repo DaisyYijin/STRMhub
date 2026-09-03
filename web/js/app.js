@@ -3316,11 +3316,65 @@ async function pansouResetConfig(btn) {
   await pansouSaveConfig(btn);
 }
 
+function pansouModalOpen(html, title) {
+  document.getElementById('pansou-modal-title').textContent = title || '选择影视';
+  document.getElementById('pansou-modal-body').innerHTML = html;
+  document.getElementById('pansou-modal').style.display = 'flex';
+}
+function pansouModalClose() {
+  document.getElementById('pansou-modal').style.display = 'none';
+}
+
 async function pansouSearch() {
-  const kw = document.getElementById('pansou-query').value.trim();
+  const q = document.getElementById('pansou-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  pansouModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
+  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="pansouPickTmdb(document.getElementById(&quot;pansou-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜网盘</a>';
+  try {
+    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
+    const items = d.data || [];
+    if (!items.length) {
+      pansouModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>' + skipLink, '选择影视');
+      return;
+    }
+    const cards = items.map(it => {
+      const poster = it.poster
+        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
+          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
+      const typeTag = it.media_type === 'tv'
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
+      const overview = String(it.overview || '').slice(0, 100);
+      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return '<div onclick="pansouPickTmdb(\'' + safeTitle + '\')" '
+        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
+        + poster
+        + '<div style="min-width:0;flex:1">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
+        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
+        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
+        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
+        + '</div>'
+        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
+        + '</div></div>';
+    }).join('');
+    pansouModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
+  } catch (e) {
+    pansouModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>' + skipLink, '选择影视');
+  }
+}
+
+function pansouPickTmdb(title) {
+  pansouModalClose();
+  pansouSearchSite(String(title || '').trim());
+}
+
+async function pansouSearchSite(kw) {
   const box = document.getElementById('pansou-results');
   if (!kw) { toast('请输入搜索关键词'); return; }
-  box.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索中（多源并发，约需数秒）…</span>';
+  box.innerHTML = '<span style="color:var(--text-3)">PanSou 聚合搜索「' + esc(kw) + '」中（多源并发，约需数秒）…</span>';
   pansouItems = [];
   pansouFilter = '';
   try {

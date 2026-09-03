@@ -760,8 +760,17 @@ av:
           <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">PanSou 聚合搜索的开源实例地址，默认 https://pansou.app。自建实例（github.com/fish2018/pansou）可改为此处，保存即生效。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="pansou-base" placeholder="PanSou 实例地址" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="pansouSaveConfig(this)">保存配置</button> <button class="btn btn-warning" onclick="pansouResetConfig(this)">重置</button></div></div></div>
         </div>
         <div class="card">
-          <div class="form-row"><div class="label">搜索网盘资源<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称聚合搜索全网网盘分享（夸克/阿里/百度/迅雷/UC 等）。115 分享行点击自动转存到目标目录；磁力/ed2k 行点击提交 115 离线下载；其他网盘行点击打开原链接手动转存。行内标注提取码与分享时间。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="pansou-query" placeholder="影视名称（中英文均可）" onkeydown="if(event.key==='Enter')pansouSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="pansouSearch()">搜索</button></div></div></div>
+          <div class="form-row"><div class="label">搜索网盘资源<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目，选定后用标准标题聚合搜索全网网盘分享（夸克/阿里/百度/迅雷/UC 等）。115 分享行点击自动转存到目标目录；磁力/ed2k 行点击提交 115 离线下载；其他网盘行点击打开原链接手动转存。行内标注提取码与分享时间。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="pansou-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')pansouSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="pansouSearch()">搜索</button></div></div></div>
           <div id="pansou-results" style="margin-top:6px"></div>
+        </div>
+        <div class="modal-mask" id="pansou-modal" style="display:none" onclick="if(event.target===this)pansouModalClose()">
+          <div class="modal" style="max-width:720px">
+            <h3 id="pansou-modal-title">选择影视</h3>
+            <div id="pansou-modal-body" style="font-size:13px;max-height:62vh;overflow-y:auto"></div>
+            <div class="actions">
+              <button class="btn btn-outline" onclick="pansouModalClose()">关闭</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="tab-panel" data-panel="mt-gy">
