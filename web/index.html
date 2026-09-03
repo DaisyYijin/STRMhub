@@ -754,6 +754,26 @@ av:
       <div class="tabs">
         <div class="tab active" data-tab="mt-gy">观影</div>
         <div class="tab" data-tab="mt-pansou">网盘搜索</div>
+        <div class="tab" data-tab="mt-mukaku">木咖</div>
+      </div>
+      <div class="tab-panel" data-panel="mt-mukaku">
+        <div class="card">
+          <div class="form-row"><div class="label">站点地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">木咖（不太灵系影视库）镜像地址，默认 https://web5.mukaku.com，某域名失效时换 web1-web4。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="mk-base" placeholder="木咖站点地址" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="mukakuSaveBase(this)">保存</button></div></div></div>
+          <div class="form-row"><div class="label">VIP Token<i class="help-tip" tabindex="0">?<span class="tip-bubble">资源仅 VIP 可见。在浏览器登录木咖后，F12 → Application → Local Storage → 复制 token 的值粘贴到这里保存。也可以用下方验证码登录自动获取。搜索功能无需 token。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="mk-token" placeholder="" class="inline-input" style="flex:1" autocomplete="off"><button class="btn btn-warning" onclick="mukakuClearToken(this)">清除</button> <span id="mk-token-status" style="font-size:12.5px;color:var(--text-3);align-self:center"></span></div></div></div>
+          <div class="form-row"><div class="label">验证码登录<i class="help-tip" tabindex="0">?<span class="tip-bubble">填写站内账号密码，点「获取验证码」输入图中字符后登录，token 自动保存。验证码有时效，过期就点图片刷新。</span></i></div><div class="control"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input type="text" id="mk-username" placeholder="用户名/邮箱" style="width:150px" autocomplete="off"><input type="password" id="mk-password" placeholder="密码" style="width:130px" autocomplete="new-password"><input type="text" id="mk-code" placeholder="验证码" style="width:80px" autocomplete="off"><img id="mk-captcha-img" src="" alt="" onclick="mukakuRefreshCaptcha()" title="点击刷新" style="height:32px;cursor:pointer;border-radius:4px;display:none"><button class="btn btn-outline" onclick="mukakuRefreshCaptcha()">获取验证码</button><button class="btn btn-primary" onclick="mukakuLogin(this)">登录</button></div></div></div>
+        </div>
+        <div class="card">
+          <div class="form-row"><div class="label">搜索影视<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目，选定后用标准标题搜木咖站内影片；再点影片查看资源列表。资源需 VIP token（上方配置）；磁力/ed2k 自动提交离线下载，115 分享自动转存，其他网盘打开原链。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="mk-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')mukakuSearch()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="mukakuSearch()">搜索</button></div></div></div>
+        </div>
+        <div class="modal-mask" id="mk-modal" style="display:none" onclick="if(event.target===this)mukakuModalClose()">
+          <div class="modal" style="max-width:720px">
+            <h3 id="mk-modal-title">选择影视</h3>
+            <div id="mk-modal-body" style="font-size:13px;max-height:62vh;overflow-y:auto"></div>
+            <div class="actions">
+              <button class="btn btn-outline" onclick="mukakuModalClose()">关闭</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="tab-panel" data-panel="mt-pansou">
         <div class="card">

@@ -410,6 +410,14 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/tgsub/config", h.TgSubSaveConfig)
 		protected.POST("/tgsub/run", h.TgSubRun)
 
+		// 影视转存 · 木咖（不太灵系影视库，搜索匿名/资源需 VIP token）
+		protected.GET("/mukaku/config", h.MukakuGetConfig)
+		protected.POST("/mukaku/config", h.MukakuSaveConfig)
+		protected.GET("/mukaku/captcha", h.MukakuCaptcha)
+		protected.POST("/mukaku/login", h.MukakuLogin)
+		protected.GET("/mukaku/search", h.MukakuSearch)
+		protected.GET("/mukaku/resources", h.MukakuResources)
+
 		// 影视转存 · PanSou 网盘聚合搜索（开源项目公开实例，免认证）
 		protected.GET("/pansou/config", h.PansouGetConfig)
 		protected.POST("/pansou/config", h.PansouSaveConfig)

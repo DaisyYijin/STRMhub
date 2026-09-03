@@ -164,7 +164,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); }
+  if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); mukakuLoadPage(); }
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -3281,6 +3281,281 @@ function renderLoginBadge(el, state, sub) {
   const text = state === 'on' ? '已登录' : (state === 'warn' ? '即将过期' : '未登录');
   el.innerHTML = '<span class="login-badge ' + cls + '"><span class="dot"></span>' + text
     + (sub ? ' <span class="sub">' + esc(sub) + '</span>' : '') + '</span>';
+}
+
+// ==================== 影视转存 · 木咖（不太灵系影视库） ====================
+// TMDB 选片 → 木咖站内搜索 → 资源列表（VIP token）。搜索匿名可用；
+// 资源需在配置里粘贴 token 或用验证码登录。链接按协议分流：
+// 115 分享自动转存 / 磁力 ed2k 离线下载 / 其他网盘打开原链。
+
+let mukakuVideos = [];
+let mukakuRes = [];
+let mukakuCurTitle = '';
+
+function mukakuModalOpen(html, title) {
+  document.getElementById('mk-modal-title').textContent = title || '选择影视';
+  document.getElementById('mk-modal-body').innerHTML = html;
+  document.getElementById('mk-modal').style.display = 'flex';
+}
+function mukakuModalClose() {
+  document.getElementById('mk-modal').style.display = 'none';
+}
+
+async function mukakuLoadPage() {
+  try {
+    const d = await api('/mukaku/config');
+    document.getElementById('mk-base').value = d.base_url || '';
+    document.getElementById('mk-username').value = d.username || '';
+    const st = document.getElementById('mk-token-status');
+    const tk = document.getElementById('mk-token');
+    if (d.has_token) {
+      tk.placeholder = '已保存（粘贴新值可覆盖）';
+      st.textContent = '✓ token ' + (d.token_at || '');
+      st.style.color = 'var(--success)';
+    } else {
+      tk.placeholder = '粘贴浏览器 localStorage 里的 token';
+      st.textContent = '未配置（资源需 VIP）';
+    }
+  } catch (e) { console.error('[木咖] 配置回填失败:', e.message); }
+}
+
+async function mukakuSaveBase(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    await api('/mukaku/config', {
+      method: 'POST',
+      body: JSON.stringify({ base_url: document.getElementById('mk-base').value.trim() }),
+    });
+    toast('保存成功');
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function mukakuClearToken(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    await api('/mukaku/config', { method: 'POST', body: JSON.stringify({ access_token: '' }) });
+    toast('已清除 token');
+    await mukakuLoadPage();
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function mukakuRefreshCaptcha() {
+  const img = document.getElementById('mk-captcha-img');
+  try {
+    const d = await api('/mukaku/captcha');
+    img.src = d.img;
+    img.dataset.key = d.key || '';
+    img.style.display = '';
+  } catch (e) { toast(e.message); }
+}
+
+async function mukakuLogin(btn) {
+  const username = document.getElementById('mk-username').value.trim();
+  const password = document.getElementById('mk-password').value;
+  const code = document.getElementById('mk-code').value.trim();
+  if (!username || !password) { toast('请填写账号和密码'); return; }
+  if (!code) { toast('请先获取并输入图形验证码'); return; }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '登录中…'; }
+  try {
+    await api('/mukaku/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: username, password: password, code: code }),
+    });
+    toast('登录成功，token 已保存');
+    await mukakuLoadPage();
+  } catch (e) {
+    toast(e.message);
+    mukakuRefreshCaptcha();
+  }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function mukakuSearch() {
+  const q = document.getElementById('mk-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  mukakuModalOpen('<span style="color:var(--text-3)">TMDB 匹配中…</span>', '选择影视');
+  const skipLink = '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuPickTmdb(document.getElementById(&quot;mk-query&quot;).value.trim())">跳过 TMDB，直接用关键词搜木咖</a>';
+  try {
+    const d = await api('/tmdb/search?query=' + encodeURIComponent(q));
+    const items = d.data || [];
+    if (!items.length) {
+      mukakuModalOpen('<span style="color:var(--text-3)">' + esc(d.hint || '未找到匹配的影视条目') + '</span>' + skipLink, '选择影视');
+      return;
+    }
+    const cards = items.map(it => {
+      const poster = it.poster
+        ? '<img src="/api/tmdb/img?path=' + encodeURIComponent(it.poster) + '&size=w154" '
+          + 'onerror="this.style.display=\'none\'" style="width:60px;height:90px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+        : '<div style="width:60px;height:90px;border-radius:6px;background:var(--fill-2);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-3);flex:none">▨</div>';
+      const typeTag = it.media_type === 'tv'
+        ? '<span class="otag" style="background:#eef0ff;color:#5b5fc7">剧集</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">电影</span>';
+      const overview = String(it.overview || '').slice(0, 100);
+      const safeTitle = String(it.title).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return '<div onclick="mukakuPickTmdb(\'' + safeTitle + '\')" '
+        + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+        + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
+        + poster
+        + '<div style="min-width:0;flex:1">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + typeTag
+        + '<b style="font-size:14px">' + esc(it.title) + '</b>'
+        + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.year || '') + '</span>'
+        + (it.vote ? '<span style="font-size:12px;color:#e6a23c">★ ' + it.vote.toFixed(1) + '</span>' : '')
+        + '</div>'
+        + (overview ? '<div style="font-size:12.5px;color:var(--text-2);line-height:1.6;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">' + esc(overview) + '…</div>' : '')
+        + '</div></div>';
+    }).join('');
+    mukakuModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>', '选择影视（' + items.length + ' 个结果）');
+  } catch (e) {
+    mukakuModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>' + skipLink, '选择影视');
+  }
+}
+
+function mukakuPickTmdb(title) {
+  mukakuSearchSite(String(title || '').trim());
+}
+
+// 站内影片搜索（结果即弹窗列表，点击进资源）
+async function mukakuSearchSite(kw) {
+  const body = document.getElementById('mk-modal-body');
+  if (!kw) { toast('请输入搜索关键词'); return; }
+  mukakuCurTitle = kw;
+  body.innerHTML = '<span style="color:var(--text-3)">木咖搜索「' + esc(kw) + '」中…</span>';
+  document.getElementById('mk-modal-title').textContent = '木咖 · ' + kw;
+  mukakuVideos = [];
+  try {
+    const d = await api('/mukaku/search?kw=' + encodeURIComponent(kw));
+    mukakuVideos = d.data || [];
+    if (!mukakuVideos.length) {
+      body.innerHTML = '<span style="color:var(--text-3)">木咖没有找到「' + esc(kw) + '」相关影片</span>'
+        + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuSearch()">← 重新选片</a>';
+      return;
+    }
+    mukakuRenderVideos();
+  } catch (e) {
+    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+      + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuSearch()">← 重新选片</a>';
+  }
+}
+
+function mukakuRenderVideos() {
+  const body = document.getElementById('mk-modal-body');
+  const items = mukakuVideos;
+  const cards = items.map((it, i) => {
+    const poster = it.image
+      ? '<img src="' + esc(it.image) + '" onerror="this.style.display=\'none\'" style="width:52px;height:78px;object-fit:cover;border-radius:6px;background:var(--fill-2);flex:none">'
+      : '<div style="width:52px;height:78px;border-radius:6px;background:var(--fill-2);flex:none"></div>';
+    const meta = [it.year, it.quality, it.doub && it.doub !== '0' ? '豆 ' + it.doub : '', it.imdb && it.imdb !== '0' ? 'IMDb ' + it.imdb : '']
+      .filter(Boolean).join(' · ');
+    return '<div onclick="mukakuOpenResources(' + i + ')" '
+      + 'style="display:flex;gap:12px;padding:10px;border-radius:8px;cursor:pointer;border:1px solid var(--border, #e5e6eb)" '
+      + 'onmouseover="this.style.background=\'var(--fill-1,#f7f8fa)\'" onmouseout="this.style.background=\'\'">'
+      + poster
+      + '<div style="min-width:0;flex:1">'
+      + '<b style="font-size:14px">' + esc(it.title) + '</b> '
+      + '<span style="font-size:12px;color:var(--text-3)">' + esc(it.otitle || '') + '</span>'
+      + '<div style="font-size:12.5px;color:var(--text-2);margin-top:5px">' + esc(meta) + '</div>'
+      + '</div><div class="otk-side" style="color:var(--primary);align-self:center">看资源 ›</div>'
+      + '</div>';
+  }).join('');
+  mukakuModalOpen('<div style="display:flex;flex-direction:column;gap:10px">' + cards + '</div>',
+    '木咖 · ' + mukakuCurTitle + '（' + items.length + ' 个影片）');
+}
+
+// 拉取影片资源列表（需 VIP token）
+async function mukakuOpenResources(i) {
+  const v = mukakuVideos[i];
+  if (!v) return;
+  mukakuCurTitle = v.title;
+  const body = document.getElementById('mk-modal-body');
+  body.innerHTML = '<span style="color:var(--text-3)">读取「' + esc(v.title) + '」资源中…</span>';
+  document.getElementById('mk-modal-title').textContent = '木咖资源 · ' + v.title;
+  try {
+    const d = await api('/mukaku/resources?id=' + v.id);
+    mukakuRes = d.data || [];
+    if (!mukakuRes.length) {
+      body.innerHTML = '<span style="color:var(--text-3)">没有读到资源：站方仅对 VIP 开放资源列表。'
+        + '请确认已粘贴有效 token 或验证码登录成功。</span>'
+        + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuSearchSite(mukakuCurTitle)">← 返回影片列表</a>';
+      return;
+    }
+    mukakuRenderResources();
+  } catch (e) {
+    body.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'
+      + '<br><a href="javascript:void(0)" style="font-size:13px" onclick="mukakuSearchSite(mukakuCurTitle)">← 返回影片列表</a>';
+  }
+}
+
+function mukakuRenderResources() {
+  const body = document.getElementById('mk-modal-body');
+  const rows = mukakuRes.map(it => {
+    const i = mukakuRes.indexOf(it);
+    let side, click;
+    if (it.action === 'transfer') {
+      side = '<div class="otk-side" style="color:var(--primary)">转存 ›</div>';
+      click = 'onclick="mukakuTransfer(' + i + ',this)"';
+    } else if (it.action === 'offline') {
+      side = '<div class="otk-side" style="color:var(--primary)">离线下载 ›</div>';
+      click = 'onclick="mukakuOffline(' + i + ',this)"';
+    } else {
+      side = '<div class="otk-side" style="color:var(--text-3)">打开链接 ↗</div>';
+      click = 'onclick="window.open(\'' + esc(it.link) + '\',\'_blank\')"';
+    }
+    const meta = [it.code ? '<span style="color:#b26a00">提取码 ' + esc(it.code) + '</span>' : '']
+      .filter(Boolean).join('<span class="otk-dot">·</span>');
+    return '<div class="otk-row" style="cursor:pointer" ' + click + '>'
+    + '<div class="otk-main"><div class="otk-name" title="' + esc(it.link) + '">' + esc(it.seed_name || it.link) + '</div>'
+    + (meta ? '<div class="otk-sub">' + meta + '</div>' : '')
+    + '<div class="gy-st" style="font-size:12px;margin-top:4px;color:var(--text-3)"></div></div>'
+    + side
+    + '</div>';
+  }).join('');
+  mukakuModalOpen('<div style="margin-bottom:10px;font-size:12px;color:var(--text-3)">共 '
+    + mukakuRes.length + ' 条资源 · 115 分享点击转存，磁力/ed2k 点击离线下载</div>'
+    + '<div class="otk">' + rows + '</div>'
+    + '<div style="margin-top:12px"><a href="javascript:void(0)" style="font-size:13px;color:var(--primary)" onclick="mukakuSearchSite(mukakuCurTitle)">← 返回影片列表</a></div>',
+    '木咖资源 · ' + mukakuCurTitle);
+}
+
+async function mukakuTransfer(i, el) {
+  const it = mukakuRes[i];
+  if (!it) return;
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已转存过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '转存中…'; }
+  try {
+    const r = await api('/share/receive', {
+      method: 'POST',
+      body: JSON.stringify({ url: it.link, code: it.code || '', target_cid: '', organize: true }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ ' + (r.message || '已转存'); }
+    toast('已转存 115，完成后自动整理入库');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
+}
+
+async function mukakuOffline(i, el) {
+  const it = mukakuRes[i];
+  if (!it) return;
+  const st = el.querySelector('.gy-st');
+  if (st && st.dataset.done === '1') { toast('该资源已提交过'); return; }
+  if (st) { st.style.color = 'var(--text-3)'; st.textContent = '提交 115 离线下载中…'; }
+  try {
+    await api('/offline/add', {
+      method: 'POST',
+      body: JSON.stringify({ url: it.link, organize: true }),
+    });
+    if (st) { st.style.color = 'var(--success)'; st.dataset.done = '1'; st.textContent = '✓ 已提交离线下载'; }
+    toast('已提交 115 离线下载，完成后自动整理入库');
+  } catch (e) {
+    if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
 }
 
 // ==================== 影视转存 · PanSou 网盘聚合搜索 ====================
