@@ -46,3 +46,14 @@ func TestClassifyLinkShareDomains(t *testing.T) {
 		}
 	}
 }
+
+func TestIs115BusyResp(t *testing.T) {
+	busy := `{"state":false,"error":"服务器开小差了，稍后再试吧","errNo":0}`
+	ok := `{"state":false,"error":"分享不存在","errNo":0}`
+	if !is115BusyResp([]byte(busy)) {
+		t.Errorf("开小差响应应识别为风控")
+	}
+	if is115BusyResp([]byte(ok)) {
+		t.Errorf("业务错误不应误判为风控")
+	}
+}

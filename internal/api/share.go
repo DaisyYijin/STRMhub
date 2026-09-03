@@ -12,8 +12,8 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -25,6 +25,54 @@ import (
 
 // ShareReceive 转存分享链接到接收文件夹
 // POST /share/receive  body: {"url":"https://115.com/s/xxx", "code":"提取码", "target_cid":"可选，默认接收文件夹"}
+
+// ==================== 分享接口镜像轮换 ====================
+//
+// 分享三接口（info/snap/sharepost）此前直连 webapi.115.com，被风控
+// （"服务器开小差了"）时整个分享转存失败。与文件列表接口同款思路：
+// 主域名被拒时轮换镜像域名重试（web.api / 115cdn / 115vod）。
+
+var shareAPIOrigins = []string{
+	"https://webapi.115.com",
+	"http://web.api.115.com",
+	"https://115cdn.com/webapi",
+	"https://115vod.com/webapi",
+}
+
+// postShareAPI 分享接口 POST：请求失败或命中 115 风控响应（开小差/频繁）
+// 时切换下一镜像，全部镜像用尽后返回最后一次结果
+func postShareAPI(path string, form url.Values, cookie string, timeout time.Duration) ([]byte, error) {
+	var lastBody []byte
+	var lastErr error
+	for _, origin := range shareAPIOrigins {
+		body, err := httpPostForm115(origin+path, form, cookie, timeout)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if is115BusyResp(body) {
+			lastBody = body
+			log.Printf("[上传] ○ %s 命中风控（开小差），切换镜像重试", path)
+			continue
+		}
+		return body, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return lastBody, nil
+}
+
+// is115BusyResp 识别 115 风控响应（state=false 且带"开小差/稍后再试/频繁"文案）
+func is115BusyResp(body []byte) bool {
+	if !strings.Contains(string(body), "\"state\":false") {
+		return false
+	}
+	return strings.Contains(string(body), "开小差") ||
+		strings.Contains(string(body), "稍后再试") ||
+		strings.Contains(string(body), "频繁")
+}
+
 func (h *Handler) ShareReceive(c *gin.Context) {
 	var req struct {
 		URL      string `json:"url"`
@@ -86,14 +134,14 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	log.Printf("[上传] ▶ 分享转存开始: %s（提取码 %q）", truncateStr(shareURL, 70), code)
 
 	// 1. 分享信息（校验链接与提取码）
-	infoBody, err := httpPostForm115("https://webapi.115.com/share/info",
+	infoBody, err := postShareAPI("/share/info",
 		url.Values{"share_code": {shareCode}}, cookie, 15*time.Second)
 	if err != nil {
 		log.Printf("[上传] ✗ 获取分享信息失败: %v", err)
 		return "", 0, 0, fmt.Errorf("获取分享信息失败: %s", err.Error())
 	}
 	var info struct {
-		State bool `json:"state"`
+		State bool   `json:"state"`
 		Error string `json:"error"`
 		Data  struct {
 			ShareTitle string `json:"share_title"`
@@ -107,28 +155,28 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 	// 2. 文件列表（顶层收全部；1150/页翻页收取——此前只取第一页，
 	// 超过 1150 项的分享被静默截断收不全）
 	type snapItem struct {
-		Fid  string `json:"fid"`
-		Fn   string `json:"fn"`
-		Fc   int    `json:"fc"`
-		Cid  string `json:"cid"`
+		Fid string `json:"fid"`
+		Fn  string `json:"fn"`
+		Fc  int    `json:"fc"`
+		Cid string `json:"cid"`
 	}
 	var allItems []snapItem
 	for offset := 0; ; offset += 1150 {
-		snapBody, err := httpPostForm115("https://webapi.115.com/share/snap",
+		snapBody, err := postShareAPI("/share/snap",
 			url.Values{
-				"share_code":  {shareCode},
+				"share_code":   {shareCode},
 				"receive_code": {code},
-				"cid":         {"0"},
-				"offset":      {fmt.Sprint(offset)},
-				"limit":       {"1150"},
-				"asc":         {"1"},
-				"fc_mix":      {"0"},
+				"cid":          {"0"},
+				"offset":       {fmt.Sprint(offset)},
+				"limit":        {"1150"},
+				"asc":          {"1"},
+				"fc_mix":       {"0"},
 			}, cookie, 15*time.Second)
 		if err != nil {
 			return "", 0, 0, fmt.Errorf("获取分享文件列表失败: %s", err.Error())
 		}
 		var snap struct {
-			State bool `json:"state"`
+			State bool   `json:"state"`
 			Error string `json:"error"`
 			Data  struct {
 				List []snapItem `json:"list"`
@@ -150,24 +198,24 @@ func (h *Handler) shareReceiveCore(shareURL, code, target string, organize bool)
 
 	// 3. sharepost 拿 pick_code
 	form := url.Values{
-		"share_code":  {shareCode},
+		"share_code":   {shareCode},
 		"receive_code": {code},
 	}
 	for i, f := range allItems {
 		form.Set(fmt.Sprintf("file_id[%d]", i), f.Fid)
 	}
-	postBody, err := httpPostForm115("https://webapi.115.com/share/sharepost", form, cookie, 20*time.Second)
+	postBody, err := postShareAPI("/share/sharepost", form, cookie, 20*time.Second)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("sharepost 失败: %s", err.Error())
 	}
 	var post struct {
-		State bool `json:"state"`
+		State bool   `json:"state"`
 		Error string `json:"error"`
 		Data  struct {
 			List []struct {
-				Fid       string `json:"fid"`
-				PickCode  string `json:"pick_code"`
-				FileName  string `json:"file_name"`
+				Fid      string `json:"fid"`
+				PickCode string `json:"pick_code"`
+				FileName string `json:"file_name"`
 			} `json:"list"`
 		} `json:"data"`
 	}
