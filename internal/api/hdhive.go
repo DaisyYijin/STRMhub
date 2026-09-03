@@ -17,9 +17,9 @@ package api
 //   - 会话：Cookie（含 cf_clearance）+ 绑定 UA 持久化，失效自动重登
 //   - Cloudflare：影巢对数据中心 IP/非浏览器指纹可能 403 封禁页，
 //     直连（Chrome 指纹 tls-client）被拦时会给出明确报错
-//   - 解锁：GET /resource/115/{slug} 渲染页 → 正则提取 115 分享链接；
-//     免费/已解锁资源直接出链接，付费资源需先在影巢网页解锁，解锁后
-//     回到本页重试即可转存
+//   - 解锁：锁定资源走 unlockResource Server Action 自动解锁（免签名，
+//     POST 资源页 + Next-Action 头，响应直接带链接与提取码；付费资源
+//     自动扣积分，需要影巢登录态）；免费/已解锁资源页面直接带链接
 
 import (
 	"bytes"
@@ -1588,6 +1588,134 @@ func hdhivePanCount(pans []hdhivePan, group string) int {
 	return n
 }
 
+// ==================== 解锁（unlockResource Server Action） ====================
+//
+// 资源页「确认解锁」按钮走 Next.js Server Action（和登录同机制，POST 页面
+// 路径 + Next-Action 头，不经过 /api/* 签名墙，浏览器实测返回链接本体）：
+//
+//	POST /resource/115/{slug}
+//	Next-Action: <actionID>
+//	Body: ["{slug}"]
+//	→ 1:{"response":{"success":true,"data":{"url":...,"access_code":...,
+//	   "full_url":...,"already_owned":...},"message":"...","code":"200"}}
+//
+// actionID 随站点构建变化：从资源页引用的 page chunk 里动态提取
+// （createServerReference("<id>",...,"unlockResource")），失败用兜底值。
+
+const hdhiveUnlockActionFallback = "60b500e031555564a509d3d32f144a93addeb1859a"
+
+var (
+	reHdhiveUnlockAction = regexp.MustCompile(`createServerReference\("([a-f0-9]{40})"[^\n]{0,200}?"unlockResource"\)`)
+	reHdhiveAppChunk     = regexp.MustCompile(`static/chunks/app/[^"\\]+\.js`)
+)
+
+// hdhiveUnlockActionID 从资源页引用的 chunk 提取 unlockResource 动作 ID
+// （结果缓存 10 分钟；站点重新构建后自动刷新）
+var hdhiveActionIDMu sync.Mutex
+var hdhiveActionIDCache string
+var hdhiveActionIDAt time.Time
+
+func (h *Handler) hdhiveUnlockActionID(cfg *hdhiveCfg, pageHTML string) string {
+	hdhiveActionIDMu.Lock()
+	defer hdhiveActionIDMu.Unlock()
+	if hdhiveActionIDCache != "" && time.Since(hdhiveActionIDAt) < 10*time.Minute {
+		return hdhiveActionIDCache
+	}
+	if pageHTML == "" {
+		var err error
+		pageHTML, _, err = h.hdhivePage(cfg, "/resource/115/unlock-action-probe")
+		if err != nil {
+			return hdhiveUnlockActionFallback
+		}
+	}
+	for _, m := range reHdhiveAppChunk.FindAllString(pageHTML, 20) {
+		if !strings.Contains(m, "resource") {
+			continue
+		}
+		_, chunk, _, err := hdhiveDirect(cfg, "GET", cfg.BaseURL+"/_next/"+m, "", nil)
+		if err != nil {
+			continue
+		}
+		if am := reHdhiveUnlockAction.FindStringSubmatch(chunk); am != nil {
+			hdhiveActionIDCache = am[1]
+			hdhiveActionIDAt = time.Now()
+			return am[1]
+		}
+	}
+	return hdhiveUnlockActionFallback
+}
+
+// hdhiveParseActionResponse 从 Server Action 的 RSC 响应中解析解锁结果：
+// 动作结果形如 N:{"response":{"success":..,"data":{"url","access_code",
+// "full_url","already_owned"},"message","code"}} 的行
+func hdhiveParseActionResponse(raw string) (string, string, bool, error) {
+	for _, line := range strings.Split(raw, "\n") {
+		if idx := strings.Index(line, ":"); idx > 0 && idx <= 3 {
+			cand := strings.TrimSpace(line[idx+1:])
+			if !strings.HasPrefix(cand, `{"response"`) {
+				continue
+			}
+			var out struct {
+				Response struct {
+					Success bool `json:"success"`
+					Data    struct {
+						URL          string `json:"url"`
+						FullURL      string `json:"full_url"`
+						AccessCode   string `json:"access_code"`
+						AlreadyOwned bool   `json:"already_owned"`
+					} `json:"data"`
+					Message string `json:"message"`
+					Code    string `json:"code"`
+				} `json:"response"`
+			}
+			if json.Unmarshal([]byte(cand), &out) != nil {
+				continue
+			}
+			r := out.Response
+			if r.Code == "" && r.Message == "" {
+				continue
+			}
+			if !r.Success {
+				return "", "", false, fmt.Errorf("影巢拒绝解锁: %s", r.Message)
+			}
+			link := r.Data.FullURL
+			if link == "" {
+				link = r.Data.URL
+			}
+			if link == "" {
+				return "", "", false, fmt.Errorf("解锁成功但未返回链接: %s", r.Message)
+			}
+			return link, r.Data.AccessCode, r.Data.AlreadyOwned, nil
+		}
+	}
+	return "", "", false, fmt.Errorf("解锁响应无法解析")
+}
+
+// hdhiveServerActionUnlock 调用 unlockResource 动作，返回 (链接, 提取码, 已持有, 错误)
+func (h *Handler) hdhiveServerActionUnlock(cfg *hdhiveCfg, slug, actionID string) (string, string, bool, error) {
+	pagePath := cfg.BaseURL + "/resource/115/" + url.PathEscape(slug)
+	body, _ := json.Marshal([]string{slug})
+	status, raw, _, err := hdhiveDirect(cfg, "POST", pagePath, string(body), map[string]string{
+		"Accept":       "text/x-component",
+		"Content-Type": "text/plain;charset=UTF-8",
+		"Next-Action":  actionID,
+		"Origin":       cfg.BaseURL,
+		"Referer":      pagePath,
+	})
+	if err != nil {
+		return "", "", false, fmt.Errorf("解锁请求失败: %s", sanitizeWecomErr(err))
+	}
+	if hdhiveIsCFBlock(status, raw) {
+		return "", "", false, fmt.Errorf("解锁请求被 Cloudflare 拦截（HTTP %d）", status)
+	}
+	link, pass, owned, perr := hdhiveParseActionResponse(raw)
+	if perr != nil {
+		return "", "", false, perr
+	}
+	_ = status
+	return link, pass, owned, nil
+}
+
 // HdhiveDiagSign GET /hdhive/diag/sign
 // 摘取含握手/签名的 JS chunk 关键代码段，用于评估 Go 侧复刻签名可行性
 func (h *Handler) HdhiveDiagSign(c *gin.Context) {
@@ -1847,8 +1975,9 @@ func hdhiveTrimLink(s string) string {
 }
 
 // HdhiveUnlock POST /hdhive/unlock {slug}
-// 打开资源页提取 115 分享链接 → 自动转存。免费/已解锁资源页面直接带链接；
-// 付费资源需先在影巢网页点「确定解锁」（仅真实浏览器可触发），再回来重试。
+// 打开资源页提取链接 → 自动转存。免费/已解锁资源页面直接带链接；锁定资源
+// 走 unlockResource Server Action 自动解锁（扣积分，需影巢登录态），拿到
+// 链接后按协议分流：115 分享走转存、磁力/ed2k/HTTP 走离线下载。
 func (h *Handler) HdhiveUnlock(c *gin.Context) {
 	var req struct {
 		Slug string `json:"slug"`
@@ -1871,21 +2000,36 @@ func (h *Handler) HdhiveUnlock(c *gin.Context) {
 	if m := reHdhive115Link.FindString(pageHTML); m != "" {
 		link = hdhiveTrimLink(m)
 	}
-	if link == "" {
-		hint := "该资源需要解锁：请在影巢网页端打开此资源并点「确定解锁」（付费解锁只能在站内完成），完成后回到这里重试即可自动转存"
-		if strings.Contains(pageHTML, "积分不足") {
-			hint = "影巢积分不足，无法解锁该资源"
-		}
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": hint,
-			"page":  cfg.BaseURL + "/resource/115/" + req.Slug,
-		})
-		return
-	}
-	log.Printf("[影巢] ✓ 提取到分享链接 slug=%s link=%s", truncateStr(req.Slug, 40), truncateStr(link, 70))
 	pass := ""
-	if m := reSharePass.FindStringSubmatch(link); m != nil {
-		pass = m[1]
+	// 页面没有直出链接 → 资源处于锁定态：走 unlockResource Server Action
+	// （与登录同机制，POST 页面 + Next-Action 头，免签名；需要影巢登录态，
+	// 付费资源按资源页标注的积分自动扣除）
+	if link == "" {
+		if cfg.Cookies["token"] == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "该资源需要解锁（消耗影巢积分）：请先在本页上方填写影巢账号密码并点登录，登录后回来重新点击即可自动解锁转存",
+				"page":  cfg.BaseURL + "/resource/115/" + req.Slug,
+			})
+			return
+		}
+		actionID := h.hdhiveUnlockActionID(cfg, pageHTML)
+		ulink, upass, owned, uerr := h.hdhiveServerActionUnlock(cfg, req.Slug, actionID)
+		if uerr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "自动解锁失败: " + uerr.Error(),
+				"page":  cfg.BaseURL + "/resource/115/" + req.Slug,
+			})
+			return
+		}
+		link = ulink
+		pass = upass
+		log.Printf("[影巢] ✓ Server Action 解锁 slug=%s already_owned=%v link=%s",
+			truncateStr(req.Slug, 24), owned, truncateStr(link, 60))
+	}
+	if pass == "" {
+		if m := reSharePass.FindStringSubmatch(link); m != nil {
+			pass = m[1]
+		}
 	}
 
 	switch {

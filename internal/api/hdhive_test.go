@@ -2,6 +2,7 @@ package api
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -148,5 +149,39 @@ func TestHdhiveExtractFlightObject(t *testing.T) {
 	}
 	if _, ok := hdhiveExtractFlightObject(`x{\"websites\":[\"115\"],\"groupData\":{\"115\":[`, `\"websites\":`); ok {
 		t.Fatal("未闭合对象不应提取成功")
+	}
+}
+
+// TestHdhiveServerActionUnlockParse Server Action 响应（RSC 行格式）的解析：
+// 成功带链接 / 已持有 / 拒绝（积分不足等业务错误）
+func TestHdhiveServerActionUnlockParse(t *testing.T) {
+	buildBody := func(resultLine string) string {
+		return "2:\"$Sreact.fragment\"\n0:{\"layout\":\"x\"}\n" + resultLine + "\n7:[\"$\",\"div\",null,{\"children\":404}]"
+	}
+
+	// 成功：返回链接 + 提取码
+	body := buildBody(`1:{"response":{"success":true,"data":{"url":"https://115cdn.com/s/abc","access_code":"xyz","full_url":"https://115cdn.com/s/abc?password=xyz","already_owned":false},"message":"解锁成功","code":"200"}}`)
+	link, pass, _, err := hdhiveParseActionResponse(body)
+	if err != nil || link != "https://115cdn.com/s/abc?password=xyz" || pass != "xyz" {
+		t.Fatalf("成功用例解析错误: link=%q pass=%q err=%v", link, pass, err)
+	}
+
+	// 已持有（重复解锁不扣费）
+	body = buildBody(`1:{"response":{"success":true,"data":{"url":"ed2k://|file|x.iso|1|AB|","access_code":"","full_url":"ed2k://|file|x.iso|1|AB|","already_owned":true},"message":"资源已解锁，无需重复支付","code":"200"}}`)
+	link, _, owned, err := hdhiveParseActionResponse(body)
+	if err != nil || !owned || link == "" {
+		t.Fatalf("已持有用例解析错误: link=%q owned=%v err=%v", link, owned, err)
+	}
+
+	// 拒绝：业务错误透出原文
+	body = buildBody(`1:{"response":{"success":false,"data":null,"message":"积分不足","code":"400405"}}`)
+	_, _, _, err = hdhiveParseActionResponse(body)
+	if err == nil || !strings.Contains(err.Error(), "积分不足") {
+		t.Fatalf("拒绝用例应透出原文错误，实得 %v", err)
+	}
+
+	// 无动作结果行
+	if _, _, _, err := hdhiveParseActionResponse("garbage"); err == nil {
+		t.Fatal("无结果行应报解析失败")
 	}
 }
