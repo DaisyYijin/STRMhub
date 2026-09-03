@@ -1768,80 +1768,204 @@ async function tgSubPersist(cfg, btn, doneMsg) {
   if (btn) btn.disabled = false;
 }
 
-// 渲染订阅源 + 关键词订阅两个列表
-async function tgSubRenderAll() {
+// 渲染统一表格：类型/状态筛选 → 订阅源+关键词订阅合并列表（对齐管理端表格范式）
+function tgSubFilterVals() {
+  const t = document.getElementById('tgsub-f-type');
+  const st = document.getElementById('tgsub-f-status');
+  return {
+    type: t ? t.value : '',
+    status: st ? st.value : '',
+  };
+}
+
+function tgSubFilterReset() {
+  const t = document.getElementById('tgsub-f-type');
+  const st = document.getElementById('tgsub-f-status');
+  if (t) t.value = '';
+  if (st) st.value = '';
+  tgSubRenderAll(true);
+}
+
+// 状态徽标 + 开关（停用的行整行淡化）
+function tgSubStatusCell(enabled, kind, id) {
+  return '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px" '
+    + 'onclick="event.stopPropagation()">'
+    + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="tgSubToggle(\'' + kind + '\',' + id + ',this.checked)">'
+    + (enabled ? '<span style="color:#00874a">启用</span>' : '<span style="color:var(--text-3)">停用</span>')
+    + '</label>';
+}
+
+async function tgSubRenderAll(forceQuery) {
   let cfg;
   try { cfg = await tgSubFetchCfg(); } catch (e) {
-    document.getElementById('tgsub-src-list').innerHTML = '<span style="color:var(--danger)">加载失败</span>';
-    document.getElementById('tgsub-list').innerHTML = '';
+    document.getElementById('tgsub-table').innerHTML = '<span style="color:var(--danger)">加载失败</span>';
     return;
   }
-  const srcBox = document.getElementById('tgsub-src-list');
-  const sources = cfg.sources || [];
-  srcBox.innerHTML = sources.length ? sources.map(s =>
-    '<div style="display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
-    + '<span class="login-badge on" style="padding:2px 10px">TG</span>'
-    + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(s.name) + '</b>'
-    + '<div style="font-size:11.5px;color:var(--text-3)">' + esc(s.url) + (s.note ? ' · ' + esc(s.note) : '') + '</div></div>'
-    + '<span style="font-size:11.5px;color:var(--text-3)">优先级 ' + (s.priority || 10) + '</span>'
-      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubSrcDel(\'' + s.id + '\')">删除</button></div>'
-  ).join('') : '<div class="dash-empty">还没有订阅源，点右上角「新增订阅源」添加 TG 频道</div>';
+  const f = tgSubFilterVals();
+  const srcs = (cfg.sources || []).map(x => Object.assign({ _kind: 'source' }, x, { enabled: x.enabled !== false }));
+  const items = (cfg.items || []).map(x => Object.assign({ _kind: 'item' }, x, { enabled: x.enabled !== false }));
+  let rows = srcs.concat(items);
+  if (f.type === 'source') rows = rows.filter(r => r._kind === 'source');
+  if (f.type === 'item') rows = rows.filter(r => r._kind === 'item');
+  if (f.status === 'on') rows = rows.filter(r => r.enabled);
+  if (f.status === 'off') rows = rows.filter(r => !r.enabled);
 
-  const box = document.getElementById('tgsub-list');
-  const items = cfg.items || [];
-  box.innerHTML = items.length ? items.map(it =>
-    '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">'
-    + '<div style="flex:1;min-width:0"><b style="font-size:13.5px">' + esc(it.keyword) + '</b>'
-      + '<div style="font-size:11.5px;color:var(--text-3)">' + (it.channels ? esc(String(it.channels).split('\n').join(' ')) : '全部订阅源')
-    + (it.auto ? ' · 自动转存' : '') + (it.last_hit ? ' · 最近命中 ' + esc(it.last_hit) : '') + '</div></div>'
-      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubDel(\'' + it.id + '\')">删除</button></div>'
-  ).join('') : '<div class="dash-empty">还没有关键词订阅，在下方添加</div>';
+  const box = document.getElementById('tgsub-table');
+  if (!rows.length) {
+    box.innerHTML = '<div class="dash-empty">' + (f.type || f.status ? '没有符合筛选条件的条目' : '还没有订阅，点右上角「＋ 新增」添加') + '</div>';
+  } else {
+    const trs = rows.map(r => {
+      const kindTag = r._kind === 'source'
+        ? '<span class="otag" style="background:#e8f1ff;color:#1c64d9">订阅源</span>'
+        : '<span class="otag" style="background:#fff4e5;color:#b26a00">关键词订阅</span>';
+      let main, sub;
+      if (r._kind === 'source') {
+        main = esc(r.name || r.url);
+        sub = [esc(r.url), r.note ? esc(r.note) : '', '优先级 ' + (r.priority || 10)].filter(Boolean)
+          .join('<span class="otk-dot">·</span>');
+      } else {
+        main = esc(r.keyword);
+        sub = [r.channels ? esc(String(r.channels).split('\n').join(' ')) : '全部订阅源',
+          r.auto ? '<span style="color:#00874a">自动转存</span>' : '',
+          r.last_hit ? '最近命中 ' + esc(r.last_hit) : ''].filter(Boolean)
+          .join('<span class="otk-dot">·</span>');
+      }
+      const id = String(r.id);
+      return '<div class="otk-row"' + (!r.enabled ? ' style="opacity:.55"' : '') + '>'
+        + kindTag
+        + '<div class="otk-main"><div class="otk-name">' + main + '</div>'
+        + '<div class="otk-sub">' + sub + '</div></div>'
+        + tgSubStatusCell(r.enabled, r._kind, id)
+        + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubEditModal(\'' + r._kind + '\',' + id + ')">编辑</button>'
+        + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="tgSubDelRow(\'' + r._kind + '\',' + id + ')">删除</button>'
+        + '</div>';
+    }).join('');
+    box.innerHTML = '<div class="otk">' + trs + '</div>';
+  }
   const iv = document.getElementById('tgsub-interval');
   if (iv) iv.value = cfg.interval_min || 30;
 }
 
-function tgSubSrcModal() { document.getElementById('tgsub-src-modal').style.display = 'flex'; }
-function tgSubSrcModalClose() { document.getElementById('tgsub-src-modal').style.display = 'none'; }
-
-async function tgSubSrcAdd(btn) {
-  const name = val('tgsub-src-name').trim();
-  const u = val('tgsub-src-url').trim();
-  if (!name || !u) { toast('订阅名称和地址必填'); return; }
+// 启用/停用切换
+async function tgSubToggle(kind, id, on) {
   const cfg = await tgSubFetchCfg();
-  cfg.sources = cfg.sources || [];
-  cfg.sources.push({
-    type: val('tgsub-src-type') || 'tg',
-    name: name,
-    url: u,
-    priority: parseInt(val('tgsub-src-priority'), 10) || 10,
-    note: val('tgsub-src-note').trim(),
-  });
-  await tgSubPersist(cfg, btn, '订阅源已添加');
-  tgSubSrcModalClose();
+  const list = kind === 'source' ? (cfg.sources || []) : (cfg.items || []);
+  for (const r of list) {
+    if (String(r.id) === String(id)) r.enabled = on;
+  }
+  await tgSubPersist(cfg, null, on ? '已启用' : '已停用');
 }
 
-async function tgSubSrcDel(id) {
+// 统一删除（类型 + id）
+async function tgSubDelRow(kind, id) {
   const cfg = await tgSubFetchCfg();
-  cfg.sources = (cfg.sources || []).filter(s => String(s.id) !== String(id));
-  await tgSubPersist(cfg, null, '订阅源已删除');
+  if (kind === 'source') {
+    cfg.sources = (cfg.sources || []).filter(x => String(x.id) !== String(id));
+  } else {
+    cfg.items = (cfg.items || []).filter(x => String(x.id) !== String(id));
+  }
+  await tgSubPersist(cfg, null, '已删除');
 }
 
-async function tgSubAdd(btn) {
-  const kw = val('tgsub-keyword').trim();
-  if (!kw) { toast('请填写关键词'); return; }
-  const cfg = await tgSubFetchCfg();
-  cfg.items = cfg.items || [];
-  cfg.items.push({
-    keyword: kw,
-    channels: val('tgsub-channels').trim(),
-    auto: document.getElementById('tgsub-auto').checked,
-    last_id: 0,
-  });
-  document.getElementById('tgsub-keyword').value = '';
-  document.getElementById('tgsub-channels').value = '';
-  document.getElementById('tgsub-auto').checked = false;
-  await tgSubPersist(cfg, btn, '订阅已添加');
+// ========== 新增/编辑弹窗 ==========
+let tgSubEditKind = 'item';
+let tgSubEditId = 0; // 0=新增
+
+function tgSubEditModal(kind, id) {
+  tgSubEditKind = kind;
+  tgSubEditId = id || 0;
+  const isEdit = tgSubEditId > 0;
+  document.getElementById('tgsub-edit-title').textContent = (isEdit ? '编辑' : '新增') + (kind === 'source' ? '订阅源' : '关键词订阅');
+  const rbSource = document.querySelector('input[name="tgsub-etype"][value="source"]');
+  const rbItem = document.querySelector('input[name="tgsub-etype"][value="item"]');
+  if (isEdit) {
+    // 编辑态锁类型（改类型等于换实体）
+    if (rbSource) rbSource.disabled = true;
+    if (rbItem) rbItem.disabled = true;
+    (kind === 'source' ? rbSource : rbItem).checked = true;
+  } else {
+    if (rbSource) rbSource.disabled = false;
+    if (rbItem) rbItem.disabled = false;
+    if (rbItem) rbItem.checked = true;
+  }
+  tgSubEditTypeSwitch();
+  // 回填
+  document.getElementById('tgsub-e-keyword').value = '';
+  document.getElementById('tgsub-e-channels').value = '';
+  document.getElementById('tgsub-e-auto').checked = false;
+  document.getElementById('tgsub-e-name').value = '';
+  document.getElementById('tgsub-e-url').value = '';
+  document.getElementById('tgsub-e-priority').value = '10';
+  document.getElementById('tgsub-e-note').value = '';
+  if (isEdit) {
+    tgSubFetchCfg().then(cfg => {
+      const list = kind === 'source' ? (cfg.sources || []) : (cfg.items || []);
+      const r = list.find(x => String(x.id) === String(tgSubEditId));
+      if (!r) return;
+      if (kind === 'source') {
+        document.getElementById('tgsub-e-name').value = r.name || '';
+        document.getElementById('tgsub-e-url').value = r.url || '';
+        document.getElementById('tgsub-e-priority').value = r.priority || 10;
+        document.getElementById('tgsub-e-note').value = r.note || '';
+      } else {
+        document.getElementById('tgsub-e-keyword').value = r.keyword || '';
+        document.getElementById('tgsub-e-channels').value = r.channels || '';
+        document.getElementById('tgsub-e-auto').checked = !!r.auto;
+      }
+    });
+  }
+  document.getElementById('tgsub-edit-modal').style.display = 'flex';
 }
+
+function tgSubEditClose() {
+  document.getElementById('tgsub-edit-modal').style.display = 'none';
+}
+
+function tgSubEditTypeSwitch() {
+  const isSource = (document.querySelector('input[name="tgsub-etype"]:checked') || {}).value === 'source';
+  document.getElementById('tgsub-edit-item').style.display = isSource ? 'none' : '';
+  document.getElementById('tgsub-edit-source').style.display = isSource ? '' : 'none';
+}
+
+async function tgSubEditSave(btn) {
+  const isSource = (document.querySelector('input[name="tgsub-etype"]:checked') || {}).value === 'source';
+  const cfg = await tgSubFetchCfg();
+  if (isSource) {
+    const name = document.getElementById('tgsub-e-name').value.trim();
+    const u = document.getElementById('tgsub-e-url').value.trim();
+    if (!name || !u) { toast('订阅名称和地址必填'); return; }
+    const fields = {
+      type: 'tg', name: name, url: u,
+      priority: parseInt(document.getElementById('tgsub-e-priority').value, 10) || 10,
+      note: document.getElementById('tgsub-e-note').value.trim(),
+    };
+    cfg.sources = cfg.sources || [];
+    if (tgSubEditId > 0) {
+      for (const x of cfg.sources) if (String(x.id) === String(tgSubEditId)) Object.assign(x, fields);
+    } else {
+      cfg.sources.push(Object.assign({ enabled: true, last_id: 0 }, fields));
+    }
+    await tgSubPersist(cfg, btn, tgSubEditId > 0 ? '订阅源已更新' : '订阅源已添加');
+  } else {
+    const kw = document.getElementById('tgsub-e-keyword').value.trim();
+    if (!kw) { toast('请填写关键词'); return; }
+    const fields = {
+      keyword: kw,
+      channels: document.getElementById('tgsub-e-channels').value.trim(),
+      auto: document.getElementById('tgsub-e-auto').checked,
+    };
+    cfg.items = cfg.items || [];
+    if (tgSubEditId > 0) {
+      for (const x of cfg.items) if (String(x.id) === String(tgSubEditId)) Object.assign(x, fields);
+    } else {
+      cfg.items.push(Object.assign({ enabled: true, last_id: 0 }, fields));
+    }
+    await tgSubPersist(cfg, btn, tgSubEditId > 0 ? '订阅已更新' : '订阅已添加');
+  }
+  tgSubEditClose();
+}
+
+
 
 async function tgSubDel(id) {
   const cfg = await tgSubFetchCfg();

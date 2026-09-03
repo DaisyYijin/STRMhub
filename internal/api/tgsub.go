@@ -25,16 +25,18 @@ type TgSubItem struct {
 	Auto     bool   `json:"auto"`     // 命中后自动转存/离线
 	LastID   int64  `json:"last_id"`  // 水位：已见过的最大消息 ID（0 = 新订阅，首轮只建水位）
 	LastHit  string `json:"last_hit"` // 最近一次命中时间
+	Enabled  *bool  `json:"enabled"`  // nil/true=启用（旧数据兼容）；false=暂停检查
 }
 
 // TgSubSource 订阅源（频道）
 type TgSubSource struct {
 	ID       int64  `json:"id"`
-	Type     string `json:"type"`     // tg
+	Type     string `json:"type"` // tg
 	Name     string `json:"name"`
 	URL      string `json:"url"`      // https://t.me/xxx 或 @xxx
 	Priority int    `json:"priority"` // 越大越优先，默认 10
 	Note     string `json:"note"`
+	Enabled  *bool  `json:"enabled"` // nil/true=启用；false=暂停检查
 }
 
 type tgSubCfg struct {
@@ -60,12 +62,20 @@ func tgSubParseChannel(raw string) string {
 	return strings.TrimSpace(s)
 }
 
+// tgSubEnabled 条目是否启用（nil 视为启用，兼容旧数据）
+func tgSubEnabled(b *bool) bool {
+	return b == nil || *b
+}
+
 // tgSubSourceChannels 订阅源频道列表（按优先级从高到低）
 func tgSubSourceChannels(cfg tgSubCfg) []string {
 	srcs := append([]TgSubSource(nil), cfg.Sources...)
 	sort.Slice(srcs, func(i, j int) bool { return srcs[i].Priority > srcs[j].Priority })
 	var out []string
 	for _, s := range srcs {
+		if !tgSubEnabled(s.Enabled) {
+			continue // 已停用的订阅源不参与检查
+		}
 		if s.Type != "" && s.Type != "tg" {
 			continue
 		}
@@ -107,6 +117,9 @@ func (h *Handler) tgSubCheck(silent bool) {
 	seenMsg := map[string]bool{} // 单轮全局去重：同一消息命中多个关键词只处理一次
 	for i := range cfg.Items {
 		item := &cfg.Items[i]
+		if !tgSubEnabled(item.Enabled) {
+			continue // 已暂停的订阅不检查
+		}
 		channels := item.Channels
 		if strings.TrimSpace(channels) == "" {
 			// 默认检查全部订阅源（按优先级），没有订阅源时回退 TG 搜索全局频道

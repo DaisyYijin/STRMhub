@@ -1118,30 +1118,56 @@ av:
     <!-- 订阅管理 -->
     <div class="page" id="page-tgsub">
       <div class="card">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <span style="font-weight:600">订阅源</span>
-          <span style="font-size:12px;color:var(--text-3)">关键词订阅的频道来源，按优先级从高到低检查</span>
-          <button class="btn btn-primary" style="margin-left:auto;padding:4px 14px" onclick="tgSubSrcModal()">＋ 新增订阅源</button>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <select id="tgsub-f-type" class="inline-input" style="max-width:150px" onchange="tgSubRenderAll()">
+            <option value="">全部类型</option>
+            <option value="source">订阅源</option>
+            <option value="item">关键词订阅</option>
+          </select>
+          <select id="tgsub-f-status" class="inline-input" style="max-width:130px" onchange="tgSubRenderAll()">
+            <option value="">全部状态</option>
+            <option value="on">启用</option>
+            <option value="off">停用</option>
+          </select>
+          <button class="btn btn-primary" style="padding:6px 18px" onclick="tgSubRenderAll(true)">查询</button>
+          <button class="btn btn-outline" style="padding:6px 18px" onclick="tgSubFilterReset()">重置</button>
+          <span style="flex:1"></span>
+          <button class="btn btn-outline" style="padding:6px 16px" onclick="tgSubRunNow(this)">立即检查</button>
+          <button class="btn btn-primary" style="padding:6px 18px" onclick="tgSubAddModal()">＋ 新增</button>
         </div>
-        <div id="tgsub-src-list"></div>
-      </div>
-      <div class="card">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <span style="font-weight:600">订阅列表</span>
-          <button class="btn btn-outline" style="margin-left:auto;padding:3px 12px;font-size:12px" onclick="tgSubLoadPage()">刷新</button>
-          <button class="btn btn-success" style="padding:3px 12px;font-size:12px" onclick="tgSubRunNow(this)">立即检查</button>
+        <div id="tgsub-table"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <span style="font-size:12.5px;color:var(--text-3)">检查间隔</span>
+          <input type="number" id="tgsub-interval" value="30" min="5" class="inline-input" style="max-width:90px">
+          <span style="font-size:12.5px;color:var(--text-3)">分钟</span>
+          <button class="btn btn-outline" style="padding:3px 12px;font-size:12px" onclick="tgSubSaveInterval(this)">保存</button>
         </div>
-        <div id="tgsub-list"></div>
       </div>
-      <div class="card">
-        <div style="font-weight:600;font-size:13.5px;margin-bottom:10px">新增订阅</div>
-        <div class="form-row"><div class="label">关键词<i class="help-tip" tabindex="0">?<span class="tip-bubble">在订阅频道里检索的关键词（片名/番号），命中新资源会推送通知。</span></i></div><div class="control"><input type="text" id="tgsub-keyword" placeholder="片名 / 番号" class="inline-input"></div></div>
-        <div class="form-row"><div class="label">指定频道<i class="help-tip" tabindex="0">?<span class="tip-bubble">选填。留空则按优先级检查上方全部订阅源；也可手动填频道名覆盖（如 @channel1）。</span></i></div><div class="control"><textarea id="tgsub-channels" class="auto-resize" rows="2" placeholder="留空使用全局频道；如：@channel1&#10;@channel2"></textarea></div></div>
-        <div class="form-row"><div class="label">自动转存<i class="help-tip" tabindex="0">?<span class="tip-bubble">命中新资源时自动入库：115 分享链接直接转存，磁力/ed2k 提交 115 离线下载，完成后自动整理。</span></i></div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-auto"> 命中后自动转存</label></div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="tgSubAdd(this)">添加订阅</button></div></div>
-      </div>
-      <div class="card">
-        <div class="form-row"><div class="label">检查间隔<i class="help-tip" tabindex="0">?<span class="tip-bubble">每轮检查所有订阅频道新消息的间隔，最小 5 分钟。TG 接口有频率限制，不建议过短。</span></i></div><div class="control"><div class="form-inline-group"><input type="number" id="tgsub-interval" value="30" min="5" style="max-width:120px"><div class="input-suffix">分钟</div><button class="btn btn-outline" onclick="tgSubSaveInterval(this)">保存间隔</button></div></div></div>
+
+      <!-- 新增/编辑弹窗：类型单选 → 表单自适应 -->
+      <div class="modal-mask" id="tgsub-edit-modal" style="display:none" onclick="if(event.target===this)tgSubEditClose()">
+        <div class="modal" style="max-width:520px">
+          <h3 id="tgsub-edit-title">新增订阅</h3>
+          <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 类型</div><div class="control">
+            <label style="font-size:13px;margin-right:18px"><input type="radio" name="tgsub-etype" value="item" checked onchange="tgSubEditTypeSwitch()"> 关键词订阅</label>
+            <label style="font-size:13px"><input type="radio" name="tgsub-etype" value="source" onchange="tgSubEditTypeSwitch()"> 订阅源（TG 频道）</label>
+          </div></div>
+          <div id="tgsub-edit-item">
+            <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 关键词</div><div class="control"><input type="text" id="tgsub-e-keyword" placeholder="片名 / 番号" class="inline-input"></div></div>
+            <div class="form-row"><div class="label">指定频道</div><div class="control"><textarea id="tgsub-e-channels" class="auto-resize" rows="2" placeholder="留空使用全部订阅源；如：@channel1&#10;@channel2"></textarea></div></div>
+            <div class="form-row"><div class="label">自动转存</div><div class="control"><label style="font-size:13px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="tgsub-e-auto"> 命中后自动转存/离线</label></div></div>
+          </div>
+          <div id="tgsub-edit-source" style="display:none">
+            <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 订阅名称</div><div class="control"><input type="text" id="tgsub-e-name" placeholder="请输入订阅名称" class="inline-input"></div></div>
+            <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 订阅地址</div><div class="control"><input type="text" id="tgsub-e-url" placeholder="频道链接 https://t.me/xxx" class="inline-input"></div></div>
+            <div class="form-row"><div class="label">优先级</div><div class="control"><input type="number" id="tgsub-e-priority" value="10" class="inline-input" placeholder="越大越优先（默认10）"></div></div>
+            <div class="form-row"><div class="label">备注</div><div class="control"><input type="text" id="tgsub-e-note" class="inline-input"></div></div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-outline" onclick="tgSubEditClose()">取消</button>
+            <button class="btn btn-primary" onclick="tgSubEditSave(this)">保存</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1279,20 +1305,7 @@ av:
 </div>
 
 <!-- 新增订阅源弹窗 -->
-<div class="modal-mask" id="tgsub-src-modal" style="display:none">
-  <div class="modal" style="max-width:480px">
-    <h3>新增订阅源</h3>
-    <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 类型</div><div class="control"><select id="tgsub-src-type" class="inline-input"><option value="tg">Telegram 频道</option></select></div></div>
-    <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 订阅名称</div><div class="control"><input type="text" id="tgsub-src-name" placeholder="请输入订阅名称" class="inline-input"></div></div>
-    <div class="form-row"><div class="label"><i style="color:var(--danger)">*</i> 订阅地址</div><div class="control"><input type="text" id="tgsub-src-url" placeholder="就是频道链接 https://t.me/xxx" class="inline-input"></div></div>
-    <div class="form-row"><div class="label">优先级</div><div class="control"><input type="number" id="tgsub-src-priority" value="10" class="inline-input" placeholder="越大优先级越高（默认10）"></div></div>
-    <div class="form-row"><div class="label">备注</div><div class="control"><textarea id="tgsub-src-note" class="auto-resize" rows="2"></textarea></div></div>
-    <div class="actions">
-      <button class="btn btn-outline" onclick="tgSubSrcModalClose()">取消</button>
-      <button class="btn btn-primary" onclick="tgSubSrcAdd(this)">确定</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- TG 频道搜索弹窗 -->
 <div class="modal-mask" id="tgsearch-modal" style="display:none">
