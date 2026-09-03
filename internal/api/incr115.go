@@ -18,6 +18,7 @@ import (
 	"strmhub/internal/model"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -30,17 +31,17 @@ import (
 
 // 关键操作类型（type 字段，数字或字符串均可能返回）
 const (
-	evUploadImage = "upload_image_file" // 1 上传图片
-	evUpload      = "upload_file"       // 2 上传文件/目录
-	evMove        = "move_file"         // 6 移动文件/目录
-	evReceive     = "receive_files"     // 14 接收文件（转存）
-	evNewFolder   = "new_folder"        // 17 新增目录
-	evCopyFolder  = "copy_folder"       // 18 复制目录（目录转存/复制，按目录新增处理）
-	evFolderRename = "folder_rename"    // 20 目录改名
-	evMoveImage   = "move_image_file"   // 5 移动图片（同移动处理）
-	evDelete      = "delete_file"       // 22 删除文件/目录
-	evCopy        = "copy_file"         // 23 复制文件
-	evRename      = "file_rename"       // 24 文件改名
+	evUploadImage  = "upload_image_file" // 1 上传图片
+	evUpload       = "upload_file"       // 2 上传文件/目录
+	evMove         = "move_file"         // 6 移动文件/目录
+	evReceive      = "receive_files"     // 14 接收文件（转存）
+	evNewFolder    = "new_folder"        // 17 新增目录
+	evCopyFolder   = "copy_folder"       // 18 复制目录（目录转存/复制，按目录新增处理）
+	evFolderRename = "folder_rename"     // 20 目录改名
+	evMoveImage    = "move_image_file"   // 5 移动图片（同移动处理）
+	evDelete       = "delete_file"       // 22 删除文件/目录
+	evCopy         = "copy_file"         // 23 复制文件
+	evRename       = "file_rename"       // 24 文件改名
 )
 
 // lifeEvent 一条生活事件
@@ -110,7 +111,7 @@ func fetch115LifeEvents(cookie string, limit, offset int, typ string) ([]lifeEve
 		return nil, err
 	}
 	var result struct {
-		State bool `json:"state"`
+		State bool   `json:"state"`
 		Error string `json:"error"`
 		Data  struct {
 			// 注意：count 在响应中是字符串（"118262"），声明为 int 会导致整体解析失败；
@@ -216,31 +217,31 @@ func get115RelPath(cookie, cid, rootCid string, memo map[string]dirInfo) (string
 
 // incrParams 增量同步参数（HTTP 与 cron 调度器共用）
 type incrParams struct {
-	Cid        string
-	LocalPath  string
-	VideoExt   []string
-	ImageExt   []string
-	DataExt    []string
-	Limit      int
+	Cid       string
+	LocalPath string
+	VideoExt  []string
+	ImageExt  []string
+	DataExt   []string
+	Limit     int
 }
 
 // incrSummary 增量同步结果摘要
 type incrSummary struct {
-	EventsTotal      int `json:"events_total"`
-	EventsFresh      int `json:"events_fresh"`
-	Relevant         int `json:"relevant"`
-	Structural       int `json:"structural"`
-	Deleted          int `json:"deleted"`
-	Moved            int `json:"moved"`
-	Dirs             int `json:"dirs"`
-	DirsSkipped      int `json:"dirs_skipped"`
-	Videos           int `json:"videos"`
-	StrmCreated      int `json:"strm_created"`
-	AssetsTotal      int `json:"assets_total"`
-	AssetsDownloaded int `json:"assets_downloaded"`
-	AssetsSkipped    int `json:"assets_skipped"`
-	AssetsFailed     int `json:"assets_failed"`
-	Ignored          int `json:"ignored"` // 非媒体库区域（待整理/已存在/冗余等）的事件
+	EventsTotal      int    `json:"events_total"`
+	EventsFresh      int    `json:"events_fresh"`
+	Relevant         int    `json:"relevant"`
+	Structural       int    `json:"structural"`
+	Deleted          int    `json:"deleted"`
+	Moved            int    `json:"moved"`
+	Dirs             int    `json:"dirs"`
+	DirsSkipped      int    `json:"dirs_skipped"`
+	Videos           int    `json:"videos"`
+	StrmCreated      int    `json:"strm_created"`
+	AssetsTotal      int    `json:"assets_total"`
+	AssetsDownloaded int    `json:"assets_downloaded"`
+	AssetsSkipped    int    `json:"assets_skipped"`
+	AssetsFailed     int    `json:"assets_failed"`
+	Ignored          int    `json:"ignored"` // 非媒体库区域（待整理/已存在/冗余等）的事件
 	Elapsed          string `json:"elapsed"`
 }
 
@@ -248,12 +249,12 @@ type incrSummary struct {
 // POST /sync/incremental  body: {"cid":"...","local_path":"...","video_ext":[],"image_ext":[],"data_ext":[],"limit":1000}
 func (h *Handler) RunIncrementalSync(c *gin.Context) {
 	var req struct {
-		Cid        string   `json:"cid"`
-		LocalPath  string   `json:"local_path"`
-		VideoExt   []string `json:"video_ext"`
-		ImageExt   []string `json:"image_ext"`
-		DataExt    []string `json:"data_ext"`
-		Limit      int      `json:"limit"`
+		Cid       string   `json:"cid"`
+		LocalPath string   `json:"local_path"`
+		VideoExt  []string `json:"video_ext"`
+		ImageExt  []string `json:"image_ext"`
+		DataExt   []string `json:"data_ext"`
+		Limit     int      `json:"limit"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
@@ -293,7 +294,8 @@ func normalizeIncrParams(cid, localPath string, videoExt, imageExt, dataExt []st
 // executeIncrementalSync 增量同步核心（CMS 两阶段模式）：
 // 阶段一：小批量分页拉取生活事件并落库去重（SyncEvent 表，事件 id 唯一，永不丢失）
 // 阶段二：按时间正序应用事件——新增类定向重遍历受影响目录；
-//         move/rename/delete 基于本地文件台账（SyncedFile）精确执行
+//
+//	move/rename/delete 基于本地文件台账（SyncedFile）精确执行
 func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 	defer SetTaskProgress("") // 结束清进度（含错误路径）
 	sum := &incrSummary{}
@@ -384,24 +386,33 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		}
 		sum.EventsTotal += len(events)
 		fresh := 0
+		batch := make([]model.SyncEvent, 0, len(events))
 		for _, ev := range events {
 			if ev.ID == "" {
 				continue
 			}
 			ts, _ := strconv.ParseInt(strings.TrimSpace(ev.Time), 10, 64)
-			se := model.SyncEvent{
+			batch = append(batch, model.SyncEvent{
 				EventID: ev.ID, Type: ev.Type, FileID: ev.FileID,
 				FileName: ev.FileName, Cid: ev.Cid, Size: ev.Size, EventTime: ts,
+			})
+			if ev.PickCode != "" {
+				pickByEvent[ev.ID] = ev.PickCode // 消费端按新事件 id 取，多记无害
 			}
-			res := h.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&se)
-			if res.Error == nil && res.RowsAffected > 0 {
-				fresh++
-				pending = append(pending, se)
-				if ev.PickCode != "" {
-					pickByEvent[ev.ID] = ev.PickCode
+		}
+		// 批量落库（此前逐条 Create：千级事件即千次独立写事务）。
+		// 新事件判定改为预查已存在的 event_id（批量插入拿不到单条 RowsAffected）
+		if n := insertSyncEvents(h.DB, batch); n > 0 {
+			fresh += n
+			dupInBatch := map[string]bool{}
+			for _, se := range batch {
+				if !dupInBatch[se.EventID] {
+					dupInBatch[se.EventID] = true
+					pending = append(pending, se)
 				}
 			}
 		}
+		batch = batch[:0]
 		sum.EventsFresh += fresh
 		if fresh > 0 {
 		}
@@ -750,7 +761,7 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 }
 
 // dirAbsCache cid→绝对路径缓存：守卫/作用域每轮都要爬目录链
-//（每层一次 API × 3 秒限流），冷启动一趟就是十来秒。TTL 10 分钟；
+// （每层一次 API × 3 秒限流），冷启动一趟就是十来秒。TTL 10 分钟；
 // 目录改名/移动事件发生时整体失效（见 invalidateDirAbsCache）
 var (
 	dirAbsMu    sync.Mutex
@@ -830,10 +841,11 @@ func (h *Handler) removeSyncedFile(fileID, localRoot string) bool {
 }
 
 // removeSyncedItem 清理 move/rename/delete 事件的旧位置，三级定位：
-// 1) 台账按 file_id 精确匹配（本工具生成且已登记的文件）
-// 2) 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
-//    （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
-// 3) 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
+//  1. 台账按 file_id 精确匹配（本工具生成且已登记的文件）
+//  2. 路径推导：解析父目录相对路径 + 事件文件名；目标是目录则整树删除
+//     （覆盖"删除整个影视目录"及台账启用前同步的历史文件）
+//  3. 台账按文件名模糊匹配兜底（父目录已被连带删除导致路径推导失败时）
+//
 // removeSyncedItem 清理本地同步产物（strm/附属实体+台账行）。
 // ledgerOnly=true 时只允许按台账 file_id 精确删除：move/rename 事件的
 // Cid 是【新】父目录、FileName 是【新】名，路径推导与按名模糊兜底
@@ -967,3 +979,35 @@ func (h *Handler) removeSyncedItem(ev model.SyncEvent, cookie, rootCid, localRoo
 	return false
 }
 
+// insertSyncEvents 批量插入生活事件（OnConflict DoNothing），返回新插入条数
+func insertSyncEvents(db *gorm.DB, batch []model.SyncEvent) int {
+	if db == nil || len(batch) == 0 {
+		return 0
+	}
+	ids := make([]string, 0, len(batch))
+	for _, se := range batch {
+		ids = append(ids, se.EventID)
+	}
+	var existing []string
+	db.Model(&model.SyncEvent{}).Where("event_id IN ?", ids).Pluck("event_id", &existing)
+	ex := map[string]bool{}
+	for _, id := range existing {
+		ex[id] = true
+	}
+	fresh := make([]model.SyncEvent, 0, len(batch))
+	dupInBatch := map[string]bool{}
+	for _, se := range batch {
+		if ex[se.EventID] || dupInBatch[se.EventID] {
+			continue
+		}
+		dupInBatch[se.EventID] = true
+		fresh = append(fresh, se)
+	}
+	if len(fresh) == 0 {
+		return 0
+	}
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&fresh, 200).Error; err != nil {
+		return 0
+	}
+	return len(fresh)
+}

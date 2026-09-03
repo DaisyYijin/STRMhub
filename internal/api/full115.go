@@ -91,11 +91,11 @@ var fullSyncMu sync.Mutex
 
 // taskState 当前任务状态（供前端展示与按钮禁用，含 cron 触发的任务）
 var (
-	taskStateMu   sync.Mutex
-	taskRunning   bool
-	taskName      string
-	taskStart     time.Time
-	taskProgress  string // 当前阶段/进度描述（如 "整理 3/12：xxx"），前端轮询展示
+	taskStateMu  sync.Mutex
+	taskRunning  bool
+	taskName     string
+	taskStart    time.Time
+	taskProgress string // 当前阶段/进度描述（如 "整理 3/12：xxx"），前端轮询展示
 )
 
 // SetTaskProgress 更新任务进度描述（任务进行中由各执行器调用）
@@ -134,11 +134,11 @@ func TaskStatus() (bool, string, time.Time, string) {
 // POST /sync/full  body: {"cid":"...","local_path":"...","video_ext":["mp4"],"image_ext":["jpg"],"data_ext":["ass"]}
 func (h *Handler) RunFullSync(c *gin.Context) {
 	var req struct {
-		Cid        string   `json:"cid"`
-		LocalPath  string   `json:"local_path"`
-		VideoExt   []string `json:"video_ext"`
-		ImageExt   []string `json:"image_ext"`
-		DataExt    []string `json:"data_ext"`
+		Cid       string   `json:"cid"`
+		LocalPath string   `json:"local_path"`
+		VideoExt  []string `json:"video_ext"`
+		ImageExt  []string `json:"image_ext"`
+		DataExt   []string `json:"data_ext"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Cid == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误：请填写 115 媒体库 cid"})
@@ -217,10 +217,10 @@ func (h *Handler) RunFullSync(c *gin.Context) {
 		len(videos), strmCreated, downloaded, time.Since(fullStart).Truncate(time.Second))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "全量同步完成",
-		"elapsed": time.Since(fullStart).Truncate(time.Second).String(),
-		"total":   len(videos),
-		"created": strmCreated,
+		"message":           "全量同步完成",
+		"elapsed":           time.Since(fullStart).Truncate(time.Second).String(),
+		"total":             len(videos),
+		"created":           strmCreated,
 		"assets_total":      len(assets),
 		"assets_downloaded": downloaded,
 		"assets_skipped":    skipped,
@@ -350,14 +350,21 @@ const assetDLWorkers = 5
 // applySyncResults 对遍历结果执行落盘：视频生成 strm，附属文件下载（已存在跳过），
 // 全部登记到 SyncedFile 台账（move/delete 事件精确执行的依据）
 func applySyncResults(db *gorm.DB, ops *pan115Ops, videos, assets []remoteFile, localPath, domain, format string, keepExt, skipExist bool, dirLabel string) (strmCreated, downloaded, skipped, failed int) {
+	// 视频：先全部生成 STRM，成功的收集后批量 upsert（此前逐条独立写事务，
+	// 万级视频全量同步即万次写）
+	videoRows := make([]model.SyncedFile, 0, len(videos))
 	for _, f := range videos {
 		if err := writeStrm(localPath, domain, format, keepExt, skipExist, f); err != nil {
 			log.Printf("[同步] 生成 STRM 失败: %s/%s: %v", f.Path, f.Name, err)
 			continue
 		}
 		strmCreated++
-		upsertSyncedFile(db, f, path.Join(f.Path, f.Name+".strm"), "video")
+		videoRows = append(videoRows, model.SyncedFile{
+			FileID: f.Fid, PickCode: f.PickCode,
+			RelPath: path.Join(f.Path, f.Name+".strm"), Kind: "video", Size: f.Size, Sha1: f.Sha1,
+		})
 	}
+	upsertSyncedFiles(db, videoRows)
 
 	// 附属文件：生产者串行取直链（守 API 间隔），worker 池并发下载
 	type assetJob struct {
@@ -433,6 +440,17 @@ func upsertSyncedFile(db *gorm.DB, f remoteFile, relPath, kind string) {
 		Columns:   []clause.Column{{Name: "file_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "sha1", "updated_at"}),
 	}).Create(&sf)
+}
+
+// upsertSyncedFiles 批量 upsert 台账（file_id 冲突更新，分批 200 条一次事务）
+func upsertSyncedFiles(db *gorm.DB, sfs []model.SyncedFile) {
+	if db == nil || len(sfs) == 0 {
+		return
+	}
+	db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "file_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pick_code", "rel_path", "kind", "size", "sha1", "updated_at"}),
+	}).CreateInBatches(&sfs, 200)
 }
 
 // writeAssetBytes 把附属文件内容写到本地（.part 临时文件原子改名）
@@ -572,8 +590,10 @@ func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
 
 // writeStrm 生成单个 .strm 文件
 // URL 形态（CMS 同款，代理端按 pickcode 查文件）：
-//   pick_code      {domain}/d/{pickcode}[.ext]
-//   pick_code_name {domain}/d/{pickcode}[.ext]?/{原文件名}
+//
+//	pick_code      {domain}/d/{pickcode}[.ext]
+//	pick_code_name {domain}/d/{pickcode}[.ext]?/{原文件名}
+//
 // 「保留文件后缀」= pickcode 段是否带 .ext（播放器据 URL 后缀识别容器格式）；
 // ?/ 之后的文件名仅供播放器展示与识别，代理忽略查询串
 func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remoteFile) error {
@@ -607,4 +627,3 @@ func writeStrm(localRoot, domain, format string, keepExt, skipExist bool, f remo
 
 	return os.WriteFile(strmPath, []byte(streamURL), 0o666)
 }
-
