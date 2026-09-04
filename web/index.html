@@ -223,7 +223,8 @@
         <div class="form-row"><div class="label">本地媒体库根目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地挂载的媒体库根目录（如 /media）。片目目录 = 根目录 + 台账相对路径，与监控上传的监控目录通常是同一个。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="scrape-root" placeholder="如 /media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('scrape-root')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">刮削内容</div><div class="control">
           <label style="font-size:13px;margin-right:18px"><input type="checkbox" id="scrape-nfo" checked> NFO（movie.nfo / tvshow.nfo）</label>
-          <label style="font-size:13px"><input type="checkbox" id="scrape-img" checked> 图片（poster / fanart / 整季海报）</label>
+          <label style="font-size:13px;margin-right:18px"><input type="checkbox" id="scrape-img" checked> 图片（poster / fanart / 整季海报）</label>
+          <label style="font-size:13px"><input type="checkbox" id="scrape-av" checked> AV（MetaTube 番号元数据 + 封面）</label>
         </div></div>
         <div class="form-row"><div class="label">覆盖模式</div><div class="control">
           <label style="font-size:13px;margin-right:18px"><input type="radio" name="scrape-force" value="false" checked> 只补缺失（已存在的文件跳过）</label>

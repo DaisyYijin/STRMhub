@@ -33,11 +33,12 @@ type scrapeCfg struct {
 	LocalRoot   string `json:"local_root"`
 	WriteNFO    bool   `json:"write_nfo"`
 	WriteImages bool   `json:"write_images"`
-	Force       bool   `json:"force"` // 覆盖已存在的元数据文件
+	WriteAV     bool   `json:"write_av"` // AV（MetaTube 番号元数据 + 封面）
+	Force       bool   `json:"force"`    // 覆盖已存在的元数据文件
 }
 
 func loadScrapeCfg() scrapeCfg {
-	c := scrapeCfg{WriteNFO: true, WriteImages: true}
+	c := scrapeCfg{WriteNFO: true, WriteImages: true, WriteAV: true}
 	if v := settingValueCompat("scrape"); v != "" {
 		_ = json.Unmarshal([]byte(v), &c)
 	}
@@ -276,13 +277,31 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 	// 不用 MediaLibrary.TargetPath：剧集行记录的是"每集文件路径"，
 	// 拿它当目录会在本地造出 <集名>.mkv/ 的假目录
 	entries := portalScanLedgerCached()
-	var targets []*portalTitleEntry
+	type scrapeTarget struct {
+		key, kind, title, year string
+		tmdbID                 int
+		num                    string // 非空 = AV（MetaTube）
+	}
+	var targets []scrapeTarget
 	for _, e := range entries {
-		if e.TmdbID > 0 && e.Key != "" {
-			targets = append(targets, e)
+		if e.Key == "" {
+			continue
+		}
+		if e.TmdbID > 0 {
+			targets = append(targets, scrapeTarget{key: e.Key, kind: "movie", title: e.Title, year: e.Year, tmdbID: int(e.TmdbID)})
+			if e.MediaType == "剧集" {
+				targets[len(targets)-1].kind = "tv"
+			}
+			continue
+		}
+		// 无 tmdb 标记：目录名可识别番号 → AV 目标（MetaTube）
+		if cfg.WriteAV {
+			if num := detectAVNumber(e.Title, ""); num != "" {
+				targets = append(targets, scrapeTarget{key: e.Key, kind: "av", title: e.Title, num: num})
+			}
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Key < targets[j].Key })
+	sort.Slice(targets, func(i, j int) bool { return targets[i].key < targets[j].key })
 	scrapeMu.Lock()
 	scrapeSt.Total = len(targets)
 	scrapeMu.Unlock()
@@ -290,30 +309,86 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 		return
 	}
 	log.Printf("[影视刮削] ▶ 开始：共 %d 个片目（根目录 %s）", len(targets), cfg.LocalRoot)
-	for _, e := range targets {
+	for _, t := range targets {
 		if scrapeStopRequested() {
 			return
 		}
 		scrapeMu.Lock()
-		scrapeSt.Current = e.Title
+		scrapeSt.Current = t.title
 		scrapeMu.Unlock()
-		dir := filepath.Join(cfg.LocalRoot, filepath.FromSlash(strings.Trim(e.Key, "/")))
+		dir := filepath.Join(cfg.LocalRoot, filepath.FromSlash(strings.Trim(t.key, "/")))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			scrapeAddErr("%s: 创建目录失败 %v", e.Title, err)
+			scrapeAddErr("%s: 创建目录失败 %v", t.title, err)
 			scrapeMu.Lock()
 			scrapeSt.Done++
 			scrapeMu.Unlock()
 			continue
 		}
-		kind := "movie"
-		if e.MediaType == "剧集" {
-			kind = "tv"
+		if t.kind == "av" {
+			h.scrapeAVOne(cfg, dir, t.num)
+		} else {
+			h.scrapeOne(tc, cfg, dir, t.kind, t.title, t.year, t.tmdbID)
 		}
-		h.scrapeOne(tc, cfg, dir, kind, e.Title, e.Year, int(e.TmdbID))
 		scrapeMu.Lock()
 		scrapeSt.Done++
 		scrapeMu.Unlock()
-		time.Sleep(150 * time.Millisecond) // TMDB 限速保护
+		time.Sleep(150 * time.Millisecond) // TMDB/MetaTube 限速保护
+	}
+}
+
+// nfoAV JAV/Kodi 元数据（番号/标题/演员/厂牌/日期/封面）
+type nfoAV struct {
+	XMLName       xml.Name   `xml:"movie"`
+	Title         string     `xml:"title"`
+	OriginalTitle string     `xml:"originaltitle"`
+	Num           string     `xml:"num"`
+	UniqueNum     string     `xml:"uniqueid"`
+	Premiered     string     `xml:"premiered"`
+	Runtime       int        `xml:"runtime"`
+	Studio        string     `xml:"studio"`
+	Director      string     `xml:"director"`
+	Actors        []nfoActor `xml:"actor"`
+	Plot          string     `xml:"plot"`
+	Set           string     `xml:"set"`
+}
+
+// scrapeAVOne AV 条目：MetaTube 元数据 → <番号>.nfo + poster.jpg
+func (h *Handler) scrapeAVOne(cfg scrapeCfg, dir, num string) {
+	meta := metatubeFetchCached(num)
+	if meta == nil || meta.Status != "ok" {
+		scrapeAddErr("%s: MetaTube 未命中（未配置或未收录）", num)
+		return
+	}
+	actors := avMetaActors(meta)
+	if cfg.WriteNFO {
+		nfo := nfoAV{
+			Title:         meta.Title,
+			OriginalTitle: meta.OriginalTitle,
+			Num:           meta.Num,
+			UniqueNum:     meta.Num,
+			Premiered:     meta.ReleaseDate,
+			Runtime:       meta.Runtime,
+			Studio:        meta.Publisher,
+			Director:      meta.Director,
+			Plot:          meta.Plot,
+		}
+		for _, a := range actors {
+			nfo.Actors = append(nfo.Actors, nfoActor{Name: a})
+		}
+		if b, err := marshalNFO(nfo); err == nil {
+			if _, err := writeMetaFile(dir, meta.Num+".nfo", b, cfg.Force); err != nil {
+				scrapeAddErr("%s: 写 %s.nfo 失败 %v", num, meta.Num, err)
+			}
+		}
+	}
+	if cfg.WriteImages && meta.CoverURL != "" {
+		if data, err := metatubeFetchCoverBytes(meta); err == nil {
+			if _, err := writeMetaFile(dir, "poster.jpg", data, cfg.Force); err != nil {
+				scrapeAddErr("%s: 写 poster.jpg 失败 %v", num, err)
+			}
+		} else {
+			scrapeAddErr("%s: 封面拉取失败 %v", num, err)
+		}
 	}
 }
 

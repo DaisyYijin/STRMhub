@@ -3563,6 +3563,7 @@ async function scrapeLoadPage() {
     document.getElementById('scrape-root').value = cfg.local_root || '';
     document.getElementById('scrape-nfo').checked = cfg.write_nfo !== false;
     document.getElementById('scrape-img').checked = cfg.write_images !== false;
+    document.getElementById('scrape-av').checked = cfg.write_av !== false;
     const force = document.querySelector('input[name="scrape-force"][value="true"]');
     const keep = document.querySelector('input[name="scrape-force"][value="false"]');
     if (force && keep) {
@@ -3577,6 +3578,7 @@ function scrapeCfgFromUI() {
     local_root: document.getElementById('scrape-root').value.trim(),
     write_nfo: document.getElementById('scrape-nfo').checked,
     write_images: document.getElementById('scrape-img').checked,
+    write_av: document.getElementById('scrape-av').checked,
     force: (document.querySelector('input[name="scrape-force"]:checked') || {}).value === 'true',
   };
 }
