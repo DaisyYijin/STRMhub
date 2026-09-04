@@ -1,27 +1,21 @@
 package api
 
-// TG 频道搜索（参考 MoviePilot p115strmhelper 的 tg_search 实现）：
+// TG 频道抓取引擎（订阅管理的底层，Web 搜索入口已删除）：
 // 抓取 Telegram 频道公开网页预版 https://t.me/s/<频道>?q=<关键词>，
-// 解析消息卡片（标题/内容/日期/图片/话题标签），提取网盘链接
-// （115 优先，其次夸克/阿里/磁力/ed2k），点「转存」直接入库。
-// 无需 Telegram 账号/机器人，仅支持公开频道。
+// 解析消息卡片，供订阅检查逐频道检索新资源。
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	htmlpkg "golang.org/x/net/html"
 )
 
@@ -45,20 +39,8 @@ func (h *Handler) saveTgSearchCfg(c *tgSearchCfg) {
 }
 
 // TgSearchGetConfig GET /tgsearch/config
-func (h *Handler) TgSearchGetConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": h.loadTgSearchCfg()})
-}
 
 // TgSearchSaveConfig POST /tgsearch/config
-func (h *Handler) TgSearchSaveConfig(c *gin.Context) {
-	var req tgSearchCfg
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
-		return
-	}
-	h.saveTgSearchCfg(&req)
-	c.JSON(http.StatusOK, gin.H{"message": "已保存"})
-}
 
 // ==================== 搜索 ====================
 
@@ -105,68 +87,6 @@ var (
 )
 
 // TgSearchSearch GET /tgsearch/search?keyword=xxx
-func (h *Handler) TgSearchSearch(c *gin.Context) {
-	keyword := strings.TrimSpace(c.Query("keyword"))
-	if keyword == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入搜索关键词"})
-		return
-	}
-	cfg := h.loadTgSearchCfg()
-	var channels []string
-	for _, line := range strings.Split(cfg.Channels, "\n") {
-		ch := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "@"))
-		if ch != "" {
-			channels = append(channels, ch)
-		}
-	}
-	if len(channels) == 0 {
-		// 未配置频道 → 回退订阅管理的订阅源（单一频道来源，避免三处配置打架）
-		for _, s := range h.loadTgSubCfg().Sources {
-			if ch := tgSubParseChannel(s.URL); ch != "" {
-				channels = append(channels, ch)
-			}
-		}
-	}
-	if len(channels) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在「订阅管理」添加订阅源，或在 TG 搜索配置里填写频道（每行一个）"})
-		return
-	}
-
-	var (
-		mu    sync.Mutex
-		wg    sync.WaitGroup
-		sem   = make(chan struct{}, 4)
-		items []tgItem
-		errs  []string
-	)
-	for _, ch := range channels {
-		wg.Add(1)
-		go func(ch string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			got, err := tgSearchChannel(ch, keyword)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				errs = append(errs, ch+": "+err.Error())
-				return
-			}
-			items = append(items, got...)
-		}(ch)
-	}
-	wg.Wait()
-
-	// 关键词过滤（服务器端 q= 已过滤一轮，这里按标题/内容再兜一层）→ 去重 → 按时间倒序
-	items = tgFilterDedup(items, keyword)
-	sort.Slice(items, func(i, j int) bool { return items[i].Date > items[j].Date })
-	if len(items) == 0 && len(errs) > 0 {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "搜索失败：" + strings.Join(errs, "；")})
-		return
-	}
-	log.Printf("[TG搜索] 「%s」%d 个频道命中 %d 条", keyword, len(channels), len(items))
-	c.JSON(http.StatusOK, gin.H{"data": items, "errors": errs})
-}
 
 // tgSearchChannel 抓取并解析单个频道
 func tgSearchChannel(channel, keyword string) ([]tgItem, error) {
@@ -400,43 +320,6 @@ func tgFilterDedup(items []tgItem, keyword string) []tgItem {
 // ==================== 转存 ====================
 
 // TgSearchSave POST /tgsearch/save {url, pass}
-func (h *Handler) TgSearchSave(c *gin.Context) {
-	var req struct {
-		URL  string `json:"url"`
-		Pass string `json:"pass"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.URL) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少链接"})
-		return
-	}
-	cfg := h.loadTgSearchCfg()
-	link := trimLinkTail(strings.TrimSpace(req.URL))
-	switch {
-	case is115ShareLink(link):
-		if cfg.Target == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在配置里选择转存目录"})
-			return
-		}
-		msg, success, fail, terr := h.shareReceiveCore(link, req.Pass, cfg.Target, cfg.Organize)
-		if terr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "115 转存失败: " + terr.Error(), "link": link})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"message": "已转存（" + msg + "）",
-			"count":   success, "failed": fail,
-			"note": "转存成功，增量同步已自动触发（约 30 秒后完成 STRM 生成）",
-		})
-	case strings.HasPrefix(link, "magnet:") || strings.HasPrefix(link, "ed2k:"):
-		if err := h.submitOfflineLink(link); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "115 离线提交失败: " + err.Error(), "link": link})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "已提交 115 离线下载（完成后自动整理入库）", "link": link})
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "暂不支持该链接类型", "link": link})
-	}
-}
 
 // chromeUA 桌面 Chrome UA（站点对 Go 默认 UA 有 WAF 指纹拦截时使用）
 const chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"

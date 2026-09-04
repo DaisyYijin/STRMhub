@@ -424,11 +424,6 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/115checkin/config", h.Checkin115SaveConfig)
 		protected.POST("/115checkin/run", h.Checkin115Run)
 
-		// TG 频道搜索（t.me/s 公开预览抓取 → 网盘链接提取 → 转存）
-		protected.GET("/tgsearch/config", h.TgSearchGetConfig)
-		protected.POST("/tgsearch/config", h.TgSearchSaveConfig)
-		protected.GET("/tgsearch/search", h.TgSearchSearch)
-		protected.POST("/tgsearch/save", h.TgSearchSave)
 
 		// 123 云盘（官方开放平台：clientID/clientSecret 换 token → 扫描生成 STRM）
 		protected.GET("/pan123/config", h.Pan123GetConfig)
