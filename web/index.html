@@ -221,19 +221,32 @@
       <div class="alert alert-info">影视刮削：按 TMDB 直接生成标准 NFO + 海报到本地媒体库对应片目目录，落盘后由「监控上传」自动回传 115 对应目录——替代"Emby 刮削到本地"。Emby 侧建议把元数据读取器设为「仅 NFO」，以本站数据为准。电视剧集生成 tvshow.nfo 与整季海报；集级 NFO 暂不生成。</div>
       <div class="card">
         <div class="form-row"><div class="label">本地媒体库根目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地挂载的媒体库根目录（如 /media）。片目目录 = 根目录 + 台账相对路径，与监控上传的监控目录通常是同一个。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="scrape-root" placeholder="如 /media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('scrape-root')">选择目录</button></div></div></div>
-        <div class="form-row"><div class="label">刮削内容</div><div class="control">
-          <label style="font-size:13px;margin-right:18px"><input type="checkbox" id="scrape-nfo" checked> NFO（movie.nfo / tvshow.nfo）</label>
-          <label style="font-size:13px;margin-right:18px"><input type="checkbox" id="scrape-img" checked> 图片（poster / fanart / 整季海报）</label>
-          <label style="font-size:13px"><input type="checkbox" id="scrape-av" checked> AV（MetaTube 番号元数据 + 封面）</label>
+        <div class="form-row"><div class="label">NFO 元数据</div><div class="control">
+          <div class="segmented-control" id="scrape-nfo-switch">
+            <div class="seg-item active" data-value="true" onclick="setScrapeOpt('write_nfo', true)">生成</div>
+            <div class="seg-item" data-value="false" onclick="setScrapeOpt('write_nfo', false)">跳过</div>
+          </div></div></div>
+        <div class="form-row"><div class="label">图片海报</div><div class="control">
+          <div class="segmented-control" id="scrape-img-switch">
+            <div class="seg-item active" data-value="true" onclick="setScrapeOpt('write_images', true)">生成</div>
+            <div class="seg-item" data-value="false" onclick="setScrapeOpt('write_images', false)">跳过</div>
+          </div></div></div>
+        <div class="form-row"><div class="label">AV 番号</div><div class="control">
+          <div class="segmented-control" id="scrape-av-switch">
+            <div class="seg-item active" data-value="true" onclick="setScrapeOpt('write_av', true)">刮削</div>
+            <div class="seg-item" data-value="false" onclick="setScrapeOpt('write_av', false)">跳过</div>
+          </div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">无 tmdb 标记、目录名可识别番号的片目走 MetaTube</div>
         </div></div>
         <div class="form-row"><div class="label">覆盖模式</div><div class="control">
-          <label style="font-size:13px;margin-right:18px"><input type="radio" name="scrape-force" value="false" checked> 只补缺失（已存在的文件跳过）</label>
-          <label style="font-size:13px"><input type="radio" name="scrape-force" value="true"> 强制覆盖</label>
-        </div></div>
+          <div class="segmented-control" id="scrape-force-switch">
+            <div class="seg-item active" data-value="false" onclick="setScrapeOpt('force', false)">只补缺失</div>
+            <div class="seg-item" data-value="true" onclick="setScrapeOpt('force', true)">强制覆盖</div>
+          </div></div></div>
         <div class="form-row"><div class="label"></div><div class="control">
           <button class="btn btn-primary" onclick="scrapeSaveConfig(this)">保存配置</button>
           <button class="btn btn-success" onclick="scrapeRun(this)">开始刮削</button>
-          <button class="btn btn-warning" onclick="scrapeStop()">停止</button>
+          <button class="btn btn-outline" onclick="scrapeStop()">停止</button>
         </div></div>
       </div>
       </div>

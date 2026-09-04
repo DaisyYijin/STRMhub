@@ -3561,26 +3561,28 @@ async function scrapeLoadPage() {
     const d = await api('/scrape/config');
     const cfg = d.cfg || {};
     document.getElementById('scrape-root').value = cfg.local_root || '';
-    document.getElementById('scrape-nfo').checked = cfg.write_nfo !== false;
-    document.getElementById('scrape-img').checked = cfg.write_images !== false;
-    document.getElementById('scrape-av').checked = cfg.write_av !== false;
-    const force = document.querySelector('input[name="scrape-force"][value="true"]');
-    const keep = document.querySelector('input[name="scrape-force"][value="false"]');
-    if (force && keep) {
-      force.checked = !!cfg.force;
-      keep.checked = !cfg.force;
-    }
+    scrapeOpts = {
+      write_nfo: cfg.write_nfo !== false,
+      write_images: cfg.write_images !== false,
+      write_av: cfg.write_av !== false,
+      force: !!cfg.force,
+    };
+    Object.entries(scrapeOpts).forEach(([k, v]) => setScrapeOpt(k, v));
   } catch (e) { console.error('[刮削] 配置回填失败:', e.message); }
 }
 
+let scrapeOpts = { write_nfo: true, write_images: true, write_av: true, force: false };
+
+function setScrapeOpt(key, v) {
+  scrapeOpts[key] = v;
+  const map = { write_nfo: 'scrape-nfo-switch', write_images: 'scrape-img-switch', write_av: 'scrape-av-switch', force: 'scrape-force-switch' };
+  document.querySelectorAll('#' + map[key] + ' .seg-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.value === String(v));
+  });
+}
+
 function scrapeCfgFromUI() {
-  return {
-    local_root: document.getElementById('scrape-root').value.trim(),
-    write_nfo: document.getElementById('scrape-nfo').checked,
-    write_images: document.getElementById('scrape-img').checked,
-    write_av: document.getElementById('scrape-av').checked,
-    force: (document.querySelector('input[name="scrape-force"]:checked') || {}).value === 'true',
-  };
+  return Object.assign({ local_root: document.getElementById('scrape-root').value.trim() }, scrapeOpts);
 }
 
 async function scrapeSaveConfig(btn) {
