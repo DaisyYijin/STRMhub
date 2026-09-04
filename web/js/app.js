@@ -199,8 +199,10 @@ function switchTab(pageId, tabName) {
     const first = page.querySelector('.tab[data-tab]');
     if (first) tabName = first.dataset.tab;
   }
-  page.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  page.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  // 只作用于外层 tab/panel（data-tab/data-panel）；子 tab（data-subtab/
+  // data-subpanel，如基础配置的 115/123云盘）由 orgSubTab 自己管理
+  page.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.remove('active'));
+  page.querySelectorAll('.tab-panel[data-panel]').forEach(p => p.classList.remove('active'));
   const tab = page.querySelector(`.tab[data-tab="${tabName}"]`);
   const panel = page.querySelector(`.tab-panel[data-panel="${tabName}"]`);
   if (tab) tab.classList.add('active');
