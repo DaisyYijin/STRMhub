@@ -140,6 +140,32 @@ var orgAttachmentExts = map[string]bool{
 	".nfo": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
 }
 
+// orgAttachmentImageExts 附件中的图片后缀
+var orgAttachmentImageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+}
+
+// orgMetaFixedNames 标准元数据基名：随视频移动到目标目录但保持原名——
+// Kodi/Emby 按 poster.jpg/fanart.jpg/tvshow.nfo 等固定名识别，跟随视频
+// 改名会让它们失效
+var orgMetaFixedNames = map[string]bool{
+	"poster": true, "fanart": true, "backdrop": true, "banner": true,
+	"folder": true, "cover": true, "logo": true,
+	"海报": true, "封面": true,
+	"tvshow": true, // tvshow.nfo（剧集级元数据，固定名）
+}
+
+// orgMetaFixedName 是否为"随行不改名"的标准元数据文件
+func orgMetaFixedName(base, ext string) bool {
+	if ext == ".nfo" {
+		return orgMetaFixedNames[base]
+	}
+	if orgAttachmentImageExts[ext] {
+		return orgMetaFixedNames[base]
+	}
+	return false
+}
+
 // moveSiblingAttachments 把与视频同目录的附件（字幕/nfo/图片）随视频一起移动，
 // 并把与视频同名的字幕重命名为视频新名（播放器按视频名匹配外挂字幕）
 func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBase, targetCid string, rename bool, onLog func(string)) {
@@ -163,9 +189,13 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 		}
 		fid := fmt.Sprint(e["fid"])
 		base := baseName(name)
-		// 与视频同名的附件才随行（点界匹配，与 renameBeforeMove 规则一致；
-		// 裸前缀会把 "Show2.srt" 误挂在视频 "Show" 上）
-		if base != videoOldBase && !strings.HasPrefix(base, videoOldBase+".") {
+		// 随行两类：
+		//   1) 与视频同名的附件（字幕/同名 nfo/同名图片）→ 随行并跟随视频新名
+		//   2) 标准元数据命名的文件（poster/fanart/tvshow.nfo 等）
+		//      → 随行但保持标准名——播放器/刮削器认固定名，跟随改名反而失效
+		sameBase := base == videoOldBase || strings.HasPrefix(base, videoOldBase+".")
+		metaFixed := !sameBase && orgMetaFixedName(base, ext)
+		if !sameBase && !metaFixed {
 			continue
 		}
 		if err := ops.moveFiles(targetCid, []string{fid}); err != nil {
@@ -173,8 +203,9 @@ func moveSiblingAttachments(ops *pan115Ops, pendingCid, videoOldBase, videoNewBa
 			continue
 		}
 		moved++
-		// 重命名对齐视频新名（仅成功入库场景；冗余/已存在保持原名）
-		if rename && videoNewBase != "" && base != videoNewBase {
+		// 重命名对齐视频新名（仅成功入库场景；冗余/已存在保持原名；
+		// 标准元数据命名保持固定名）
+		if rename && !metaFixed && videoNewBase != "" && base != videoNewBase {
 			newName := videoNewBase + strings.TrimPrefix(base, videoOldBase) + ext
 			if err := ops.rename(fid, newName); err != nil {
 				onLog(fmt.Sprintf("○ 附件随行 %s（重命名失败保持原名: %v）", name, err))
