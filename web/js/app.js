@@ -3281,8 +3281,11 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.menu-item').forEach(item => {
     item.addEventListener('click', () => { if (item.dataset.page) showPage(item.dataset.page); });
   });
-  // Tab 切换（通用）
+  // Tab 切换（通用）。子 tab（data-subtab，如基础配置的 115/123云盘）
+  // 有自己的 orgSubTab 内联处理，跳过通用绑定——否则会以 undefined tabName
+  // 再跑一遍 switchTab，把所有面板的 active 全摘掉（内容整体空白）
   document.querySelectorAll('.page .tab').forEach(tab => {
+    if (tab.dataset.subtab) return;
     tab.addEventListener('click', () => switchTab(tab.closest('.page').id, tab.dataset.tab));
   });
   document.getElementById('btn-log').addEventListener('click', openLog);
