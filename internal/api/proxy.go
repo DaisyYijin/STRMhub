@@ -69,6 +69,9 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 		handleProxyRedirect(c, db, cfg)
 	})
 
+	// 按需离线播放端点: /ed2k/play/{id}（STRM 占位内容指向这里，边下边播）
+	RegisterOfflinePlayRoutes(r, botHandler)
+
 	// 123 云盘 302 代理: /123/{fileID} 或 /123/{fileID}/{filename}
 	pan123Handler := &Handler{DB: db, Config: cfg}
 	r.GET("/123/:fileID", pan123Handler.handlePan123Redirect)
@@ -153,6 +156,12 @@ func handleProxyRedirect(c *gin.Context, db *gorm.DB, cfg *config.Config) {
 		}
 	}
 
+	servePickcodeDirect(c, db, cfg, pickcode)
+}
+
+// servePickcodeDirect 已知 pickcode 的出流公共路径（/d/ 302 与 /ed2k/play 共用）：
+// 空 UA 走服务端中转，其余按请求 UA 签发直链 302（直链与 UA 绑定，缓存键含 UA）
+func servePickcodeDirect(c *gin.Context, db *gorm.DB, cfg *config.Config, pickcode string) {
 	reqUA := c.Request.UserAgent()
 	vlog("302代理请求: pickcode=%s, UA=%s", pickcode, reqUA)
 

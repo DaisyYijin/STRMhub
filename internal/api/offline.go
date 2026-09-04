@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,7 +99,8 @@ func (h *Handler) offlineSubmitCore(rawURL, target string, organize bool) (int, 
 	}
 
 	log.Printf("[上传] ✓ 离线下载任务已提交: %s（%s）", truncateStr(rawURL, 60), linkType)
-	offlineMineAdd(h, rawURL) // 归属标记：完成通知只发给 StrmHub 内提交的任务
+	offlineMineAdd(h, rawURL)      // 归属标记：完成通知只发给 StrmHub 内提交的任务
+	offlinePlayRegister(h, rawURL) // 按需离线登记：占位 STRM 指向 /ed2k/play/{id}，边下边播
 
 	// 离线下载是异步的：提交后 10 秒先试探一轮（115 秒传命中时文件已就位，
 	// CMS 同款极速响应——秒传场景 ~15 秒即开始整理）；未命中则 60 秒后再试，
@@ -357,7 +357,7 @@ func offlineMineAdd(h *Handler, rawURL string) {
 	lower := strings.ToLower(rawURL)
 	var keys []string
 	if strings.HasPrefix(lower, "magnet:?") {
-		if m := regexp.MustCompile(`(?i)btih:([A-Za-z0-9]+)`).FindStringSubmatch(rawURL); m != nil {
+		if m := reMagnetBtih.FindStringSubmatch(rawURL); m != nil {
 			keys = append(keys, "btih:"+strings.ToUpper(m[1]))
 		}
 	} else if strings.HasPrefix(lower, "ed2k://") {
@@ -648,6 +648,7 @@ type offlineTaskInfo struct {
 	key     string // info_hash 优先，空则 name
 	name    string
 	status  int
+	percent int   // 下载进度 0-100（下载中提示用）
 	delTime int64 // 完成时间戳（秒；115 任务列表会长期保留历史任务，用它区分新旧）
 }
 
@@ -681,6 +682,15 @@ func fetchOfflineTaskList(cookie string) ([]offlineTaskInfo, error) {
 		if key == "" {
 			key = name
 		}
+		percent := 0
+		switch v := m["percent"].(type) {
+		case float64:
+			percent = int(v)
+		case string:
+			if f, perr := strconv.ParseFloat(strings.TrimSuffix(v, "%"), 64); perr == nil {
+				percent = int(f)
+			}
+		}
 		delTime := int64(0)
 		switch v := m["del_time"].(type) {
 		case float64:
@@ -688,7 +698,7 @@ func fetchOfflineTaskList(cookie string) ([]offlineTaskInfo, error) {
 		case string:
 			delTime, _ = strconv.ParseInt(v, 10, 64)
 		}
-		tasks = append(tasks, offlineTaskInfo{key: key, name: name, status: status, delTime: delTime})
+		tasks = append(tasks, offlineTaskInfo{key: key, name: name, status: status, percent: percent, delTime: delTime})
 	}
 	return tasks, nil
 }

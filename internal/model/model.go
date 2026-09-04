@@ -179,6 +179,22 @@ type SyncedFile struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// OfflinePlay 按需离线（边下边播）登记：ed2k/磁力链接 ↔ 播放端点 id。
+// 入库（提交离线）时创建，STRM 占位内容指向 /ed2k/play/{id}；
+// Emby 播放时端点查任务状态，没下过就提交 115 离线，完成后定位
+// pickcode 存在本表，后续播放走 302 直连快路径
+type OfflinePlay struct {
+	ID        string    `json:"id" gorm:"primaryKey;size:64"` // 链接指纹（ed2k hash/btih/URL sha1）
+	Link      string    `json:"link" gorm:"size:1000"`        // 原始 ed2k/magnet/http 链接
+	Name      string    `json:"name" gorm:"size:500"`         // 文件名（ed2k 链接自带，http 取 URL base）
+	Size      int64     `json:"size"`                         // 文件字节数（ed2k 链接自带，完成后按尺寸兜底定位）
+	PickCode  string    `json:"pick_code" gorm:"size:64"`     // 下载完成并定位到的 115 pickcode（就绪后快速 302）
+	Status    string    `json:"status" gorm:"size:20;index"`  // pending / downloading / ready / failed
+	ErrorMsg  string    `json:"error_msg" gorm:"size:500"`    // 失败原因（115 拒绝等）
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // PortalStat 观影门户播放统计（排行榜数据源）：每部影视一行，
 // 周/月/年计数在跨期时自动清零重计（不用明细表，单行 upsert 无膨胀）
 type PortalStat struct {
@@ -261,6 +277,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&MediaLibrary{},
 		&SyncEvent{},
 		&SyncedFile{},
+		&OfflinePlay{},
 		&UploadMark{},
 	); err != nil {
 		return nil, err
