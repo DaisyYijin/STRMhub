@@ -155,6 +155,7 @@ function showPage(id) {
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
+    pan123LoadUI();
     loadWash();
   }
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
@@ -3707,6 +3708,14 @@ async function pansouOffline(i, el) {
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
   }
+}
+
+// ==================== 整理·基础配置 子tab（115/123云盘） ====================
+function orgSubTab(name) {
+  const page = document.getElementById('page-organize');
+  if (!page) return;
+  page.querySelectorAll('[data-subtab]').forEach(t => t.classList.toggle('active', t.dataset.subtab === name));
+  page.querySelectorAll('[data-subpanel]').forEach(pn => pn.classList.toggle('active', pn.dataset.subpanel === name));
 }
 
 // ==================== TMDB 选片弹窗（观影/盘搜/不太灵影视共用） ====================

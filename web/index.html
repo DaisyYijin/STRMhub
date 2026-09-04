@@ -137,17 +137,11 @@
 
       <!-- 123 账号同步 -->
       <div class="tab-panel" data-panel="acc123-sync">
-      <div class="alert alert-warning">使用前先到「账号管理 → 123 账号」填写开放平台凭证并测试连接；目标文件夹需在 123 网盘里开启「直链空间」（根目录不支持直链）。</div>
-      <div class="card">
-        <div class="form-row"><div class="label">123 扫描目录 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">在 123 网盘里右键目标文件夹 → 开启「直链空间」，文件夹 ID 显示在浏览器地址栏末尾。扫描会遍历其下所有子目录，为视频文件生成 STRM。</span></i></div><div class="control">
-          <div class="form-inline-group"><input type="text" id="pan123-target" placeholder="如 123456" class="inline-input"><button class="btn btn-outline" onclick="pan123CheckDir(this)">校验目录</button></div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:4px" id="pan123-dir-result"></div>
-        </div></div>
-        <div class="form-row"><div class="label">本地媒体库目录</div><div class="control">
-          <div class="form-inline-group"><input type="text" id="pan123-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('pan123-local')">选择目录</button></div>
-        </div></div>
-        <div style="font-size:12px;color:var(--text-3);line-height:1.7;background:var(--border);border-radius:8px;padding:8px 12px;margin-bottom:10px">官方限制：免费账号播放直链自用流量 1GB/天，超出当日会报错；域名与命名格式使用「重命名规则」里的全局 STRM 设置。</div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="pan123SyncSave(this)">保存配置</button> <button class="btn btn-success" onclick="pan123ScanRun(this)">立即扫描</button></div></div>
+      <div class="card" style="text-align:center;padding:36px 24px">
+        <div style="font-size:30px;margin-bottom:8px">↗</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">123 同步基础配置已移至「自动整理 → 基础配置 → 123云盘」</div>
+        <div style="font-size:13px;color:var(--text-3)">开放平台凭证仍在「账号管理 → 123 账号」配置。</div>
+      </div>
       </div>
       </div>
 
@@ -192,13 +186,34 @@
       <!-- 基础配置 -->
       <div class="tab-panel active" data-panel="basic">
       <div class="alert alert-warning">自动整理前必须创建好二级分类策略，并完成一次全量同步。</div>
+      <div class="tabs" style="margin-bottom:12px">
+        <div class="tab active" data-subtab="basic-115" onclick="orgSubTab('basic-115')">115</div>
+        <div class="tab" data-subtab="basic-123" onclick="orgSubTab('basic-123')">123云盘</div>
+      </div>
+      <div class="tab-panel active" data-subpanel="basic-115">
       <div class="card">
         <div class="form-row"><div class="label">待整理文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">存放刚转存或下载的原始资源，整理引擎从这里扫描。建议非媒体库内的文件夹，如 /影视库/等待整理。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-pending" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-pending')">选择目录</button></div></div></div>
                 <div class="form-row"><div class="label">已存在文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">影视库中已存在相同影视时的重复版本存放目录（洗版用）。如 /影视库/已经存在。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-existing" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-existing')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">冗余文件夹<i class="help-tip" tabindex="0">?<span class="tip-bubble">存放识别失败的文件、广告图片等无用文件。如 /影视库/冗余文件。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="org-redundant" placeholder="115 目录 cid" class="inline-input"><button class="btn btn-outline" onclick="open115DirPicker('org-redundant')">选择目录</button></div></div></div>
           <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="saveConfig('org-basic')">保存配置</button> <button class="btn btn-danger" id="btn-organize" onclick="startOrganize()">开始整理</button> <button class="btn btn-warning" onclick="resetConfig('org-basic', this)" style="position:relative">重置配置</button></div></div>
       </div>
-    </div>
+      </div>
+
+      <!-- 123云盘 基础配置（自账号同步页迁入） -->
+      <div class="tab-panel" data-subpanel="basic-123">
+      <div class="alert alert-warning">使用前先到「账号管理 → 123 账号」填写开放平台凭证并测试连接；目标文件夹需在 123 网盘里开启「直链空间」（根目录不支持直链）。</div>
+      <div class="card">
+        <div class="form-row"><div class="label">123 扫描目录 ID<i class="help-tip" tabindex="0">?<span class="tip-bubble">在 123 网盘里右键目标文件夹 → 开启「直链空间」，文件夹 ID 显示在浏览器地址栏末尾。扫描会遍历其下所有子目录，为视频文件生成 STRM。</span></i></div><div class="control">
+          <div class="form-inline-group"><input type="text" id="pan123-target" placeholder="如 123456" class="inline-input"><button class="btn btn-outline" onclick="pan123CheckDir(this)">校验目录</button></div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px" id="pan123-dir-result"></div>
+        </div></div>
+        <div class="form-row"><div class="label">本地媒体库目录</div><div class="control">
+          <div class="form-inline-group"><input type="text" id="pan123-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('pan123-local')">选择目录</button></div>
+        </div></div>
+        <div style="font-size:12px;color:var(--text-3);line-height:1.7;background:var(--border);border-radius:8px;padding:8px 12px;margin-bottom:10px">官方限制：免费账号播放直链自用流量 1GB/天，超出当日会报错；域名与命名格式使用「重命名规则」里的全局 STRM 设置。</div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="pan123SyncSave(this)">保存配置</button> <button class="btn btn-success" onclick="pan123ScanRun(this)">立即扫描</button></div></div>
+      </div>
+      </div>
 
       <!-- 识别规则 -->
       <div class="tab-panel" data-panel="recognize">
