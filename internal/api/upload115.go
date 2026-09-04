@@ -564,8 +564,10 @@ func monitorOnce(h *Handler) {
 	if len(imgs) == 0 {
 		return
 	}
-	sort.Strings(imgs)
-	log.Printf("[上传] 发现 %d 个新刮削文件（图片+NFO）", len(imgs))
+	// 无跳过时也要归零（skippedAnnounceSummary 需要非 nil map）
+	skippedMeta := 0
+	skipDirs := map[string]bool{}
+	_ = skipDirs
 
 	for _, img := range imgs {
 		rel, err := filepath.Rel(cfg.Dir, img)
@@ -584,12 +586,11 @@ func monitorOnce(h *Handler) {
 		}
 		cid, ok := cloudPathCid(cookie, targetAbs)
 		if !ok {
-			// 连续多轮查不到云端目录就停止重试（本引擎每分钟一轮，防刷屏）
-			if n := metaMissIncr(img); n <= 2 {
-				log.Printf("[上传] 未找到对应 115 目录，跳过 %s（%s）", rel, targetAbs)
-			} else if n == 3 {
-				log.Printf("[上传] ○ %s 连续 3 轮未找到云端目录，本会话内不再重试（如目录确实存在请反馈日志）", rel)
-			}
+			// 115 无对应目录（多为播放器自建的 <集名>.mkv/ 本地元数据目录）：
+			// 每目录只记一条，同目录后续文件静默跳过——逐文件逐轮刷屏无意义
+			metaSkipAnnounce(targetAbs)
+			skippedMeta++
+			skipDirs[targetAbs] = true
 			continue
 		}
 		metaMissClear(img)
@@ -606,6 +607,9 @@ func monitorOnce(h *Handler) {
 		}
 		log.Printf("[上传] ✓ 上传成功: %s → %s", rel, targetAbs)
 	}
+
+	skippedAnnounceSummary(skippedMeta, skipDirs)
+	log.Printf("[上传] 发现 %d 个新刮削文件（图片+NFO）", len(imgs))
 }
 
 // metadataUploadNames 元数据回传监听的文件名（Emby 写入媒体目录的标准名）
@@ -753,6 +757,36 @@ var (
 	metaMissMu    sync.Mutex
 )
 
+// skippedAnnounceSummary 一轮结束的跳过汇总（防逐文件逐轮刷屏）
+func skippedAnnounceSummary(skipped int, dirs map[string]bool) {
+	if skipped <= 0 {
+		return
+	}
+	example := ""
+	for d := range dirs {
+		example = d
+		break
+	}
+	log.Printf("[上传] ○ %d 个元数据文件因 115 无对应目录跳过回传（涉及 %d 个本地目录；多为播放器自建的每集元数据目录，不影响 115 数据。示例：%s）",
+		skipped, len(dirs), truncateStr(example, 120))
+}
+
+// metaSkipAnnounced 已宣告过"115 无对应目录"的本地目录（每目录只记一条）
+var (
+	metaSkipMu        sync.Mutex
+	metaSkipAnnounced = map[string]bool{}
+)
+
+func metaSkipAnnounce(dir string) {
+	metaSkipMu.Lock()
+	defer metaSkipMu.Unlock()
+	if metaSkipAnnounced[dir] {
+		return
+	}
+	metaSkipAnnounced[dir] = true
+	log.Printf("[上传] ○ 目录在 115 上不存在，跳过该目录的元数据回传：%s", truncateStr(dir, 120))
+}
+
 // metaMissIncr 计数 +1 并返回新值（持锁）
 func metaMissIncr(key string) int {
 	metaMissMu.Lock()
@@ -817,16 +851,20 @@ func cloudPathCidE(cookie, absPath string) (cid string, found bool, reqErr error
 func getidCidFromResponse(body []byte, pathParam string) (cid string, found bool, err error) {
 	var r struct {
 		State bool            `json:"state"`
-		ID    json.Number     `json:"id"`
+		ID    *json.Number    `json:"id"`
 		Data  json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
 		log.Printf("[元数据回传] files/getid 响应解析失败（%s）: %s", pathParam, truncateStr(string(body), 160))
 		return "", false, err
 	}
-	// 主形态：顶层 id（openStrm 生产验证）
-	if s := r.ID.String(); s != "" && s != "0" {
-		return s, true, nil
+	// 主形态：顶层 id（openStrm 生产验证）。
+	// id=0 = 路径在 115 上不存在（正常业务结果，静默由调用方记跳过）
+	if r.ID != nil {
+		if str := r.ID.String(); str != "" && str != "0" {
+			return str, true, nil
+		}
+		return "", false, nil
 	}
 	// 兼容形态：data 数组 [{"cid":...}]
 	if len(r.Data) > 0 && r.Data[0] == '[' {

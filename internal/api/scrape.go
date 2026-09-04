@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -271,34 +272,44 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 		scrapeAddErr("TMDB 未配置: %v", err)
 		return
 	}
-	var mls []model.MediaLibrary
-	if err := model.DB.Where("tmdb_id <> 0 AND target_path <> ''").Find(&mls).Error; err != nil {
-		scrapeAddErr("读取媒体库失败: %v", err)
-		return
+	// 以台账标题目录为刮削单位（每片一条，目录真实存在于 115/本地）。
+	// 不用 MediaLibrary.TargetPath：剧集行记录的是"每集文件路径"，
+	// 拿它当目录会在本地造出 <集名>.mkv/ 的假目录
+	entries := portalScanLedgerCached()
+	var targets []*portalTitleEntry
+	for _, e := range entries {
+		if e.TmdbID > 0 && e.Key != "" {
+			targets = append(targets, e)
+		}
 	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Key < targets[j].Key })
 	scrapeMu.Lock()
-	scrapeSt.Total = len(mls)
+	scrapeSt.Total = len(targets)
 	scrapeMu.Unlock()
-	if len(mls) == 0 {
+	if len(targets) == 0 {
 		return
 	}
-	log.Printf("[影视刮削] ▶ 开始：共 %d 个片目（根目录 %s）", len(mls), cfg.LocalRoot)
-	for _, m := range mls {
+	log.Printf("[影视刮削] ▶ 开始：共 %d 个片目（根目录 %s）", len(targets), cfg.LocalRoot)
+	for _, e := range targets {
 		if scrapeStopRequested() {
 			return
 		}
 		scrapeMu.Lock()
-		scrapeSt.Current = m.Title
+		scrapeSt.Current = e.Title
 		scrapeMu.Unlock()
-		dir := filepath.Join(cfg.LocalRoot, filepath.FromSlash(strings.Trim(m.TargetPath, "/")))
+		dir := filepath.Join(cfg.LocalRoot, filepath.FromSlash(strings.Trim(e.Key, "/")))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			scrapeAddErr("%s: 创建目录失败 %v", m.Title, err)
+			scrapeAddErr("%s: 创建目录失败 %v", e.Title, err)
 			scrapeMu.Lock()
 			scrapeSt.Done++
 			scrapeMu.Unlock()
 			continue
 		}
-		h.scrapeOne(tc, cfg, dir, &m)
+		kind := "movie"
+		if e.MediaType == "剧集" {
+			kind = "tv"
+		}
+		h.scrapeOne(tc, cfg, dir, kind, e.Title, int(e.TmdbID))
 		scrapeMu.Lock()
 		scrapeSt.Done++
 		scrapeMu.Unlock()
@@ -307,21 +318,18 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 }
 
 // scrapeOne 单个片目：详情 → NFO + 图片
-func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.MediaLibrary) {
-	kindPath := "movie"
-	if m.MediaType == "tv" {
-		kindPath = "tv"
-	}
+func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title string, tmdbID int) {
+	kindPath := kind
 	params := map[string]string{"language": "zh-CN", "append_to_response": "credits"}
-	body, err := tc.get("/"+kindPath+"/"+strconv.Itoa(int(m.TmdbID)), params)
+	body, err := tc.get("/"+kindPath+"/"+strconv.Itoa(tmdbID), params)
 	if err != nil {
-		scrapeAddErr("%s: TMDB 详情失败 %v", m.Title, err)
+		scrapeAddErr("%s: TMDB 详情失败 %v", title, err)
 		return
 	}
 
 	// ---- NFO ----
 	if cfg.WriteNFO {
-		if m.MediaType == "movie" {
+		if kind == "movie" {
 			var d struct {
 				Title         string  `json:"title"`
 				OriginalTitle string  `json:"original_title"`
@@ -348,7 +356,7 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 				} `json:"production_companies"`
 			}
 			if json.Unmarshal(body, &d) != nil {
-				scrapeAddErr("%s: 详情解析失败", m.Title)
+				scrapeAddErr("%s: 详情解析失败", title)
 				return
 			}
 			nfo := nfoMovie{
@@ -357,10 +365,10 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 				Year:    dateYear(d.ReleaseDate), Premiered: d.ReleaseDate,
 				Runtime: d.Runtime,
 				UniqueIDs: []nfoUniqueID{
-					{Type: "tmdb", Default: true, Value: strconv.Itoa(int(m.TmdbID))},
+					{Type: "tmdb", Default: true, Value: strconv.Itoa(tmdbID)},
 					{Type: "imdb", Value: d.IMDbID},
 				},
-				TmdbID: strconv.Itoa(int(m.TmdbID)), IMDbID: d.IMDbID,
+				TmdbID: strconv.Itoa(tmdbID), IMDbID: d.IMDbID,
 			}
 			for _, g := range d.Genres {
 				nfo.Genres = append(nfo.Genres, g.Name)
@@ -381,7 +389,7 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 			}
 			if b, err := marshalNFO(nfo); err == nil {
 				if _, err := writeMetaFile(dir, "movie.nfo", b, cfg.Force); err != nil {
-					scrapeAddErr("%s: 写 movie.nfo 失败 %v", m.Title, err)
+					scrapeAddErr("%s: 写 movie.nfo 失败 %v", title, err)
 				}
 			}
 		} else {
@@ -402,15 +410,15 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 				} `json:"created_by"`
 			}
 			if json.Unmarshal(body, &d) != nil {
-				scrapeAddErr("%s: 详情解析失败", m.Title)
+				scrapeAddErr("%s: 详情解析失败", title)
 				return
 			}
 			nfo := nfoTVShow{
 				Title: d.Name, OriginalTitle: d.OriginalName, Plot: d.Overview,
 				Ratings: []nfoRating{{Name: "tmdb", Max: 10, Default: true, Value: d.VoteAverage}},
 				Year:    dateYear(d.FirstAirDate), Premiered: d.FirstAirDate,
-				UniqueIDs: []nfoUniqueID{{Type: "tmdb", Default: true, Value: strconv.Itoa(int(m.TmdbID))}},
-				TmdbID:    strconv.Itoa(int(m.TmdbID)),
+				UniqueIDs: []nfoUniqueID{{Type: "tmdb", Default: true, Value: strconv.Itoa(tmdbID)}},
+				TmdbID:    strconv.Itoa(tmdbID),
 			}
 			for _, g := range d.Genres {
 				nfo.Genres = append(nfo.Genres, g.Name)
@@ -423,7 +431,7 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 			}
 			if b, err := marshalNFO(nfo); err == nil {
 				if _, err := writeMetaFile(dir, "tvshow.nfo", b, cfg.Force); err != nil {
-					scrapeAddErr("%s: 写 tvshow.nfo 失败 %v", m.Title, err)
+					scrapeAddErr("%s: 写 tvshow.nfo 失败 %v", title, err)
 				}
 			}
 		}
@@ -448,7 +456,7 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 		{d.PosterPath, "poster.jpg"},
 		{d.BackdropPath, "fanart.jpg"},
 	}
-	if m.MediaType == "tv" {
+	if kind == "tv" {
 		for _, sn := range d.Seasons {
 			if sn.PosterPath == "" {
 				continue
@@ -466,11 +474,11 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 		}
 		data, err := tmdbFetchImageBytes(img[0])
 		if err != nil {
-			scrapeAddErr("%s: 拉图失败 %s %v", m.Title, img[1], err)
+			scrapeAddErr("%s: 拉图失败 %s %v", title, img[1], err)
 			continue
 		}
 		if _, err := writeMetaFile(dir, img[1], data, cfg.Force); err != nil {
-			scrapeAddErr("%s: 写 %s 失败 %v", m.Title, img[1], err)
+			scrapeAddErr("%s: 写 %s 失败 %v", title, img[1], err)
 		}
 	}
 }
