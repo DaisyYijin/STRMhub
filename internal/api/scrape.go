@@ -309,7 +309,7 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 		if e.MediaType == "剧集" {
 			kind = "tv"
 		}
-		h.scrapeOne(tc, cfg, dir, kind, e.Title, int(e.TmdbID))
+		h.scrapeOne(tc, cfg, dir, kind, e.Title, e.Year, int(e.TmdbID))
 		scrapeMu.Lock()
 		scrapeSt.Done++
 		scrapeMu.Unlock()
@@ -318,13 +318,29 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 }
 
 // scrapeOne 单个片目：详情 → NFO + 图片
-func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title string, tmdbID int) {
+func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title, year string, tmdbID int) {
 	kindPath := kind
 	params := map[string]string{"language": "zh-CN", "append_to_response": "credits"}
 	body, err := tc.get("/"+kindPath+"/"+strconv.Itoa(tmdbID), params)
 	if err != nil {
-		scrapeAddErr("%s: TMDB 详情失败 %v", title, err)
-		return
+		// 详情 404 = 目录名标记的 tmdb id 查无条目（整理时匹配错/条目已删）：
+		// 回退按标题+年份搜一次，自愈错误 ID
+		var alt *TmdbMedia
+		if kind == "tv" {
+			alt, _ = tc.SearchTV(title, year)
+		} else {
+			alt, _ = tc.SearchMovie(title, year)
+		}
+		if alt == nil || alt.TmdbID == 0 {
+			scrapeAddErr("%s: TMDB 详情失败 %v（id=%d，按标题搜索也未命中）", title, err, tmdbID)
+			return
+		}
+		log.Printf("[影视刮削] ○ %s: 标记 id=%d 查无详情，按标题匹配到 id=%d，已自愈", title, tmdbID, alt.TmdbID)
+		body, err = tc.get("/"+kindPath+"/"+strconv.Itoa(alt.TmdbID), params)
+		if err != nil {
+			scrapeAddErr("%s: TMDB 详情失败 %v", title, err)
+			return
+		}
 	}
 
 	// ---- NFO ----
