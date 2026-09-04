@@ -3556,8 +3556,6 @@ async function mukakuOffline(i, el) {
 // TMDB → 本地媒体库标准元数据（movie.nfo/tvshow.nfo + poster/fanart/季海报），
 // 落盘后由「监控上传」自动回传 115。
 
-let scrapePollTimer = null;
-
 async function scrapeLoadPage() {
   try {
     const d = await api('/scrape/config');
@@ -3571,8 +3569,6 @@ async function scrapeLoadPage() {
       force.checked = !!cfg.force;
       keep.checked = !cfg.force;
     }
-    scrapeRenderStatus(d.status || { running: false });
-    scrapeStartPollIfRunning(d.status || {});
   } catch (e) { console.error('[刮削] 配置回填失败:', e.message); }
 }
 
@@ -3603,8 +3599,7 @@ async function scrapeRun(btn) {
   try {
     await api('/scrape/config', { method: 'POST', body: JSON.stringify(cfg) });
     await api('/scrape/run', { method: 'POST' });
-    toast('刮削已开始');
-    scrapeStartPollIfRunning({ running: true });
+    toast('刮削已开始，进度与结果见运行日志');
   } catch (e) { toast(e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
 }
@@ -3614,35 +3609,7 @@ async function scrapeStop() {
   catch (e) { toast(e.message); }
 }
 
-function scrapeRenderStatus(st) {
-  const box = document.getElementById('scrape-status');
-  if (!box) return;
-  if (!st.running && !st.done && !st.total) { box.textContent = '未运行'; return; }
-  const lines = [];
-  lines.push(st.running
-    ? '⏳ 刮削中：' + st.done + ' / ' + st.total + (st.failed ? '（失败 ' + st.failed + '）' : '')
-    : '■ 已结束：完成 ' + st.done + ' / ' + st.total + (st.failed ? '，失败 ' + st.failed : ''));
-  if (st.current) lines.push('当前：' + esc(st.current));
-  if (st.errors && st.errors.length) {
-    lines.push('<span style="color:var(--danger)">' + st.errors.map(esc).join('<br>') + '</span>');
-  }
-  box.innerHTML = lines.join('<br>');
-}
 
-function scrapeStartPollIfRunning(st) {
-  if (st.running && !scrapePollTimer) {
-    scrapePollTimer = setInterval(async () => {
-      try {
-        const st = await api('/scrape/status');
-        scrapeRenderStatus(st);
-        if (!st.running && scrapePollTimer) {
-          clearInterval(scrapePollTimer);
-          scrapePollTimer = null;
-        }
-      } catch (e) { /* 轮询失败静默 */ }
-    }, 2000);
-  }
-}
 
 // ==================== 影视转存 · 盘搜（PanSou 聚合） ====================
 // 开源项目 PanSou 实例聚合 TG 频道/插件的网盘分享。115 分享行点击转存、
