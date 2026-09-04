@@ -155,6 +155,7 @@ function showPage(id) {
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
+    scrapeLoadPage();
     pan123LoadUI();
     loadWash();
   }
@@ -3543,6 +3544,98 @@ async function mukakuOffline(i, el) {
     toast('已提交 115 离线下载，完成后自动整理入库');
   } catch (e) {
     if (st) { st.style.color = 'var(--danger)'; st.textContent = '✗ ' + e.message; }
+  }
+}
+
+// ==================== 影视刮削（原生 NFO + 海报） ====================
+// TMDB → 本地媒体库标准元数据（movie.nfo/tvshow.nfo + poster/fanart/季海报），
+// 落盘后由「监控上传」自动回传 115。
+
+let scrapePollTimer = null;
+
+async function scrapeLoadPage() {
+  try {
+    const d = await api('/scrape/config');
+    const cfg = d.cfg || {};
+    document.getElementById('scrape-root').value = cfg.local_root || '';
+    document.getElementById('scrape-nfo').checked = cfg.write_nfo !== false;
+    document.getElementById('scrape-img').checked = cfg.write_images !== false;
+    const force = document.querySelector('input[name="scrape-force"][value="true"]');
+    const keep = document.querySelector('input[name="scrape-force"][value="false"]');
+    if (force && keep) {
+      force.checked = !!cfg.force;
+      keep.checked = !cfg.force;
+    }
+    scrapeRenderStatus(d.status || { running: false });
+    scrapeStartPollIfRunning(d.status || {});
+  } catch (e) { console.error('[刮削] 配置回填失败:', e.message); }
+}
+
+function scrapeCfgFromUI() {
+  return {
+    local_root: document.getElementById('scrape-root').value.trim(),
+    write_nfo: document.getElementById('scrape-nfo').checked,
+    write_images: document.getElementById('scrape-img').checked,
+    force: (document.querySelector('input[name="scrape-force"]:checked') || {}).value === 'true',
+  };
+}
+
+async function scrapeSaveConfig(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    await api('/scrape/config', { method: 'POST', body: JSON.stringify(scrapeCfgFromUI()) });
+    toast('保存成功');
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function scrapeRun(btn) {
+  const cfg = scrapeCfgFromUI();
+  if (!cfg.local_root) { toast('请先填写本地媒体库根目录'); return; }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '启动中…'; }
+  try {
+    await api('/scrape/config', { method: 'POST', body: JSON.stringify(cfg) });
+    await api('/scrape/run', { method: 'POST' });
+    toast('刮削已开始');
+    scrapeStartPollIfRunning({ running: true });
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function scrapeStop() {
+  try { await api('/scrape/stop', { method: 'POST' }); toast('已请求停止'); }
+  catch (e) { toast(e.message); }
+}
+
+function scrapeRenderStatus(st) {
+  const box = document.getElementById('scrape-status');
+  if (!box) return;
+  if (!st.running && !st.done && !st.total) { box.textContent = '未运行'; return; }
+  const lines = [];
+  lines.push(st.running
+    ? '⏳ 刮削中：' + st.done + ' / ' + st.total + (st.failed ? '（失败 ' + st.failed + '）' : '')
+    : '■ 已结束：完成 ' + st.done + ' / ' + st.total + (st.failed ? '，失败 ' + st.failed : ''));
+  if (st.current) lines.push('当前：' + esc(st.current));
+  if (st.errors && st.errors.length) {
+    lines.push('<span style="color:var(--danger)">' + st.errors.map(esc).join('<br>') + '</span>');
+  }
+  box.innerHTML = lines.join('<br>');
+}
+
+function scrapeStartPollIfRunning(st) {
+  if (st.running && !scrapePollTimer) {
+    scrapePollTimer = setInterval(async () => {
+      try {
+        const st = await api('/scrape/status');
+        scrapeRenderStatus(st);
+        if (!st.running && scrapePollTimer) {
+          clearInterval(scrapePollTimer);
+          scrapePollTimer = null;
+        }
+      } catch (e) { /* 轮询失败静默 */ }
+    }, 2000);
   }
 }
 
