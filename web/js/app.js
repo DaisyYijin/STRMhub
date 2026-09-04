@@ -162,7 +162,7 @@ function showPage(id) {
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
-  if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); mukakuLoadPage(); }
+  if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); mukakuLoadPage(); re0LoadPage(); }
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -3789,6 +3789,178 @@ async function mukakuSearch() {
 // 站点为 CSR + PoW 反爬 + 站内登录：后端自动过反爬验证，账号密码登录后
 // 会话 Cookie 持久化（失效自动重登）。种子搜索 → 磁力提交 115 离线下载，
 // 完成后自动整理入库。
+
+// ==================== 影视转存 · RE0 ====================
+// RE0（影视资料与分享社区）官方 OpenAPI：应用 Secret + OAuth 用户授权。
+// 片名 → TMDB 候选 → 站内资源列表（网盘类型/分辨率/解锁积分）→ 解锁拿
+// 115 分享链接自动转存到接收目录（完成后自动整理入库）。
+
+let re0Items = [];
+
+async function re0LoadPage() {
+  try {
+    const d = await api('/re0/config');
+    document.getElementById('re0-base').value = d.base_url || 'https://re0.me';
+    document.getElementById('re0-client-id').value = d.client_id || '';
+    document.getElementById('re0-secret').value = d.client_secret || '';
+    re0RenderStatus(d);
+  } catch (e) { console.error('[RE0] 配置回填失败:', e.message); }
+}
+
+function re0RenderStatus(d) {
+  const el = document.getElementById('re0-status');
+  if (!el) return;
+  if (d.authorized) {
+    el.innerHTML = '<span style="color:var(--ok)">✓ 已授权' + (d.authorized_as ? '（' + esc(d.authorized_as) + '）' : '') + '</span>';
+  } else if (d.client_id && d.client_secret) {
+    el.innerHTML = '<span style="color:#b26a00">应用已配置，尚未授权</span>';
+  } else {
+    el.textContent = '未配置';
+  }
+}
+
+async function re0SaveConfig(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    await api('/re0/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        base_url: document.getElementById('re0-base').value.trim(),
+        client_id: document.getElementById('re0-client-id').value.trim(),
+        client_secret: document.getElementById('re0-secret').value.trim(),
+      }),
+    });
+    toast('保存成功');
+    const d = await api('/re0/config');
+    document.getElementById('re0-secret').value = d.client_secret || '';
+    re0RenderStatus(d);
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+// 跳转 RE0 官方授权页；回调地址 = 当前 StrmHub 地址 + /api/re0/oauth/callback
+async function re0Authorize(btn) {
+  try {
+    const redirectUri = location.origin + '/api/re0/oauth/callback';
+    const d = await api('/re0/oauth/start?redirect_uri=' + encodeURIComponent(redirectUri));
+    window.open(d.authorize_url, '_blank');
+    toast('请在 RE0 授权页确认，完成后回到这里点「检查状态」');
+  } catch (e) { toast(e.message); }
+}
+
+async function re0Check(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '检查中...'; }
+  try {
+    const d = await api('/re0/check');
+    const el = document.getElementById('re0-status');
+    if (el) {
+      if (d.authorized) {
+        el.innerHTML = '<span style="color:var(--ok)">✓ 应用' + esc(d.app_name || '') + '正常 · 已授权' + (d.user ? '（' + esc(d.user) + '）' : '') + '</span>';
+      } else {
+        el.innerHTML = '<span style="color:var(--ok)">✓ 应用' + esc(d.app_name || '') + '正常</span> <span style="color:#b26a00">尚未授权用户</span>';
+      }
+    }
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+function re0ModalOpen(html, title) {
+  document.getElementById('re0-modal-title').textContent = title || 'RE0 资源';
+  document.getElementById('re0-modal-body').innerHTML = html;
+  document.getElementById('re0-modal').style.display = 'flex';
+}
+function re0ModalClose() {
+  document.getElementById('re0-modal').style.display = 'none';
+}
+
+async function re0Search() {
+  const q = document.getElementById('re0-query').value.trim();
+  if (!q) { toast('请输入影视名称或 TMDB ID'); return; }
+  re0ModalOpen('<span style="color:var(--text-3)">TMDB 匹配「' + esc(q) + '」并查询 RE0 站内资源…</span>', 'RE0 · ' + q);
+  try {
+    const d = await api('/re0/search?query=' + encodeURIComponent(q));
+    re0Items = d.data || [];
+    if (!re0Items.length) {
+      re0ModalOpen('<span style="color:var(--text-3)">TMDB 未匹配到影视条目</span>', 'RE0 · ' + q);
+      return;
+    }
+    re0RenderResults(d.hint || '');
+  } catch (e) {
+    re0ModalOpen('<span style="color:var(--danger)">' + esc(e.message) + '</span>', 'RE0 · ' + q);
+  }
+}
+
+function re0RenderResults(hint) {
+  const mediaLabel = { movie: '电影', tv: '剧集' };
+  let html = hint ? '<div style="color:var(--danger);margin-bottom:10px">' + esc(hint) + '</div>' : '';
+  for (let ci = 0; ci < re0Items.length; ci++) {
+    const it = re0Items[ci];
+    const res = it.resources || [];
+    html += '<div style="margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--fill-2)">'
+      + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+      + '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(mediaLabel[it.media_type] || it.media_type) + '</span>'
+      + '<strong>' + esc(it.title) + '</strong>'
+      + (it.year ? '<span style="color:var(--text-3)">' + esc(it.year) + '</span>' : '')
+      + (it.vote ? '<span style="color:var(--text-3)">★' + esc(String(it.vote)) + '</span>' : '')
+      + '</div>';
+    if (it.resources_err) {
+      html += '<div style="color:var(--danger);font-size:12.5px">' + esc(it.resources_err) + '</div>';
+    } else if (!res.length) {
+      html += '<div style="color:var(--text-3);font-size:12.5px">站内暂无资源</div>';
+    } else {
+      html += '<div class="otk">' + res.map((r, ri) => {
+        const idx = re0Items[ci].resources.indexOf(r);
+        const pan = r.pan_type ? '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">' + esc(r.pan_type) + '</span>' : '';
+        const spec = (r.video_resolution || []).join(' / ');
+        const points = r.is_unlocked
+          ? '<span style="color:var(--ok)">已解锁</span>'
+          : (r.unlock_points != null ? '<span style="color:#b26a00">' + r.unlock_points + ' 积分</span>' : '<span style="color:var(--text-3)">积分未知</span>');
+        const btn = '<button class="btn btn-primary" style="padding:3px 12px;font-size:12.5px" '
+          + 'onclick="re0Unlock(' + ci + ',' + ri + ',this)">' + (r.is_unlocked ? '获取链接' : '解锁并转存') + '</button>';
+        return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;flex-wrap:wrap">'
+          + pan
+          + '<span>' + esc(r.title || r.slug) + '</span>'
+          + (spec ? '<span style="color:var(--text-3);font-size:12px">' + esc(spec) + '</span>' : '')
+          + (r.share_size ? '<span style="color:var(--text-3);font-size:12px">' + esc(r.share_size) + '</span>' : '')
+          + points
+          + '<span style="margin-left:auto">' + btn + '</span>'
+          + '</div>';
+      }).join('') + '</div>';
+    }
+    html += '</div>';
+  }
+  re0ModalOpen(html, 'RE0 资源');
+}
+
+async function re0Unlock(ci, ri, btn) {
+  const it = re0Items[ci];
+  const r = it.resources[ri];
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '处理中...';
+  try {
+    const is115 = (r.pan_type || '') === '115';
+    const d = await api('/re0/unlock', {
+      method: 'POST',
+      body: JSON.stringify({ media_type: it.media_type, tmdb_id: it.id, slug: r.slug, transfer: is115 }),
+    });
+    if (d.transferred) {
+      btn.outerHTML = '<span style="color:var(--ok)">✓ 已转存' + (d.transfer_msg ? '（' + esc(d.transfer_msg) + '）' : '') + '</span>';
+      toast('解锁成功，115 分享已转存，完成后自动整理入库');
+    } else if (d.url) {
+      btn.outerHTML = '<span style="color:var(--ok)">✓ 已解锁</span>';
+      window.open(d.url, '_blank');
+      toast('解锁成功，已打开分享链接');
+    } else {
+      btn.disabled = false; btn.textContent = orig;
+      toast('解锁成功但未返回链接');
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = orig;
+    toast(e.message);
+  }
+}
 
 async function gyLoadPage() {
   try {

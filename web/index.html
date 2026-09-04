@@ -801,6 +801,25 @@ av:
         <div class="tab active" data-tab="mt-gy">观影</div>
         <div class="tab" data-tab="mt-pansou">盘搜</div>
         <div class="tab" data-tab="mt-mukaku">不太灵影视</div>
+        <div class="tab" data-tab="mt-re0">RE0</div>
+      </div>
+      <div class="tab-panel" data-panel="mt-re0">
+        <div class="card">
+          <div class="form-row"><div class="label">RE0 应用配置<i class="help-tip" tabindex="0">?<span class="tip-bubble">RE0（影视资料与分享社区）官方 OpenAPI。需先在 re0.me「个人面板 → OPENAPI → 我的应用」创建应用并等站方审核通过（公开且站内用户 6+ 的应用，或长期 v 用户），再把 client_id 和应用 Secret 填到这里。站点地址默认 https://re0.me。</span></i></div><div class="control"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input type="text" id="re0-base" placeholder="站点地址" style="width:180px" autocomplete="off"><input type="text" id="re0-client-id" placeholder="client_id（app_xxx）" style="width:200px" autocomplete="off"><input type="password" id="re0-secret" placeholder="应用 Secret" style="width:200px" autocomplete="new-password"><button class="btn btn-primary" onclick="re0SaveConfig(this)">保存配置</button></div></div></div>
+          <div class="form-row"><div class="label">账号授权<i class="help-tip" tabindex="0">?<span class="tip-bubble">保存应用信息后点「授权」，会跳转 RE0 官方授权页确认一次。授权后 StrmHub 以你的身份查询/解锁资源（消耗站内积分），Token 自动续期。解锁的资源若为 115 分享会自动转存到接收目录。</span></i></div><div class="control"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-primary" onclick="re0Authorize(this)">授权 RE0 账号</button> <button class="btn btn-outline" onclick="re0Check(this)">检查状态</button> <span id="re0-status" style="font-size:12.5px;color:var(--text-3);align-self:center"></span></div></div></div>
+        </div>
+        <div class="card">
+          <div class="form-row"><div class="label">搜索站内资源<i class="help-tip" tabindex="0">?<span class="tip-bubble">输入影视名称先经 TMDB 匹配条目（也支持直接输入 TMDB ID），再查 RE0 站内资源：显示网盘类型、分辨率、大小与解锁积分。点「解锁并转存」消耗站内积分解锁 115 分享并自动转存到接收目录（完成后自动整理入库）；已解锁资源不重复扣积分。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="re0-query" placeholder="影视名称（中英文均可）或 TMDB ID" onkeydown="if(event.key==='Enter')re0Search()" class="inline-input" style="flex:1"><button class="btn btn-primary" onclick="re0Search()">搜索</button></div></div></div>
+        </div>
+        <div class="modal-mask" id="re0-modal" style="display:none" onclick="if(event.target===this)re0ModalClose()">
+          <div class="modal" style="max-width:760px">
+            <h3 id="re0-modal-title">RE0 资源</h3>
+            <div id="re0-modal-body" style="font-size:13px;max-height:62vh;overflow-y:auto"></div>
+            <div class="actions">
+              <button class="btn btn-outline" onclick="re0ModalClose()">关闭</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="tab-panel" data-panel="mt-mukaku">
         <div class="card">

@@ -346,6 +346,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		r.GET("/d/:pickcode/*filename", func(c *gin.Context) { handleProxyRedirect(c, h.DB, h.Config) })
 		// 按需离线播放端点（与 6086 代理同款；二合一部署时占位 STRM 走主端口也能播）
 		RegisterOfflinePlayRoutes(r, h)
+		// RE0 OAuth 回调（浏览器地址栏跳转，无鉴权头，必须公开；靠 state 防 CSRF）
+		r.GET("/re0/oauth/callback", h.Re0OAuthCallback)
 		// TMDB 海报代理（仪表盘媒体库卡片/最新入库海报墙；与门户同款缓存逻辑）
 		r.GET("/poster/*path", func(c *gin.Context) { serveTMDBPoster(c, h.Config.DataDir) })
 		// Emby 图片代理（仪表盘：服务端注入 api_key，避免密钥出现在前端 URL）
@@ -417,6 +419,14 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/guanying/search", h.GySearch)
 		protected.GET("/guanying/resources", h.GyResources)
 		protected.POST("/guanying/offline", h.GyOffline)
+
+		// 影视转存 · RE0（官方 OpenAPI：OAuth 用户授权 + 资源查询/解锁/转存）
+		protected.GET("/re0/config", h.Re0GetConfig)
+		protected.POST("/re0/config", h.Re0SaveConfig)
+		protected.GET("/re0/check", h.Re0Check)
+		protected.GET("/re0/oauth/start", h.Re0OAuthStart)
+		protected.GET("/re0/search", h.Re0Search)
+		protected.POST("/re0/unlock", h.Re0Unlock)
 
 		// 分享链接转存（转存到接收文件夹后由整理+增量接管）
 		protected.POST("/share/receive", h.ShareReceive)
