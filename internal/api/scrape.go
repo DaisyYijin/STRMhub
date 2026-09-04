@@ -130,38 +130,45 @@ type nfoActor struct {
 	Role string `xml:"role"`
 }
 
+// nfoUniqueID Kodi 多唯一 ID 元素（同名不同 type 属性）；encoding/xml
+// 不允许两个同名字段重复，需用切片
+type nfoUniqueID struct {
+	Type    string `xml:"type,attr"`
+	Default bool   `xml:"default,attr"`
+	Value   string `xml:",chardata"`
+}
+
 type nfoMovie struct {
-	XMLName       xml.Name    `xml:"movie"`
-	Title         string      `xml:"title"`
-	OriginalTitle string      `xml:"originaltitle"`
-	Ratings       []nfoRating `xml:"ratings>rating"`
-	Year          string      `xml:"year"`
-	Premiered     string      `xml:"premiered"`
-	Runtime       int         `xml:"runtime"`
-	UniqueTmdb    string      `xml:"uniqueid"`
-	UniqueImdb    string      `xml:"uniqueid"`
-	Genres        []string    `xml:"genre"`
-	Directors     []string    `xml:"director"`
-	Studios       []string    `xml:"studio"`
-	Actors        []nfoActor  `xml:"actor"`
-	Plot          string      `xml:"plot"`
-	TmdbID        string      `xml:"tmdbid"`
-	IMDbID        string      `xml:"id"`
+	XMLName       xml.Name      `xml:"movie"`
+	Title         string        `xml:"title"`
+	OriginalTitle string        `xml:"originaltitle"`
+	Ratings       []nfoRating   `xml:"ratings>rating"`
+	Year          string        `xml:"year"`
+	Premiered     string        `xml:"premiered"`
+	Runtime       int           `xml:"runtime"`
+	UniqueIDs     []nfoUniqueID `xml:"uniqueid"`
+	Genres        []string      `xml:"genre"`
+	Directors     []string      `xml:"director"`
+	Studios       []string      `xml:"studio"`
+	Actors        []nfoActor    `xml:"actor"`
+	Plot          string        `xml:"plot"`
+	TmdbID        string        `xml:"tmdbid"`
+	IMDbID        string        `xml:"id"`
 }
 
 type nfoTVShow struct {
-	XMLName       xml.Name    `xml:"tvshow"`
-	Title         string      `xml:"title"`
-	OriginalTitle string      `xml:"originaltitle"`
-	Ratings       []nfoRating `xml:"ratings>rating"`
-	Year          string      `xml:"year"`
-	Premiered     string      `xml:"premiered"`
-	UniqueTmdb    string      `xml:"uniqueid"`
-	Genres        []string    `xml:"genre"`
-	Studios       []string    `xml:"studio"`
-	Actors        []nfoActor  `xml:"actor"`
-	Plot          string      `xml:"plot"`
-	TmdbID        string      `xml:"tmdbid"`
+	XMLName       xml.Name      `xml:"tvshow"`
+	Title         string        `xml:"title"`
+	OriginalTitle string        `xml:"originaltitle"`
+	Ratings       []nfoRating   `xml:"ratings>rating"`
+	Year          string        `xml:"year"`
+	Premiered     string        `xml:"premiered"`
+	UniqueIDs     []nfoUniqueID `xml:"uniqueid"`
+	Genres        []string      `xml:"genre"`
+	Studios       []string      `xml:"studio"`
+	Actors        []nfoActor    `xml:"actor"`
+	Plot          string        `xml:"plot"`
+	TmdbID        string        `xml:"tmdbid"`
 }
 
 func marshalNFO(v any) ([]byte, error) {
@@ -348,8 +355,11 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 				Title: d.Title, OriginalTitle: d.OriginalTitle, Plot: d.Overview,
 				Ratings: []nfoRating{{Name: "tmdb", Max: 10, Default: true, Value: d.VoteAverage}},
 				Year:    dateYear(d.ReleaseDate), Premiered: d.ReleaseDate,
-				Runtime:    d.Runtime,
-				UniqueTmdb: strconv.Itoa(int(m.TmdbID)), UniqueImdb: d.IMDbID,
+				Runtime: d.Runtime,
+				UniqueIDs: []nfoUniqueID{
+					{Type: "tmdb", Default: true, Value: strconv.Itoa(int(m.TmdbID))},
+					{Type: "imdb", Value: d.IMDbID},
+				},
 				TmdbID: strconv.Itoa(int(m.TmdbID)), IMDbID: d.IMDbID,
 			}
 			for _, g := range d.Genres {
@@ -399,7 +409,8 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir string, m *model.
 				Title: d.Name, OriginalTitle: d.OriginalName, Plot: d.Overview,
 				Ratings: []nfoRating{{Name: "tmdb", Max: 10, Default: true, Value: d.VoteAverage}},
 				Year:    dateYear(d.FirstAirDate), Premiered: d.FirstAirDate,
-				UniqueTmdb: strconv.Itoa(int(m.TmdbID)), TmdbID: strconv.Itoa(int(m.TmdbID)),
+				UniqueIDs: []nfoUniqueID{{Type: "tmdb", Default: true, Value: strconv.Itoa(int(m.TmdbID))}},
+				TmdbID:    strconv.Itoa(int(m.TmdbID)),
 			}
 			for _, g := range d.Genres {
 				nfo.Genres = append(nfo.Genres, g.Name)
