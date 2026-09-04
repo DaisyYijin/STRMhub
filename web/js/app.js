@@ -3566,16 +3566,17 @@ async function scrapeLoadPage() {
       write_images: cfg.write_images !== false,
       write_av: cfg.write_av !== false,
       force: !!cfg.force,
+      auto_after_organize: !!cfg.auto_after_organize,
     };
     Object.entries(scrapeOpts).forEach(([k, v]) => setScrapeOpt(k, v));
   } catch (e) { console.error('[刮削] 配置回填失败:', e.message); }
 }
 
-let scrapeOpts = { write_nfo: true, write_images: true, write_av: true, force: false };
+let scrapeOpts = { write_nfo: true, write_images: true, write_av: true, force: false, auto_after_organize: false };
 
 function setScrapeOpt(key, v) {
   scrapeOpts[key] = v;
-  const map = { write_nfo: 'scrape-nfo-switch', write_images: 'scrape-img-switch', write_av: 'scrape-av-switch', force: 'scrape-force-switch' };
+  const map = { write_nfo: 'scrape-nfo-switch', write_images: 'scrape-img-switch', write_av: 'scrape-av-switch', force: 'scrape-force-switch', auto_after_organize: 'scrape-auto-switch' };
   document.querySelectorAll('#' + map[key] + ' .seg-item').forEach(el => {
     el.classList.toggle('active', el.dataset.value === String(v));
   });

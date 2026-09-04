@@ -35,6 +35,8 @@ type scrapeCfg struct {
 	WriteImages bool   `json:"write_images"`
 	WriteAV     bool   `json:"write_av"` // AV（MetaTube 番号元数据 + 封面）
 	Force       bool   `json:"force"`    // 覆盖已存在的元数据文件
+
+	AutoAfterOrganize bool `json:"auto_after_organize"` // 增量同步动过媒体库后自动开始刮削
 }
 
 func loadScrapeCfg() scrapeCfg {
@@ -67,6 +69,33 @@ var (
 	scrapeSt       scrapeStatus
 	scrapeStopFlag bool
 )
+
+// scrapeAutoTrigger 增量同步动过媒体库后的自动刮削入口（开关+运行中去重）。
+// 刮削进行中：元数据文件边生成边由每分钟的监控上传分批回传（天然并行）；
+// 刮削结束：再补一轮监控上传 + 元数据回传，收尾兜底
+func (h *Handler) scrapeAutoTrigger() {
+	cfg := loadScrapeCfg()
+	if !cfg.AutoAfterOrganize {
+		return
+	}
+	scrapeMu.Lock()
+	running := scrapeSt.Running
+	scrapeMu.Unlock()
+	if running {
+		return
+	}
+	scrapeSt = scrapeStatus{Running: true, Errors: []string{}}
+	log.Printf("[影视刮削] ▶ 整理完成，自动开始刮削")
+	go func() {
+		h.scrapeAll(cfg)
+		// 收尾兜底：等最后一写落盘后，立即各跑一轮回传（不等分钟级 ticker）
+		go func() {
+			time.Sleep(2 * time.Second)
+			monitorOnce(h)
+			h.uploadMetadataOnce()
+		}()
+	}()
+}
 
 func scrapeStatusSnapshot() scrapeStatus {
 	scrapeMu.Lock()
@@ -263,6 +292,12 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 		scrapeSt.Current = ""
 		scrapeMu.Unlock()
 		log.Printf("[影视刮削] ■ 本轮结束：完成 %d，失败 %d", scrapeStatusSnapshot().Done, scrapeStatusSnapshot().Failed)
+	}()
+	// 边刮边传：刮削期间每分钟的监控上传已在分批回传；结束后立即补一轮
+	go func() {
+		time.Sleep(2 * time.Second) // 等最后写入落盘
+		monitorOnce(h)
+		h.uploadMetadataOnce()
 	}()
 	if cfg.LocalRoot == "" {
 		scrapeAddErr("未配置本地媒体库根目录")

@@ -243,6 +243,13 @@
             <div class="seg-item active" data-value="false" onclick="setScrapeOpt('force', false)">只补缺失</div>
             <div class="seg-item" data-value="true" onclick="setScrapeOpt('force', true)">强制覆盖</div>
           </div></div></div>
+        <div class="form-row"><div class="label">整理后自动刮削</div><div class="control">
+          <div class="segmented-control" id="scrape-auto-switch">
+            <div class="seg-item" data-value="false" onclick="setScrapeOpt('auto_after_organize', false)">关闭</div>
+            <div class="seg-item active" data-value="true" onclick="setScrapeOpt('auto_after_organize', true)">开启</div>
+          </div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">增量同步动过媒体库后自动开始刮削；刮削期间元数据边生成边回传 115。</div>
+        </div></div>
         <div class="form-row"><div class="label"></div><div class="control">
           <button class="btn btn-primary" onclick="scrapeSaveConfig(this)">保存配置</button>
           <button class="btn btn-success" onclick="scrapeRun(this)">开始刮削</button>

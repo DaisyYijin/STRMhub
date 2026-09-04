@@ -757,6 +757,10 @@ func (h *Handler) executeIncrementalSync(p incrParams) (*incrSummary, error) {
 		}
 		log.Printf("[同步] ✓ 增量同步完成：%s%s。用时 %s", detail, ignoredNote, sum.Elapsed)
 	}
+	// 整理后自动刮削：本轮真的动了媒体库才触发（开关在影视刮削配置里）
+	if len(parts) > 0 {
+		h.scrapeAutoTrigger()
+	}
 	return sum, nil
 }
 

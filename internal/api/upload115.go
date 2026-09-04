@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/SheltonZhu/115driver/pkg/crypto/ec115"
@@ -491,7 +492,14 @@ func StartMonitorUploader(h *Handler) {
 }
 
 // monitorOnce 单轮扫描上传
+// monitorRunning 触发轮与分钟 ticker 轮防重叠（同时走两轮会重复上传）
+var monitorRunning atomic.Bool
+
 func monitorOnce(h *Handler) {
+	if !monitorRunning.CompareAndSwap(false, true) {
+		return // 上一轮还没跑完，跳过本轮
+	}
+	defer monitorRunning.Store(false)
 	// 配置：仅需监控目录；上传目标固定为全量同步的媒体库（旧配置里的
 	// target 字段已废弃忽略——监控的是本地媒体树，目标自然是云端媒体库）
 	var cfg struct {
@@ -647,7 +655,13 @@ func StartMetadataUploader(h *Handler) {
 }
 
 // uploadMetadataOnce 单轮回传
+var metadataRunning atomic.Bool
+
 func (h *Handler) uploadMetadataOnce() {
+	if !metadataRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer metadataRunning.Store(false)
 	local := defaultLocalPath
 	var fullCfg struct {
 		LocalPath string `json:"local_path"`
