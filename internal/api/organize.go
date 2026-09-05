@@ -1891,6 +1891,18 @@ func stdPath(p string) string {
 func processSingleFile(ops *pan115Ops, cfg *OrgConfig, tc *TmdbClient, replaceRules []ReplaceRule, f remoteFile, libAbs string, onLog func(string)) OrganizeResult {
 	result := OrganizeResult{FileName: f.Name}
 
+	// AV 番号检测（与目录流程对齐）：散文件直接放待整理根目录同样要能走
+	// AV 通道——此前此路径缺检测，SSNI-056.mp4 这类番号文件被打去 TMDB
+	// 搜索后进冗余
+	if avNum := detectAVNumber("", f.Name); avNum != "" {
+		onLog(fmt.Sprintf("✦ 检测到 AV 番号: %s（跳过 TMDB）", avNum))
+		media := &TmdbMedia{
+			Title:     avNum,
+			MediaType: "av",
+		}
+		return processAVDirectory(ops, cfg, media, dirEntry{Name: f.Name, IsDir: false}, []remoteFile{f}, onLog, nil)[0]
+	}
+
 	// 应用替换规则
 	name := f.Name
 	if len(replaceRules) > 0 {
