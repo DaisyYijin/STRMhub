@@ -92,6 +92,12 @@ func throttle115(api string) {
 	if !isThrottledHost(api) {
 		return
 	}
+	// 取直链端点豁免：独立风控的读接口，且在播放起播关键路径上——
+	// 与整理/同步共用 1s 队列会让播放被后台任务饿死。独立短节流防打爆
+	if isDownloadURLAPI(api) {
+		throttleFast(api, 200*time.Millisecond)
+		return
+	}
 	gap := readGap()
 	if isWriteAPI(api) {
 		gap = writeGap()
@@ -109,6 +115,30 @@ func throttle115(api string) {
 	lastWaitMu.Unlock()
 }
 
+// fastThrottleLast 取直链端点独立节流锚点（与全局队列分离）
+var (
+	fastThrottleMu   sync.Mutex
+	fastThrottleLast time.Time
+)
+
+// throttleFast 独立短节流：独立锁+锚点，与全局 1s 队列完全解耦
+// （若复用 throttleMu，全局 sleeper 持锁睡眠仍会堵住播放取链）
+func throttleFast(api string, gap time.Duration) {
+	fastThrottleMu.Lock()
+	defer fastThrottleMu.Unlock()
+	if elapsed := time.Since(fastThrottleLast); elapsed < gap {
+		time.Sleep(gap - elapsed)
+	}
+	fastThrottleLast = time.Now()
+	_ = api
+}
+
+// isDownloadURLAPI 取直链端点（播放起播关键路径）
+func isDownloadURLAPI(api string) bool {
+	return strings.Contains(api, "/ufile/download") ||
+		strings.Contains(api, "files/download")
+}
+
 // throttle115Done 请求完成后调用，推进节流锚点（锚点=完成时刻）
 func throttle115Done(api string) {
 	if !isThrottledHost(api) {
@@ -117,6 +147,11 @@ func throttle115Done(api string) {
 	throttleMu.Lock()
 	throttleLast = time.Now()
 	throttleMu.Unlock()
+	if isDownloadURLAPI(api) {
+		fastThrottleMu.Lock()
+		fastThrottleLast = time.Now()
+		fastThrottleMu.Unlock()
+	}
 }
 
 // throttle115LastWait 返回最近一次节流的等待时长（同步日志展示用）

@@ -197,11 +197,12 @@ func servePickcodeDirect(c *gin.Context, db *gorm.DB, cfg *config.Config, pickco
 		return
 	}
 
-	// 缓存链接（10 分钟有效）
+	// 缓存链接（30 分钟：115 直链约 1 小时有效，绑 UA+IP；取链要过
+	// 节流+多通道回退，是起播最贵的一步，能命中就秒开）
 	downloadCacheMu.Lock()
 	downloadLinkCache[cacheKey] = downloadCacheEntry{
 		URL:    downloadURL,
-		Expiry: time.Now().Add(10 * time.Minute),
+		Expiry: time.Now().Add(30 * time.Minute),
 	}
 	downloadCacheMu.Unlock()
 
@@ -338,6 +339,51 @@ const ua115Download = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) Ap
 // reJSONURL 115 响应兜底提取直链（每次 302 播放路径上，预编译）
 var reJSONURL = regexp.MustCompile(`"url"\s*:\s*"(https?://[^"]+)"`)
 
+// dlFastState 取链通道粘滞：记住上次成功的通道/端点，粘滞期内直接优先用它，
+// 消除每次起播都从 OpenAPI→Cookie→proapi→pro.api→webapi 全串行试一遍的
+// 最坏路径（此前最坏 30~45 秒）。通道失败时立即清除粘滞回全序
+type dlFastPref struct {
+	kind  string // "open" / "app:proapi" / "app:proapi2" / "web"
+	until time.Time
+}
+
+var (
+	dlFastMu    sync.Mutex
+	dlFastPrefV dlFastPref
+)
+
+func dlFastGet() (dlFastPref, bool) {
+	dlFastMu.Lock()
+	defer dlFastMu.Unlock()
+	p := dlFastPrefV
+	return p, p.kind != "" && time.Now().Before(p.until)
+}
+
+func dlFastSet(kind string, d time.Duration) {
+	dlFastMu.Lock()
+	dlFastPrefV = dlFastPref{kind: kind, until: time.Now().Add(d)}
+	dlFastMu.Unlock()
+}
+
+func dlFastClear() {
+	dlFastMu.Lock()
+	dlFastPrefV = dlFastPref{}
+	dlFastMu.Unlock()
+}
+
+// 取直链端点首选超时：快速失败比干等更值——备用端点/通道紧跟其后
+const dlFirstTryTimeout = 5 * time.Second
+
+func hostKey(host string) string {
+	if strings.HasPrefix(host, "proapi.") {
+		return "proapi"
+	}
+	if strings.HasPrefix(host, "pro.api.") {
+		return "pro.api"
+	}
+	return host
+}
+
 func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]string, error) {
 	if signUA == "" {
 		signUA = ua115Download // 默认浏览器 UA（附属文件下载等自有场景）
@@ -352,16 +398,29 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	var body []byte
 	var resp *http.Response
 	var err error
-	for _, ep := range []string{
+	endpoints := []string{
 		"https://proapi.115.com/android/2.0/ufile/download",
 		"https://pro.api.115.com/android/2.0/ufile/download",
-	} {
-		body, resp, err = post115FormResp(ep, form, cookie, signUA, 15*time.Second)
+	}
+	// 粘滞：上次成功的端点提到最前（粘滞期内省掉一次必败尝试）
+	if pref, ok := dlFastGet(); ok && strings.HasPrefix(pref.kind, "app:") {
+		stick := strings.TrimPrefix(pref.kind, "app:")
+		for i, ep := range endpoints {
+			if strings.Contains(ep, stick) && i > 0 {
+				endpoints[0], endpoints[i] = endpoints[i], endpoints[0]
+				break
+			}
+		}
+	}
+	seenErr := ""
+	for _, ep := range endpoints {
+		body, resp, err = post115FormResp(ep, form, cookie, signUA, dlFirstTryTimeout)
 		if err == nil {
 			break
 		}
-		appErr += ep + " 请求失败: " + err.Error() + "；"
+		seenErr += ep + " 请求失败: " + err.Error() + "；"
 	}
+	appErr += seenErr
 	if appErr == "" {
 		appErr = "未尝试"
 	}
@@ -399,6 +458,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 					}
 				}
 				if u != "" {
+					dlFastSet("app:"+hostKey(resp.Request.URL.Host), 10*time.Minute)
 					// 收集直链响应下发的 Set-Cookie（CDN f=3 场景要求回带）
 					var parts []string
 					for _, ck := range resp.Cookies() {
@@ -416,6 +476,7 @@ func get115DownloadURL(pickcode, cookie, signUA string) (string, map[string]stri
 	}
 
 	// ---- 回退：GET https://webapi.115.com/files/download?pickcode=xxx ----
+	dlFastClear() // app 通道整体失败：清粘滞回全序
 	apiURL := "https://webapi.115.com/files/download"
 	params := fmt.Sprintf("pickcode=%s", pickcode)
 	fullURL := apiURL + "?" + params
