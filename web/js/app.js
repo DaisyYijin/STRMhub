@@ -621,10 +621,11 @@ function open115DirPicker(targetId) {
   showDirPicker('选择 115 目录');
   load115Dirs('0');
 }
-function openAltDirPicker(altId, altName) {
+function openAltDirPicker(altId) {
+  const a = (pbCfg.alts || []).find(x => String(x.id) === String(altId));
   dirPickerTarget = 'pb-alt-root';
   dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [], altID: String(altId) };
-  showDirPicker('选择「' + (altName || '小号') + '」的镜像目录');
+  showDirPicker('选择「' + ((a && a.name) || '小号') + '」的镜像目录');
   load115Dirs('0');
 }
 
@@ -3592,7 +3593,7 @@ function pbRenderAlts() {
       + '<div class="otk-main"><div class="otk-name">' + esc(a.name || '小号#' + a.id) + '</div>'
       + '<div class="otk-sub">' + meta + '</div>'
       + '<div style="font-size:11.5px;color:var(--text-3);margin-top:3px">镜像目录：<span id="pb-root-' + a.id + '">' + esc(a.root_path || a.root_cid || '自动（strmhub_media_alt）') + '</span>'
-      + ' <a href="javascript:void(0)" style="color:var(--primary)" onclick="openAltDirPicker('' + a.id + '','' + esc(a.name || '') + '')">选择</a></div></div>'
+      + ' <a href="javascript:void(0)" style="color:var(--primary)" onclick="openAltDirPicker(' + a.id + ')">选择</a></div></div>'
       + '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px" onclick="event.stopPropagation()">'
       + '<input type="checkbox" ' + (a.enabled ? 'checked' : '') + ' onchange="pbToggleAlt(' + a.id + ',this.checked)">'
       + (a.enabled ? '启用' : '停用') + '</label>'
