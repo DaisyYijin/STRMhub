@@ -316,12 +316,14 @@ func (h *Handler) QrCodeStatus(c *gin.Context) {
 
 // fetchAndSaveCookie 调用 login/qrcode 获取 Cookie 并写入 Storage 表
 // 返回的 warning 非空表示 Cookie 可用性存疑（如非网页端会话无法激活 webapi）
-func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error) {
+// fetchQrLoginCookie 扫码成功后取 Cookie（不落盘——主号/小号两个消费方）：
+// 返回 (cookie, username, device, warning, error)
+func (h *Handler) fetchQrLoginCookie(uid string) (string, string, string, string, error) {
 	qrMu.RLock()
 	sess, ok := qrSessions[uid]
 	qrMu.RUnlock()
 	if !ok {
-		return "", "", "", fmt.Errorf("二维码会话已失效，请重新获取")
+		return "", "", "", "", fmt.Errorf("二维码会话已失效，请重新获取")
 	}
 
 	api := fmt.Sprintf(resultAPI, sess.app)
@@ -329,7 +331,7 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	form := url.Values{"account": {uid}}
 	req, err := http.NewRequest(http.MethodPost, api, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	// 登录换 Cookie 的 UA 必须与后续所有 webapi 请求一致（会话与 UA 绑定）
 	req.Header.Set("User-Agent", ua115Unified())
@@ -339,18 +341,18 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	var result qrResultResp
 	if err := json.Unmarshal(body, &result); err != nil {
 		log.Printf("[系统] 解析登录结果失败: %v, 响应摘要: %s", err, sanitizeLog(string(body)))
-		return "", "", "", fmt.Errorf("解析登录结果失败")
+		return "", "", "", "", fmt.Errorf("解析登录结果失败")
 	}
 	if len(result.Data.Cookie) == 0 {
 		log.Printf("[系统] 登录结果未包含 Cookie, 响应摘要: %s", sanitizeLog(string(body)))
@@ -376,7 +378,7 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 				}
 			}
 		}
-		return "", "", "", fmt.Errorf("%s", msg)
+		return "", "", "", "", fmt.Errorf("%s", msg)
 	}
 
 	// 拼 Cookie 字符串：UID=...; CID=...; SEID=...; KID=...
@@ -409,15 +411,23 @@ func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error)
 	}
 	cookie := strings.Join(cookieParts, "; ")
 
-	log.Printf("[系统] 115 登录成功，账号=%s", username)
-
-	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
-	h.Config.SaveCookie(cookie)
-	h.Config.Save115Device(sess.device)
-	h.upsert115Storage(cookie, sess.device, username)
+	log.Printf("[系统] 115 扫码登录成功，账号=%s", username)
 
 	h.dropQrSession(uid)
-	return cookie, username, "", nil
+	return cookie, username, sess.device, "", nil
+}
+
+// fetchAndSaveCookie 扫码登录主号：取 Cookie 并落盘（SaveCookie + Storage）
+func (h *Handler) fetchAndSaveCookie(uid string) (string, string, string, error) {
+	cookie, username, device, warning, err := h.fetchQrLoginCookie(uid)
+	if err != nil {
+		return "", "", "", err
+	}
+	// 写入 Cookie 到文件 + 保存设备类型 + 更新 Storage 表元数据
+	h.Config.SaveCookie(cookie)
+	h.Config.Save115Device(device)
+	h.upsert115Storage(cookie, device, username)
+	return cookie, username, warning, nil
 }
 
 // upsert115Storage 保存/更新 115 账号配置

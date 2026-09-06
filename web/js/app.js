@@ -1149,12 +1149,15 @@ function startQrCodePolling(uid, time, sign) {
 }
 
 function closeQrCode() {
-  // 123 扫码复用本弹窗：关闭时一并停掉它的轮询（否则最长空转 150 秒）
+  // 123/小号扫码复用本弹窗：关闭时一并停掉它们的轮询（否则空转刷后台）
   if (typeof pan123QrTimer !== 'undefined' && pan123QrTimer) {
     clearInterval(pan123QrTimer);
     pan123QrTimer = null;
   }
-  qrcodeTimer = null;  // 停止轮询
+  if (typeof pbQrTimer !== 'undefined' && pbQrTimer) {
+    pbQrTimer = null;  // 小号扫码轮询会话作废
+  }
+  qrcodeTimer = null;  // 停止主号轮询
   document.getElementById('qrcode-modal').style.display = 'none';
 }
 
@@ -3577,6 +3580,67 @@ function pbRenderAlts() {
       + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="pbDelAlt(' + a.id + ')">删除</button>'
       + '</div>';
   }).join('') + '</div>';
+}
+
+// 小号扫码登录：复用扫码弹窗；轮询 /playback/alt/qrcode/status，
+// 成功后 Cookie 自动入账号池（后端已做主号判重）
+let pbQrTimer = null;
+
+async function pbScanLogin() {
+  document.getElementById('qrcode-modal').style.display = 'flex';
+  document.getElementById('qrcode-img').innerHTML = '二维码加载中...';
+  document.getElementById('qrcode-status').textContent = '正在获取登录二维码...';
+  let session = {};
+  pbQrTimer = session;
+  let refresh = 0;
+  const fetchQr = async () => {
+    document.getElementById('qrcode-img').innerHTML = '二维码加载中...';
+    const data = await api('/playback/alt/qrcode', { method: 'POST', body: JSON.stringify({ type: '115', device: 'web' }) });
+    if (data.qrcode) {
+      document.getElementById('qrcode-img').innerHTML = '<img src="' + data.qrcode + '" style="width:170px;height:170px">';
+      document.getElementById('qrcode-status').textContent = '请用【小号】的 115 手机 App 扫码（别用主号扫）';
+      poll(data.uid, data.time, data.sign);
+    } else {
+      document.getElementById('qrcode-status').textContent = data.error || '获取失败，请稍后重试';
+    }
+  };
+  const poll = async (uid, time, sign) => {
+    if (pbQrTimer !== session) return;
+    try {
+      const data = await api('/playback/alt/qrcode/status', { method: 'POST', body: JSON.stringify({ uid, time, sign }) });
+      if (pbQrTimer !== session) return;
+      if (data.status === 'scanned') {
+        document.getElementById('qrcode-status').textContent = '已扫码，请在手机上确认登录...';
+        poll(uid, time, sign);
+      } else if (data.status === 'success') {
+        document.getElementById('qrcode-status').textContent = '登录成功！小号已加入账号池';
+        setTimeout(() => { closeQrCode(); toast('小号「' + (data.name || '') + '」已加入账号池'); pbLoadPage(); }, 900);
+      } else if (data.status === 'expired' || data.status === 'cancelled') {
+        if (data.status === 'expired' && refresh < 3) {
+          refresh++;
+          document.getElementById('qrcode-status').textContent = '二维码已过期，自动刷新（第 ' + refresh + '/3 次）...';
+          fetchQr();
+          return;
+        }
+        document.getElementById('qrcode-status').textContent = data.status === 'expired' ? '二维码已过期，请重新扫码' : '已取消登录';
+      } else {
+        poll(uid, time, sign);
+      }
+    } catch (e) {
+      if (pbQrTimer !== session) return;
+      if (e instanceof TypeError) {
+        setTimeout(() => poll(uid, time, sign), 2000);
+      } else {
+        pbQrTimer = null;
+        document.getElementById('qrcode-status').textContent = e.message || '登录失败';
+      }
+    }
+  };
+  closeQrCode(); // 清理可能残留的轮询
+  pbQrTimer = session;
+  fetchQr().catch(e => {
+    document.getElementById('qrcode-status').textContent = e.message || '获取失败';
+  });
 }
 
 async function pbAddAlt(btn) {

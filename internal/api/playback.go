@@ -785,3 +785,92 @@ func altReceiveShare(altCookie, shareCode, receiveCode, targetCid string) error 
 	}
 	return nil
 }
+
+// PlaybackAltQrStatus 小号扫码轮询：与主号扫码同协议（长轮询状态机），
+// 区别只在成功后——Cookie 不落主号，验证后直接加入播放账号池
+func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
+	var req struct {
+		Uid  string `json:"uid"`
+		Time int64  `json:"time"`
+		Sign string `json:"sign"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Uid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	query := url.Values{
+		"uid":  {req.Uid},
+		"time": {fmt.Sprint(req.Time)},
+		"sign": {req.Sign},
+	}
+	body, err := httpGetJSON(statusAPI, query, 60*time.Second)
+	if err != nil {
+		// 长轮询超时 = 仍在等待扫码
+		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+		return
+	}
+	var st qrStatusResp
+	if err := json.Unmarshal(body, &st); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "解析状态失败"})
+		return
+	}
+	switch st.Data.Status {
+	case 0:
+		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+	case 1:
+		c.JSON(http.StatusOK, gin.H{"status": "scanned"})
+	case -1:
+		h.dropQrSession(req.Uid)
+		c.JSON(http.StatusOK, gin.H{"status": "expired"})
+	case -2:
+		h.dropQrSession(req.Uid)
+		c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+	case 2:
+		cookie, _, _, _, err := h.fetchQrLoginCookie(req.Uid)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		uid, nick, verr := altVerifyCookie(cookie)
+		if verr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cookie 验证失败: " + verr.Error()})
+			return
+		}
+		// 主号判重
+		if mainCookie, err := h.get115Cookie(); err == nil && mainCookie != "" {
+			if mainUID, _, _ := altVerifyCookie(mainCookie); uid != "" && uid == mainUID {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "扫的是主号自己，请用小号的 115 App 扫码"})
+				return
+			}
+		}
+		// 账号池判重
+		cfg := loadPlaybackCfg()
+		for _, a := range cfg.Alts {
+			if auid, _, _ := altVerifyCookie(a.Cookie); uid != "" && auid == uid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "该小号已在账号池中"})
+				return
+			}
+		}
+		var maxID int64
+		for _, a := range cfg.Alts {
+			if a.ID > maxID {
+				maxID = a.ID
+			}
+		}
+		name := nick
+		if name == "" {
+			name = "小号#" + fmt.Sprint(maxID+1)
+		}
+		cfg.Alts = append(cfg.Alts, playbackAlt{
+			ID: maxID + 1, Name: name, Cookie: cookie, Enabled: true, Nick: nick,
+		})
+		if err := savePlaybackCfg(cfg); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		log.Printf("[播放账号] ✓ 小号「%s」扫码加入账号池（uid=%s）", name, uid)
+		c.JSON(http.StatusOK, gin.H{"status": "success", "name": name})
+	default:
+		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
+	}
+}
