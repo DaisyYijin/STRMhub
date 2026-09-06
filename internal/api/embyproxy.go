@@ -175,7 +175,7 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 				// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查。
 				// 结果进 60 秒缓存（每次播放都触发，重复读文件/查台账浪费）
 				strmURLCacheMu.Lock()
-				if e, ok := strmURLCache[strmPath]; ok && time.Since(e.at) < 60*time.Second {
+				if e, ok := strmURLCache[strmPath]; ok && time.Since(e.at) < 5*time.Minute {
 					directURL = e.url
 					strmURLCacheMu.Unlock()
 				} else {
@@ -217,6 +217,20 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			}
 			// 直链地址按客户端访问地址改写（strm 里的旧域名/端口不影响播放）
 			directURL = normalizeDirectURL(db, cfg, directURL, clientHost)
+			// 起播预热线程：strm 指向本机 /d/ 端点时，此刻就已知道 pickcode
+			// 与客户端 UA——立即后台取直链填缓存。播放器拿到响应、起播、
+			// 再请求 /d/ 时（几百毫秒后）缓存已热，取链的 ~1s 从起播关键
+			// 路径上彻底消失（幂等：/d/ 命中缓存时无任何额外动作）
+			if i := strings.LastIndex(directURL, "/d/"); i > 0 {
+				pc := strings.TrimLeft(directURL[i+3:], "/")
+				if j := strings.IndexAny(pc, "?#"); j > 0 {
+					pc = pc[:j]
+				}
+				if pc != "" {
+					playerUA := resp.Request.Header.Get("User-Agent")
+					prefetchPickcodeLink(db, cfg, pc, playerUA)
+				}
+			}
 			ms["Path"] = directURL
 			ms["Protocol"] = "Http"
 			ms["SupportsDirectPlay"] = true
@@ -252,8 +266,50 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 	}
 }
 
+// prefetchPrefilling 预热去重（同一 pickcode+UA 并发 PlaybackInfo 只取一次）
+var (
+	prefetchMu    sync.Mutex
+	prefetchDoing = map[string]bool{}
+)
+
+// prefetchPickcodeLink 后台预热直链缓存：与 /d/ 命中同一份缓存，
+// 幂等且不打断播放（起播关键路径外完成 115 取链）
+func prefetchPickcodeLink(db *gorm.DB, cfg *config.Config, pickcode, ua string) {
+	if pickcode == "" {
+		return
+	}
+	key := pickcode + "|" + ua
+	downloadCacheMu.Lock()
+	cached, ok := downloadLinkCache[key]
+	downloadCacheMu.Unlock()
+	if ok && time.Now().Before(cached.Expiry) {
+		return // 已热
+	}
+	prefetchMu.Lock()
+	if prefetchDoing[key] {
+		prefetchMu.Unlock()
+		return
+	}
+	prefetchDoing[key] = true
+	prefetchMu.Unlock()
+	go func() {
+		defer func() {
+			prefetchMu.Lock()
+			delete(prefetchDoing, key)
+			prefetchMu.Unlock()
+		}()
+		u, err := proxyDownloadURL(db, cfg, pickcode, ua)
+		if err != nil || u == "" {
+			return // 失败不阻塞：/d/ 收到真实请求时再取
+		}
+		downloadCacheMu.Lock()
+		downloadLinkCache[key] = downloadCacheEntry{URL: u, Expiry: time.Now().Add(30 * time.Minute)}
+		downloadCacheMu.Unlock()
+	}()
+}
+
 // strmURLCache strm 路径→直链解析缓存（每次播放都会触发 PlaybackInfo
-// 改写，重复读文件/查台账浪费；strm 内容极少变化，60 秒 TTL 足够）
+// 改写，重复读文件/查台账浪费；strm 内容极少变化，5 分钟 TTL）
 var (
 	strmURLCacheMu sync.Mutex
 	strmURLCache   = map[string]strmURLCacheEntry{}
