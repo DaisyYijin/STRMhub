@@ -39,10 +39,17 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	if cid == "" {
 		cid = "0"
 	}
+	// account_id：浏览播放小号的目录（镜像目录选择用），走小号 Cookie，
+	// 缓存按账号分键（与主号目录树隔离）
+	altID := c.Query("account_id")
 
 	// 命中缓存直接返回（5 分钟）
+	cacheKey := cid
+	if altID != "" {
+		cacheKey = "alt:" + altID + ":" + cid
+	}
 	dirCacheMu.Lock()
-	if e, ok := dirCache[cid]; ok && time.Now().Before(e.expires) {
+	if e, ok := dirCache[cacheKey]; ok && time.Now().Before(e.expires) {
 		dirs, count, origin := e.dirs, e.count, e.origin
 		dirCacheMu.Unlock()
 		c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "count": count, "origin": origin, "channel": "cache"})
@@ -50,11 +57,27 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	}
 	dirCacheMu.Unlock()
 
-	// 统一操作通道：OpenAPI 优先，Cookie 回退
-	ops, err := h.newPan115Ops()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	// 统一操作通道：OpenAPI 优先，Cookie 回退；小号浏览走小号 Cookie
+	var ops *pan115Ops
+	if altID != "" {
+		pcfg := loadPlaybackCfg()
+		for i := range pcfg.Alts {
+			if fmt.Sprint(pcfg.Alts[i].ID) == altID {
+				ops = &pan115Ops{cookie: pcfg.Alts[i].Cookie}
+				break
+			}
+		}
+		if ops == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "小号不存在或已删除"})
+			return
+		}
+	} else {
+		var err error
+		ops, err = h.newPan115Ops()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	dirs, count, origin, err := ops.listDirs(cid)
@@ -68,7 +91,7 @@ func (h *Handler) List115Dirs(c *gin.Context) {
 	if len(dirCache) > 500 {
 		dirCache = map[string]dirCacheEntry{}
 	}
-	dirCache[cid] = dirCacheEntry{dirs: dirs, count: count, origin: origin, expires: time.Now().Add(dirCacheTTL)}
+	dirCache[cacheKey] = dirCacheEntry{dirs: dirs, count: count, origin: origin, expires: time.Now().Add(dirCacheTTL)}
 	dirCacheMu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{"data": dirs, "cid": cid, "channel": ops.channelName(), "count": count, "origin": origin})

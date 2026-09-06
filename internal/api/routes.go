@@ -478,6 +478,7 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/playback/alt/toggle", h.PlaybackToggleAlt)
 		protected.POST("/playback/mode", h.PlaybackSaveMode)
 		protected.POST("/playback/sync", h.PlaybackSync)
+		protected.POST("/playback/alt/root", h.PlaybackSetAltRoot)
 		protected.POST("/playback/alt/qrcode", h.CreateQrCode)               // 取码与主号同源
 		protected.POST("/playback/alt/qrcode/status", h.PlaybackAltQrStatus) // 轮询成功入池不落主号
 		protected.GET("/playback/devices", h.PlaybackDevices)

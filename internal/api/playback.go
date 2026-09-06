@@ -874,3 +874,30 @@ func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
 	}
 }
+
+// PlaybackSetAltRoot POST /playback/alt/root {id, cid} → 设置小号镜像根目录
+// （缺省自动在小号网盘根建 strmhub_media_alt；用户可选已有目录）
+func (h *Handler) PlaybackSetAltRoot(c *gin.Context) {
+	var req struct {
+		ID  string `json:"id"`
+		CID string `json:"cid"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" || req.CID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	cfg := loadPlaybackCfg()
+	for i := range cfg.Alts {
+		if fmt.Sprint(cfg.Alts[i].ID) == req.ID {
+			cfg.Alts[i].RootCid = req.CID
+			if err := savePlaybackCfg(cfg); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			log.Printf("[播放账号] ✓ 小号「%s」镜像目录已更新（cid=%s）", cfg.Alts[i].Name, req.CID)
+			c.JSON(http.StatusOK, gin.H{"message": "镜像目录已保存"})
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "小号不存在"})
+}

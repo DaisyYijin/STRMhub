@@ -604,7 +604,7 @@ async function loadGuide() {
 }
 
 // ==================== 目录选择器 ====================
-let dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [] }; // trail: 115 逐级目录名
+let dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [], altID: '' }; // trail: 115 逐级目录名；altID 非空 = 浏览小号目录
 let dirPickerTarget = 'full-cid'; // 选择后回填的输入框 id
 
 function showDirPicker(title) {
@@ -621,6 +621,13 @@ function open115DirPicker(targetId) {
   showDirPicker('选择 115 目录');
   load115Dirs('0');
 }
+function openAltDirPicker(altId, altName) {
+  dirPickerTarget = 'pb-alt-root';
+  dirPicker = { mode: '115', cid: '0', path: '', trail: [], history: [], altID: String(altId) };
+  showDirPicker('选择「' + (altName || '小号') + '」的镜像目录');
+  load115Dirs('0');
+}
+
 function openLocalDirPicker(targetId) {
   dirPickerTarget = targetId || 'full-local';
   dirPicker = { mode: 'local', cid: '0', path: '', history: [] };
@@ -641,7 +648,8 @@ async function load115Dirs(cid, opts) {
     } else {
       dirPicker.trail = []; // 根目录 / 手动跳转
     }
-    const data = await api('/storage/115/dirs?cid=' + encodeURIComponent(cid));
+    const acct = dirPicker.altID ? ('&account_id=' + encodeURIComponent(dirPicker.altID)) : '';
+    const data = await api('/storage/115/dirs?cid=' + encodeURIComponent(cid) + acct);
     dirPicker.cid = cid;
     document.getElementById('dir-picker-path').textContent = dirPicker.trail.length ? '/' + dirPicker.trail.join('/') : '根目录';
     const items = data.data || [];
@@ -736,6 +744,15 @@ function parentPath(p) {
 
 function confirmDirPicker() {
   const target = document.getElementById(dirPickerTarget);
+  if (dirPicker.mode === '115' && dirPickerTarget === 'pb-alt-root') {
+    // 小号镜像目录：选完即时保存到账号池配置
+    api('/playback/alt/root', {
+      method: 'POST',
+      body: JSON.stringify({ id: dirPicker.altID, cid: dirPicker.cid }),
+    }).then(r => { toast(r.message || '镜像目录已保存'); pbLoadPage(); }).catch(e => toast(e.message));
+    closeDirPicker();
+    return;
+  }
   if (dirPicker.mode === '115') {
     if (target) {
       // 输入框显示可读路径，真实 cid 存 dataset 供同步/保存使用；
@@ -3573,7 +3590,9 @@ function pbRenderAlts() {
     return '<div class="otk-row"' + (a.enabled ? '' : ' style="opacity:.55"') + '>'
       + '<span class="otag" style="background:#e8f1ff;color:#1c64d9">小号</span>'
       + '<div class="otk-main"><div class="otk-name">' + esc(a.name || '小号#' + a.id) + '</div>'
-      + '<div class="otk-sub">' + meta + '</div></div>'
+      + '<div class="otk-sub">' + meta + '</div>'
+      + '<div style="font-size:11.5px;color:var(--text-3);margin-top:3px">镜像目录：<span id="pb-root-' + a.id + '">' + esc(a.root_path || a.root_cid || '自动（strmhub_media_alt）') + '</span>'
+      + ' <a href="javascript:void(0)" style="color:var(--primary)" onclick="openAltDirPicker('' + a.id + '','' + esc(a.name || '') + '')">选择</a></div></div>'
       + '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px" onclick="event.stopPropagation()">'
       + '<input type="checkbox" ' + (a.enabled ? 'checked' : '') + ' onchange="pbToggleAlt(' + a.id + ',this.checked)">'
       + (a.enabled ? '启用' : '停用') + '</label>'
