@@ -279,6 +279,8 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&SyncedFile{},
 		&OfflinePlay{},
 		&UploadMark{},
+		&PlaybackAltFile{},
+		&PlaybackDevice{},
 	); err != nil {
 		return nil, err
 	}
@@ -363,4 +365,25 @@ func InitDefaultWashRules(db *gorm.DB) error {
 		},
 	}
 	return db.Create(&defaults).Error
+}
+
+// PlaybackAltFile 播放小号的文件映射：台账 rel_path → 小号侧 pickcode
+// （小号秒传镜像主号媒体库后，播放取直链用小号 pickcode）
+type PlaybackAltFile struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	AccountID   int64     `json:"account_id" gorm:"index;not null"`  // 小号 id（playback 配置）
+	RelPath     string    `json:"rel_path" gorm:"size:500;not null"` // 与台账一致的相对路径
+	AltPickCode string    `json:"alt_pick_code" gorm:"size:64;not null"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PlaybackDevice 已知播放设备（多端播放展示：设备→小号绑定）
+type PlaybackDevice struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	UAHash    string    `json:"ua_hash" gorm:"uniqueIndex;size:32"` // UA 的 fnv 哈希（稳定绑定键）
+	UA        string    `json:"ua" gorm:"size:200"`
+	AltID     int64     `json:"alt_id"`
+	AltName   string    `json:"alt_name" gorm:"size:100"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
 }

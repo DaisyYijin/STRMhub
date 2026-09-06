@@ -163,6 +163,7 @@ function showPage(id) {
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); mukakuLoadPage(); re0LoadPage(); }
+  if (id === 'playback') pbLoadPage();
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
   if (id === 'dashboard') loadGuide();
@@ -3516,6 +3517,140 @@ async function scrapeStop() {
 }
 
 
+
+// ==================== 播放加速（小号播放/多端播放） ====================
+// 主号只做整理同步，播放取直链走小号账号池；按设备绑定或轮询分摊，
+// 多端并发时流量与风控隔离。内容经「分享+秒传」镜像到小号。
+
+let pbCfg = { mode: 'main', routing: 'device', alts: [] };
+
+async function pbLoadPage() {
+  try {
+    const d = await api('/playback/config');
+    pbCfg = d.cfg || pbCfg;
+    pbRenderMode();
+    pbRenderAlts();
+    pbLoadDevices();
+  } catch (e) { console.error('[播放账号] 配置回填失败:', e.message); }
+}
+
+function pbRenderMode() {
+  document.querySelectorAll('#pb-mode-switch .seg-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.value === pbCfg.mode));
+  document.querySelectorAll('#pb-routing-switch .seg-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.value === pbCfg.routing));
+}
+
+async function pbSaveMode(kind) {
+  const body = {};
+  if (kind === 'mode') body.mode = document.querySelector('#pb-mode-switch .seg-item.active').dataset.value;
+  if (kind === 'routing') body.routing = document.querySelector('#pb-routing-switch .seg-item.active').dataset.value;
+  try {
+    const r = await api('/playback/mode', { method: 'POST', body: JSON.stringify(body) });
+    toast(r.message || '已保存');
+    pbLoadPage();
+  } catch (e) { toast(e.message); pbLoadPage(); }
+}
+
+function pbRenderAlts() {
+  const box = document.getElementById('pb-alt-list');
+  const alts = pbCfg.alts || [];
+  if (!alts.length) {
+    box.innerHTML = '<div class="dash-empty">账号池为空：粘贴小号 Cookie 添加。添加后点「镜像同步」把主号媒体库秒传镜像到小号。</div>';
+    return;
+  }
+  box.innerHTML = '<div class="otk">' + alts.map(a => {
+    const st = a.last_err
+      ? '<span style="color:var(--danger)">✗ ' + esc(a.last_err.slice(0, 40)) + '</span>'
+      : '<span style="color:#00874a">✓ 正常</span>';
+    const meta = [a.nick || '', '覆盖 ' + (a.covered || 0) + ' 文件',
+      a.missing > 0 ? '<span style="color:#b26a00">缺 ' + a.missing + '</span>' : '已全覆盖', st]
+      .filter(Boolean).join('<span class="otk-dot">·</span>');
+    return '<div class="otk-row"' + (a.enabled ? '' : ' style="opacity:.55"') + '>'
+      + '<span class="otag" style="background:#e8f1ff;color:#1c64d9">小号</span>'
+      + '<div class="otk-main"><div class="otk-name">' + esc(a.name || '小号#' + a.id) + '</div>'
+      + '<div class="otk-sub">' + meta + '</div></div>'
+      + '<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:12px" onclick="event.stopPropagation()">'
+      + '<input type="checkbox" ' + (a.enabled ? 'checked' : '') + ' onchange="pbToggleAlt(' + a.id + ',this.checked)">'
+      + (a.enabled ? '启用' : '停用') + '</label>'
+      + '<button class="btn btn-outline" style="padding:3px 10px;font-size:12px" onclick="pbDelAlt(' + a.id + ')">删除</button>'
+      + '</div>';
+  }).join('') + '</div>';
+}
+
+async function pbAddAlt(btn) {
+  const cookie = document.getElementById('pb-alt-cookie').value.trim();
+  if (!cookie) { toast('请粘贴小号 Cookie'); return; }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '验证中…'; }
+  try {
+    const r = await api('/playback/alt/add', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: document.getElementById('pb-alt-name').value.trim(),
+        cookie: cookie,
+      }),
+    });
+    toast(r.message || '已添加');
+    document.getElementById('pb-alt-cookie').value = '';
+    document.getElementById('pb-alt-name').value = '';
+    pbLoadPage();
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function pbDelAlt(id) {
+  if (!confirm('移除该小号？其镜像映射将一并清理。')) return;
+  try {
+    await api('/playback/alt/del', { method: 'POST', body: JSON.stringify({ id }) });
+    toast('已移除');
+    pbLoadPage();
+  } catch (e) { toast(e.message); }
+}
+
+async function pbToggleAlt(id, on) {
+  try {
+    await api('/playback/alt/toggle', { method: 'POST', body: JSON.stringify({ id: id, enabled: on }) });
+    pbLoadPage();
+  } catch (e) { toast(e.message); pbLoadPage(); }
+}
+
+async function pbSync(btn) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '同步中…'; }
+  try {
+    const r = await api('/playback/sync', { method: 'POST' });
+    toast(r.message || '同步已开始');
+    // 30 秒后刷新一次覆盖数
+    setTimeout(pbLoadPage, 30000);
+  } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig; } }
+}
+
+async function pbLoadDevices() {
+  const box = document.getElementById('pb-device-list');
+  if (!box) return;
+  try {
+    const d = await api('/playback/devices');
+    const devices = d.data || [];
+    if (!devices.length) {
+      box.innerHTML = '<div class="dash-empty">还没有设备记录：小号池启用并播放一次后，设备会出现在这里。</div>';
+      return;
+    }
+    box.innerHTML = '<div class="otk">' + devices.map(d => {
+      const name = (d.ua || '').replace(/\([^)]*\)/g, '').split(/\s+/).filter(Boolean).slice(-2).join(' ') || d.ua_hash;
+      const seen = (d.last_seen || '').replace('T', ' ').slice(0, 16);
+      return '<div class="otk-row">'
+        + '<span class="otag" style="background:var(--fill-2);color:var(--text-2)">设备</span>'
+        + '<div class="otk-main"><div class="otk-name">' + esc(name) + '</div>'
+        + '<div class="otk-sub">最近播放 ' + esc(seen) + '</div></div>'
+        + '<span class="otag" style="background:#e8f6ee;color:#1f8a4c">' + esc(d.alt_name || '主号') + '</span>'
+        + '</div>';
+    }).join('') + '</div>';
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--danger)">加载失败：' + esc(e.message) + '</span>';
+  }
+}
 
 // ==================== 影视转存 · 盘搜（PanSou 聚合） ====================
 // 开源项目 PanSou 实例聚合 TG 频道/插件的网盘分享。115 分享行点击转存、

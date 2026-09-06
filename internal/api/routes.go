@@ -471,6 +471,15 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.GET("/mukaku/search", h.MukakuSearch)
 		protected.GET("/mukaku/resources", h.MukakuResources)
 
+		// 播放加速（多端播放/小号播放）：小号账号池 + 镜像同步 + 播放路由
+		protected.GET("/playback/config", h.PlaybackGetConfig)
+		protected.POST("/playback/alt/add", h.PlaybackAddAlt)
+		protected.POST("/playback/alt/del", h.PlaybackDelAlt)
+		protected.POST("/playback/alt/toggle", h.PlaybackToggleAlt)
+		protected.POST("/playback/mode", h.PlaybackSaveMode)
+		protected.POST("/playback/sync", h.PlaybackSync)
+		protected.GET("/playback/devices", h.PlaybackDevices)
+
 		// 影视转存 · PanSou 网盘聚合搜索（开源项目公开实例，免认证）
 		protected.GET("/pansou/config", h.PansouGetConfig)
 		protected.POST("/pansou/config", h.PansouSaveConfig)
