@@ -77,6 +77,11 @@ func StartProxy(db *gorm.DB, cfg *config.Config) {
 	r.GET("/123/:fileID", pan123Handler.handlePan123Redirect)
 	r.GET("/123/:fileID/*filename", pan123Handler.handlePan123Redirect)
 
+	// CloudDrive2 302 代理: /cd2/{base64(完整路径)} 或 /cd2/{id}/{filename}
+	cd2Handler := &Handler{DB: db, Config: cfg}
+	r.GET("/cd2/:id", cd2Handler.handleCd2Redirect)
+	r.GET("/cd2/:id/*filename", cd2Handler.handleCd2Redirect)
+
 	// Emby 反代：客户端访问 http://ip:6086/emby 即可使用 Emby（CMS 9096 同款）
 	registerEmbyProxy(r, db, cfg)
 

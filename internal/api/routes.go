@@ -445,6 +445,13 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/pan123/qrcode", h.Pan123Qrcode)
 		protected.GET("/pan123/qrcode/poll", h.Pan123QrcodePoll)
 
+		// CloudDrive2（多云盘聚合，gRPC）：列目录生成 STRM + 播放 302
+		protected.GET("/cd2/config", h.Cd2GetConfig)
+		protected.POST("/cd2/config", h.Cd2SaveConfig)
+		protected.POST("/cd2/test", h.Cd2Test)
+		protected.GET("/cd2/dirs", h.Cd2Dirs)
+		protected.POST("/cd2/scan", h.Cd2Scan)
+
 		// 媒体库封面生成（分类聚合 TMDB 海报 → 合成封面 → 推送 Emby）
 		protected.GET("/covergen/config", h.CoverGenGetConfig)
 		protected.POST("/covergen/config", h.CoverGenSaveConfig)
