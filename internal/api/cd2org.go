@@ -9,10 +9,12 @@ package api
 //	→ 重命名模板（buildNewNameWithTemplate，含 Season 目录）
 //	→ 二级分类（classifyMedia + mediaTypeCategory）
 //	→ CD2 写操作（Rename 原地改名 → MoveFile 移到 媒体库根/分类/片目目录）
-//	→ 生成本地 STRM（writeStrmCd2）
+//	→ 生成本地 STRM（writeStrmCd2，带 HMAC 签名）
 //
-// 媒体库根（RootPath）内的删除/改名事件同步增删本地 STRM。
+// 媒体库根（RootPath）内的删除/改名事件同步增删本地 STRM；库内新增只镜像
+// STRM、绝不整理（防"监控目录包含媒体库"的误配置自我消化库内容）。
 // 识别失败的内容留在监控目录原地（不移动），等下次事件或手动整理重试。
+// 整理单元全局串行（cd2OrgMu），事件驱动与手动整理不会交叉执行。
 
 import (
 	"context"
@@ -74,41 +76,59 @@ func (w *cd2WatchState) snapshot() gin.H {
 	if w.running {
 		lastErr = ""
 	}
+	lastEvt := ""
+	if !w.lastEvt.IsZero() {
+		lastEvt = w.lastEvt.Format("01-02 15:04:05")
+	}
 	return gin.H{
 		"running": w.running, "last_err": lastErr,
-		"last_event": w.lastEvt.Format("01-02 15:04:05"), "organized": w.organized,
+		"last_event": lastEvt, "organized": w.organized,
 	}
 }
 
 var cd2Watch = &cd2WatchState{}
 
 // StartCd2Watcher 后台常驻：每 10s 检查配置，开启则维持推送流（断线 5s 重连）。
+// 配置指纹变化（地址/账号/目录/开关）即刻重启流，不等旧连接自然断开。
 // main.go 启动时挂 goroutine
 func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 	go func() {
 		h := &Handler{DB: db, Config: cfg}
 		var cancel context.CancelFunc
+		var runKey string
 		for {
 			time.Sleep(10 * time.Second)
 			c := h.loadCd2Cfg()
-			if !c.OrgEnabled || c.OrgPending == "" || c.RootPath == "" || c.Endpoint == "" {
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%v",
+				c.Endpoint, c.Username, c.Password, c.OrgPending, c.RootPath, c.OrgEnabled)
+			on := c.OrgEnabled && c.OrgPending != "" && c.RootPath != "" && c.Endpoint != ""
+			if !on {
 				if cancel != nil {
 					cancel()
 					cancel = nil
+					runKey = ""
 					cd2Watch.setRunning(false)
 					log.Printf("[CD2监控] ○ 已停止（配置关闭或未完成）")
 				}
 				continue
 			}
 			if cancel != nil {
-				continue // 已在运行
+				if key == runKey {
+					continue // 配置未变，流继续
+				}
+				cancel()
+				cancel = nil
+				cd2Watch.setRunning(false)
+				log.Printf("[CD2监控] ↻ 配置变更，重启监控流")
 			}
 			var ctx context.Context
 			ctx, cancel = context.WithCancel(context.Background())
+			runKey = key
 			cd2Watch.setRunning(true)
 			log.Printf("[CD2监控] ▶ 实时监控启动：监控 %s → 整理到 %s", c.OrgPending, c.RootPath)
 			go func(ctx context.Context, h *Handler) {
 				for {
+					cd2MaybeBackfill(h)
 					cl, err := h.cd2Client()
 					if err != nil {
 						cd2Watch.setErr(err.Error())
@@ -135,6 +155,32 @@ func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 			}(ctx, h)
 		}
 	}()
+}
+
+// cd2MaybeBackfill 停机/断线期间的事件已丢失，靠周期性全量整理兜底：
+// 流（重）建立前补一次，此后至多每 10 分钟一次；手动整理进行中则让路
+var (
+	cd2BackfillMu   sync.Mutex
+	cd2LastBackfill time.Time
+)
+
+func cd2MaybeBackfill(h *Handler) {
+	cd2BackfillMu.Lock()
+	if time.Since(cd2LastBackfill) < 10*time.Minute {
+		cd2BackfillMu.Unlock()
+		return
+	}
+	cd2LastBackfill = time.Now()
+	cd2BackfillMu.Unlock()
+
+	if !cd2OrgMu.TryLock() {
+		return // 手动整理在跑，无需补
+	}
+	defer cd2OrgMu.Unlock()
+	n := h.cd2OrganizeAll()
+	if n > 0 {
+		log.Printf("[CD2监控] ▷ 补漏整理 %d 个单元", n)
+	}
 }
 
 // ==================== 路径工具（可测试） ====================
@@ -224,6 +270,14 @@ func (h *Handler) cd2HandleChange(ch cd2.Change) {
 			}
 		}
 	case "create":
+		// 媒体库子树优先判定：只镜像 STRM，绝不整理——防"监控目录包含
+		// 媒体库"的误配置把库内容再整理一遍
+		if cd2HasPrefix(ch.Path, libRoot) {
+			if !ch.IsDir && isVideoName(path.Base(ch.Path)) && h.cd2MirrorStrm(cfg, ch.Path) == nil {
+				log.Printf("[CD2监控] ▷ 库内新增，补 STRM: %s", truncateStr(ch.Path, 70))
+			}
+			return
+		}
 		if cd2HasPrefix(ch.Path, pendRoot) && !ch.IsDir {
 			dir := path.Dir(cd2NormPath(ch.Path))
 			cd2DebounceMu.Lock()
@@ -238,18 +292,11 @@ func (h *Handler) cd2HandleChange(ch cd2.Change) {
 				})
 			}
 			cd2DebounceMu.Unlock()
-			return
-		}
-		// 直接落进媒体库根的新文件（不经监控目录，如手动归位）：补 STRM 镜像
-		if cd2HasPrefix(ch.Path, libRoot) && !ch.IsDir && isVideoName(path.Base(ch.Path)) {
-			if h.cd2MirrorStrm(cfg, ch.Path) == nil {
-				log.Printf("[CD2监控] ▷ 库内新增，补 STRM: %s", truncateStr(ch.Path, 70))
-			}
 		}
 	}
 }
 
-// cd2MirrorStrm 为库内文件补写 STRM（已存在则跳过）
+// cd2MirrorStrm 为库内文件补写 STRM（内容一致则跳过）
 func (h *Handler) cd2MirrorStrm(cfg cd2Cfg, fullPath string) error {
 	relDir, name := cd2RelStrm(cfg.RootPath, fullPath)
 	if name == "" || !isVideoName(name) {
@@ -259,7 +306,7 @@ func (h *Handler) cd2MirrorStrm(cfg cd2Cfg, fullPath string) error {
 	if domain == "" {
 		domain = "http://127.0.0.1:" + h.Config.ProxyPortStr()
 	}
-	_, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, skipExist, relDir, name, fullPath)
+	_, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, skipExist, relDir, name, h.cd2MakeID(fullPath))
 	return err
 }
 
@@ -272,6 +319,50 @@ func (h *Handler) cd2RemoveStrm(cfg cd2Cfg, fullPath string) {
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		log.Printf("[CD2监控] ○ 移除 STRM 失败 %s: %v", p, err)
 	}
+}
+
+// ==================== 通知聚合 ====================
+// 批量入库时逐单元推送会刷屏：10 秒窗口内的单元聚合成一条
+// （手动整理不进聚合，有自己的汇总通知）
+
+var (
+	cd2NotifyMu    sync.Mutex
+	cd2NotifyItems []string
+	cd2NotifyCount int
+	cd2NotifyTimer *time.Timer
+)
+
+const (
+	cd2NotifyDelay = 10 * time.Second
+	cd2NotifyShow  = 8
+)
+
+func cd2NotifySchedule(title, target string) {
+	cd2NotifyMu.Lock()
+	defer cd2NotifyMu.Unlock()
+	cd2NotifyCount++
+	if len(cd2NotifyItems) < cd2NotifyShow {
+		cd2NotifyItems = append(cd2NotifyItems, title+"\n→ "+target)
+	}
+	if cd2NotifyTimer != nil {
+		cd2NotifyTimer.Reset(cd2NotifyDelay)
+		return
+	}
+	cd2NotifyTimer = time.AfterFunc(cd2NotifyDelay, func() {
+		cd2NotifyMu.Lock()
+		items := append([]string(nil), cd2NotifyItems...)
+		count := cd2NotifyCount
+		cd2NotifyItems, cd2NotifyCount, cd2NotifyTimer = nil, 0, nil
+		cd2NotifyMu.Unlock()
+		if count == 0 {
+			return
+		}
+		body := strings.Join(items, "\n")
+		if count > cd2NotifyShow {
+			body += fmt.Sprintf("\n…（共 %d 个单元）", count)
+		}
+		NotifyMessage("✦ CD2 自动整理", fmt.Sprintf("入库 %d 个单元：\n%s", count, body))
+	})
 }
 
 // ==================== 整理引擎 ====================
@@ -308,7 +399,8 @@ func (h *Handler) Cd2OrgRun(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "整理已开始，结果看日志与通知"})
 }
 
-// cd2OrganizeAll 遍历监控目录顶层：目录 → 整目录单元；散视频 → 单文件单元
+// cd2OrganizeAll 遍历监控目录顶层：目录 → 整目录单元；散视频 → 单文件单元。
+// 调用方须持有 cd2OrgMu（手动整理 / 回漏整理）
 func (h *Handler) cd2OrganizeAll() int {
 	cl, err := h.cd2Client()
 	if err != nil {
@@ -316,6 +408,7 @@ func (h *Handler) cd2OrganizeAll() int {
 		return 0
 	}
 	cfg := h.loadCd2Cfg()
+	libRoot := cd2NormPath(cfg.RootPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	entries, err := cl.ListDir(ctx, cd2NormPath(cfg.OrgPending))
 	cancel()
@@ -325,11 +418,14 @@ func (h *Handler) cd2OrganizeAll() int {
 	}
 	n := 0
 	for _, e := range entries {
+		if cd2HasPrefix(e.Path, libRoot) {
+			continue // 监控目录嵌套媒体库：库内条目绝不整理
+		}
 		if e.IsDir {
-			h.cd2OrganizeUnit(e.Path, "")
+			h.cd2OrganizeUnitCore(e.Path, "", false)
 			n++
 		} else if isVideoName(e.Name) {
-			h.cd2OrganizeUnit(path.Dir(e.Path), e.Name)
+			h.cd2OrganizeUnitCore(path.Dir(e.Path), e.Name, false)
 			n++
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -337,20 +433,33 @@ func (h *Handler) cd2OrganizeAll() int {
 	return n
 }
 
-// cd2OrganizeUnit 整理一个单元：unitDir 下全部文件（focusFile 非空时只处理
-// 该文件与其同名附件）。识别 → 重命名 → 分类 → 移动 → STRM；失败留在原地
+// cd2OrganizeUnit 事件驱动的整理入口：全局串行（与手动整理互斥），
+// 阻塞排队直到轮到自己
 func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
+	cd2OrgMu.Lock()
+	defer cd2OrgMu.Unlock()
+	h.cd2OrganizeUnitCore(unitDir, focusFile, true)
+}
+
+// cd2OrganizeUnitCore 整理一个单元：unitDir 下全部文件（focusFile 非空时只处理
+// 该文件与其同名附件）。识别 → 重命名 → 分类 → 移动 → STRM；失败留在原地。
+// 调用方须持有 cd2OrgMu；notify=true 时进聚合并入通知
+func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 	cfg := h.loadCd2Cfg()
 	if cfg.RootPath == "" || cfg.LocalPath == "" {
 		return
 	}
 	unitDir = cd2NormPath(unitDir)
+	if cd2HasPrefix(unitDir, cd2NormPath(cfg.RootPath)) {
+		return // 媒体库子树防护（防误配置）
+	}
 	cl, err := h.cd2Client()
 	if err != nil {
 		log.Printf("[CD2整理] ✗ %v", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// 大包（百集剧集逐集改名+移动）耗时可观，给足窗口
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	files, err := cl.ListDir(ctx, unitDir)
 	if err != nil {
@@ -358,6 +467,11 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 		return
 	}
 
+	// 广告/超小视频过滤：沿用 115 整理的最小体积设置
+	minBytes := int64(0)
+	if oc, oerr := h.loadOrgConfig(); oerr == nil && oc.MinSize > 0 {
+		minBytes = oc.MinSize * 1024 * 1024
+	}
 	focusBase := ""
 	if focusFile != "" {
 		focusBase = strings.TrimSuffix(focusFile, pathExt(focusFile))
@@ -373,6 +487,9 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 		}
 		switch classifyFile(f.Name) {
 		case FileTypeVideo:
+			if isAdOnlyVideo(f.Name) || (minBytes > 0 && f.Size > 0 && f.Size < minBytes) {
+				continue // 广告/引流与超小视频不随正片入库，留在原地
+			}
 			videos = append(videos, f)
 		case FileTypeSubtitle:
 			subs = append(subs, f)
@@ -500,11 +617,8 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 			continue
 		}
 		finalPath := cd2Join(dstDir, newName)
-		relDir := ""
-		if r, _ := cd2RelStrm(cfg.RootPath, finalPath); r != "" {
-			relDir = r
-		}
-		if _, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, false, relDir, newName, finalPath); err != nil {
+		relDir, _ := cd2RelStrm(cfg.RootPath, finalPath)
+		if _, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, false, relDir, newName, h.cd2MakeID(finalPath)); err != nil {
 			log.Printf("[CD2整理] ○ STRM 写入失败 %s: %v", finalPath, err)
 		}
 		movedRootDir, movedMediaDir = rootRel, dstDir
@@ -520,7 +634,17 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 	}
 	if movedRootDir != "" {
 		for _, mf := range metas {
-			if err := cl.MoveFiles(ctx, []string{cd2Join(unitDir, mf.Name)}, movedRootDir); err != nil {
+			mvName := mf.Name
+			// 海报.png/封面.jpg → poster.ext：Emby 只认标准名
+			// （与 115 整理同规则）
+			if base := strings.ToLower(baseName(mvName)); base == "海报" || base == "封面" {
+				newName := "poster" + pathExt(mvName)
+				if err := cl.Rename(ctx, cd2Join(unitDir, mvName), newName); err == nil {
+					log.Printf("[CD2整理] ✓ 海报 %s → %s", mvName, newName)
+					mvName = newName
+				}
+			}
+			if err := cl.MoveFiles(ctx, []string{cd2Join(unitDir, mvName)}, movedRootDir); err != nil {
 				log.Printf("[CD2整理] ○ 元数据跟随失败 %s: %v", mf.Name, err)
 			}
 		}
@@ -528,5 +652,7 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 
 	cd2Watch.bumpOrganized()
 	log.Printf("[CD2整理] ✓ %s → %s（%s）", truncateStr(dirName, 50), truncateStr(movedMediaDir, 60), media.Title)
-	NotifyMessage("✦ CD2 自动整理", fmt.Sprintf("%s\n→ %s", dirName, movedMediaDir))
+	if notify {
+		cd2NotifySchedule(dirName, movedMediaDir)
+	}
 }

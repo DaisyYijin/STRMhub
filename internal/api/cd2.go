@@ -12,7 +12,11 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -305,7 +309,7 @@ func (h *Handler) cd2WalkAndStrm() (created, skipped, failed int) {
 			if !isVideoName(f.Name) {
 				continue
 			}
-			written, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, skipExist, cur.rel, f.Name, f.Path)
+			written, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, skipExist, cur.rel, f.Name, h.cd2MakeID(f.Path))
 			switch {
 			case err != nil:
 				failed++
@@ -320,20 +324,74 @@ func (h *Handler) cd2WalkAndStrm() (created, skipped, failed int) {
 	return
 }
 
+// ==================== 播放链接签名（防路径枚举） ====================
+
+// /cd2/{id} 是无鉴权端点（播放器直连），而 base64(路径) 是可猜测的弱凭据
+// （/阿里云盘/媒体/电影/… 一猜就中）。id 必须携带 HMAC 签名：
+//	{base64url(完整路径)}.{sig16}[.ext]
+// sig16 = HMAC-SHA256(服务端密钥, b64) 前 16 hex。密钥首次生成后存 DB，
+// 签名错误/缺失一律 403——伪造路径换直链被彻底堵死
+
+// cd2Secret 取签名密钥（不存在则生成并持久化）
+func (h *Handler) cd2Secret() []byte {
+	if v := h.Config.GetSetting("cd2_secret"); v != "" {
+		if b, err := hex.DecodeString(v); err == nil && len(b) >= 16 {
+			return b
+		}
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand 不可用: " + err.Error())
+	}
+	h.Config.SaveSetting("cd2_secret", hex.EncodeToString(b))
+	return b
+}
+
+func cd2B64Of(fullPath string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(fullPath))
+}
+
+func cd2SignWith(secret []byte, b64id string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(b64id))
+	return hex.EncodeToString(mac.Sum(nil))[:16]
+}
+
+func cd2VerifyWith(secret []byte, b64id, sig string) bool {
+	want := cd2SignWith(secret, b64id)
+	return len(sig) == len(want) && hmac.Equal([]byte(want), []byte(sig))
+}
+
+func (h *Handler) cd2MakeID(fullPath string) string {
+	b := cd2B64Of(fullPath)
+	return b + "." + cd2SignWith(h.cd2Secret(), b)
+}
+
+// cd2ParseID 拆出 b64 与签名段；ext（keepExt 追加）被忽略
+func cd2ParseID(id string) (b64id, sig string, ok bool) {
+	parts := strings.Split(id, ".")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
 // writeStrmCd2 与 123 的 writeStrm123 同构：本地目录保持 CD2 目录结构，
-// STRM 内容 = {domain}/cd2/{base64url(完整路径)}[.ext]；返回是否新写入。
-// 用完整路径（而非相对路径）编码，之后改扫描根不影响旧 STRM 的解析
-func writeStrmCd2(localRoot, domain, format string, keepExt, skipExist bool, relDir, name, fullPath string) (bool, error) {
+// STRM 内容 = {domain}/cd2/{idPart}[.ext]；返回是否新写入。
+// idPart 为带签名的标识段（cd2MakeID 生成）。
+// skipExist 仅在现有内容与将写内容一致时跳过——域名/签名格式变化后重扫
+// 会自动改写旧 STRM（自愈迁移）
+func writeStrmCd2(localRoot, domain, format string, keepExt, skipExist bool, relDir, name, idPart string) (bool, error) {
 	base := strings.TrimRight(domain, "/")
-	idPart := base64.RawURLEncoding.EncodeToString([]byte(fullPath))
+	id := idPart
 	if keepExt {
-		idPart += pathExt(name)
+		id += pathExt(name)
 	}
 	var streamURL string
 	if format == "pick_code" {
-		streamURL = fmt.Sprintf("%s/cd2/%s", base, idPart)
+		streamURL = fmt.Sprintf("%s/cd2/%s", base, id)
 	} else {
-		streamURL = fmt.Sprintf("%s/cd2/%s?/%s", base, idPart, name)
+		streamURL = fmt.Sprintf("%s/cd2/%s?/%s", base, id, name)
 	}
 	dir := filepath.Join(localRoot, filepath.FromSlash(relDir))
 	if err := os.MkdirAll(dir, 0o777); err != nil {
@@ -341,7 +399,7 @@ func writeStrmCd2(localRoot, domain, format string, keepExt, skipExist bool, rel
 	}
 	strmPath := filepath.Join(dir, name+".strm")
 	if skipExist {
-		if _, err := os.Stat(strmPath); err == nil {
+		if b, err := os.ReadFile(strmPath); err == nil && string(b) == streamURL {
 			return false, nil
 		}
 	}
@@ -353,14 +411,19 @@ func writeStrmCd2(localRoot, domain, format string, keepExt, skipExist bool, rel
 
 // ==================== 播放 302 ====================
 
-// handleCd2Redirect /cd2/{base64(完整路径)}[.ext][/{name}] → 取播放地址 302。
+// handleCd2Redirect /cd2/{b64}.{sig}[.ext][/{name}] → 校验签名后取播放地址 302。
 // 直链（无 UA 要求）或 CD2 中转地址二选一；按 expiresIn 缓存（上限 10 分钟）
 func (h *Handler) handleCd2Redirect(c *gin.Context) {
-	id := c.Param("id")
-	if i := strings.LastIndex(id, "."); i > 0 {
-		id = id[:i] // keepExt 追加的扩展名（base64url 不含点，切分安全）
+	b64id, sig, ok := cd2ParseID(c.Param("id"))
+	if !ok {
+		c.String(http.StatusForbidden, "invalid cd2 id（旧版 STRM 无签名，请重新扫描生成）")
+		return
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(id)
+	if !cd2VerifyWith(h.cd2Secret(), b64id, sig) {
+		c.String(http.StatusForbidden, "invalid cd2 signature")
+		return
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(b64id)
 	if err != nil {
 		c.String(http.StatusBadRequest, "invalid cd2 path")
 		return

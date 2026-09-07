@@ -100,10 +100,41 @@ func TestCd2PickTarget(t *testing.T) {
 	}
 }
 
+func TestCd2Sign(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	b64id := cd2B64Of("/阿里云盘/媒体/电影/a.mkv")
+	sig := cd2SignWith(secret, b64id)
+	if len(sig) != 16 {
+		t.Fatalf("sig len: %d", len(sig))
+	}
+	if !cd2VerifyWith(secret, b64id, sig) {
+		t.Error("verify should pass")
+	}
+	if cd2VerifyWith(secret, cd2B64Of("/其他路径.mkv"), sig) {
+		t.Error("tampered path should fail")
+	}
+	if cd2VerifyWith([]byte("another-secret-32-bytes!!"), b64id, sig) {
+		t.Error("wrong secret should fail")
+	}
+	// id 拆分：{b64}.{sig}[.ext]
+	id := b64id + "." + sig + ".mkv"
+	gotB64, gotSig, ok := cd2ParseID(id)
+	if !ok || gotB64 != b64id || gotSig != sig {
+		t.Errorf("parseID: %q %q ok=%v", gotB64, gotSig, ok)
+	}
+	if _, _, ok := cd2ParseID(b64id); ok {
+		t.Error("无签名旧格式应被拒绝")
+	}
+	if _, _, ok := cd2ParseID(b64id + "..mkv"); ok {
+		t.Error("空签名应被拒绝")
+	}
+}
+
 func TestWriteStrmCd2(t *testing.T) {
 	dir := t.TempDir()
 	full := "/115网盘/媒体/剧/E01.mkv"
-	written, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, false, "剧/第一季", "E01.mkv", full)
+	idPart := cd2B64Of(full) + ".aabbccddeeff0011"
+	written, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, false, "剧/第一季", "E01.mkv", idPart)
 	if err != nil || !written {
 		t.Fatalf("write: %v written=%v", err, written)
 	}
@@ -123,9 +154,17 @@ func TestWriteStrmCd2(t *testing.T) {
 	if !strings.HasSuffix(body, ".mkv") {
 		t.Errorf("keepExt 应保留扩展名: %q", body)
 	}
-	// skipExist 幂等
-	written2, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, true, "剧/第一季", "E01.mkv", full)
+	// skipExist：内容一致 → 跳过；内容变化（域名/签名变）→ 自动改写
+	written2, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, true, "剧/第一季", "E01.mkv", idPart)
 	if err != nil || written2 {
-		t.Errorf("skipExist should skip: %v written=%v", err, written2)
+		t.Errorf("same content should skip: %v written=%v", err, written2)
+	}
+	written3, err := writeStrmCd2(dir, "http://new:6086", "file_id", true, true, "剧/第一季", "E01.mkv", idPart)
+	if err != nil || !written3 {
+		t.Errorf("changed content should rewrite: %v written=%v", err, written3)
+	}
+	b2, _ := os.ReadFile(filepath.Join(dir, "剧", "第一季", "E01.mkv.strm"))
+	if !strings.HasPrefix(string(b2), "http://new:6086/cd2/") {
+		t.Errorf("rewrite content wrong: %q", string(b2))
 	}
 }

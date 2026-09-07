@@ -1661,6 +1661,8 @@ function setCd2Org(v) {
   });
 }
 
+let cd2StatusTimer = null;
+
 async function cd2WatchStatus() {
   const el = document.getElementById('cd2-watch-status');
   if (!el) return;
@@ -1672,7 +1674,7 @@ async function cd2WatchStatus() {
       el.style.color = 'var(--text-3)';
     } else if (s.running) {
       el.textContent = '● 监控中（已整理 ' + (s.organized || 0) + ' 个单元' +
-        (s.last_event && s.last_event !== '01-01 01:01:01' ? '，最近事件 ' + s.last_event : '') + '）';
+        (s.last_event ? '，最近事件 ' + s.last_event : '') + '）';
       el.style.color = '#1f8a4c';
     } else {
       el.textContent = '● 启动中…' + (s.last_err ? '（' + s.last_err + '）' : '');
@@ -1698,6 +1700,9 @@ async function cd2LoadUI() {
     setCd2Org(!!c.org_enabled);
   } catch (e) { /* 首次为空 */ }
   cd2WatchStatus();
+  // 状态自动刷新（离开页面后元素不在即空转，重新进入会重置定时器）
+  clearInterval(cd2StatusTimer);
+  cd2StatusTimer = setInterval(cd2WatchStatus, 15000);
 }
 
 async function cd2Save(btn) {
