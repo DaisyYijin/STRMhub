@@ -1,19 +1,19 @@
 package api
 
-// ==================== 多端播放 · 小号播放（播放账号池） ====================
+// ==================== 播放账号（多端播放 + 小号播放） ====================
 //
-// 主号只做转存/整理/同步（写操作），播放取直链走小号账号池——播放是
-// 最高频、最容易触发 115 风控的操作，剥离后主号风险大幅降低，多端并发
-// 时各设备分摊不同小号（流量/风控隔离）。
+// 两种按需副本机制，播放取直链时自动选路：
 //
-// 小号访问不到主号网盘（pickcode 是账号内标识），通行解法是"分享+秒传"：
+//	多端播放（自己的设备）：同账号副本——PlaybackInfo 时识别设备（Emby
+//	  DeviceId），首次播某文件把它复制到 主号副本目录/<设备名>/（115 同
+//	  账号复制瞬时），播副本消除"同文件多端并发"的风控特征。不需要小号。
 //
-//	主号媒体库文件 ──share/send──▶ 分享链接
-//	小号 receive 到镜像目录（秒传，不耗下载流量，只占小号空间）
-//	小号目录树与主号台账 rel_path 对齐 → 维护 RelPath→小号PickCode 映射
-//	播放时：台账 pickcode → RelPath → 小号 pickcode → 小号 Cookie 取直链
+//	小号播放（其他观众）：观众自带 115 小号（管理员扫码代绑到设备）——
+//	  首次播某文件时 主号出分享 → 观众小号秒传接收（镜像目录），
+//	  之后用观众小号的 Cookie 取直链。主号零播放暴露。
 //
-// 同步为幂等增量：以 SyncedFile 台账（kind=video）为准，缺什么补什么。
+// 优先级：设备绑定了小号 → 小号；未绑定且多端开启 → 设备副本；都没有
+// → 主号直链（/d/ 原路径）。副本映射落 PlaybackCopy，命中秒开。
 
 import (
 	"encoding/json"
@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -30,32 +31,38 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"gorm.io/gorm"
 
 	"strmhub/internal/config"
 	"strmhub/internal/model"
 )
 
-// playbackAlt 小号账号（setting key "playback"）
+// ==================== 配置 ====================
+
+type playbackCfg struct {
+	MultiEnabled bool          `json:"multi_enabled"` // 多端播放（设备副本）开关
+	CopyRootCID  string        `json:"copy_root_cid"` // 主号副本根目录
+	CopyRootName string        `json:"copy_root_name"`
+	Alts         []playbackAlt `json:"alts"`    // 观众小号
+	Routing      string        `json:"routing"` // device / round
+}
+
 type playbackAlt struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
 	Cookie  string `json:"cookie"`
 	Enabled bool   `json:"enabled"`
-	Nick    string `json:"nick"` // 验证时缓存的账号昵称
+	Nick    string `json:"nick"`
 	RootCid string `json:"root_cid"`
 }
 
-type playbackCfg struct {
-	Mode    string        `json:"mode"`    // main=主号播放 alt=小号池
-	Alts    []playbackAlt `json:"alts"`    // 小号池
-	Routing string        `json:"routing"` // device=设备绑定 round=轮询分摊
-}
-
 var (
-	playbackMu    sync.Mutex
-	playbackCfgV  *playbackCfg
-	playbackCfgAt time.Time
+	playbackMu       sync.Mutex
+	playbackCfgV     *playbackCfg
+	playbackCfgAt    time.Time
+	playbackStateMu  sync.Mutex
+	playbackStateMap = map[int64]string{} // 每小号最近一次同步状态
 )
 
 func loadPlaybackCfg() *playbackCfg {
@@ -64,15 +71,9 @@ func loadPlaybackCfg() *playbackCfg {
 	if playbackCfgV != nil && time.Since(playbackCfgAt) < 5*time.Second {
 		return playbackCfgV
 	}
-	cfg := &playbackCfg{Mode: "main", Routing: "device"}
+	cfg := &playbackCfg{}
 	if v := settingValueCompat("playback"); v != "" {
 		_ = json.Unmarshal([]byte(v), cfg)
-	}
-	if cfg.Mode == "" {
-		cfg.Mode = "main"
-	}
-	if cfg.Routing == "" {
-		cfg.Routing = "device"
 	}
 	playbackCfgV = cfg
 	playbackCfgAt = time.Now()
@@ -90,12 +91,17 @@ func savePlaybackCfg(c *playbackCfg) error {
 	return nil
 }
 
-// altOps 小号专属操作通道（Cookie 通道，OpenAPI 是主号的）
+func playbackSetAltErr(id int64, msg string) {
+	playbackStateMu.Lock()
+	playbackStateMap[id] = msg
+	playbackStateMu.Unlock()
+}
+
 func altOps(alt *playbackAlt) *pan115Ops {
 	return &pan115Ops{cookie: alt.Cookie}
 }
 
-// altVerifyCookie 验证小号 Cookie（昵称+uid），返回 (uid, 昵称, 错误)
+// altVerifyCookie 验证 115 Cookie，返回 (uid, 昵称, 错误)
 func altVerifyCookie(cookie string) (string, string, error) {
 	body, err := httpGet115Full("https://webapi.115.com/user/infos", nil, cookie, ua115Unified(), 15*time.Second, nil)
 	if err != nil {
@@ -106,46 +112,104 @@ func altVerifyCookie(cookie string) (string, string, error) {
 		Data  struct {
 			UID      any    `json:"uid"`
 			UserName string `json:"user_name"`
-			UserID   any    `json:"user_id"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &r) != nil || !r.State {
-		return "", "", fmt.Errorf("Cookie 无效（state=%v）", truncateStr(string(body), 80))
+		return "", "", fmt.Errorf("Cookie 无效（%s）", truncateStr(string(body), 80))
 	}
-	uid := fmt.Sprint(r.Data.UID)
-	if uid == "" || uid == "<nil>" {
-		uid = fmt.Sprint(r.Data.UserID)
-	}
-	return uid, r.Data.UserName, nil
+	return fmt.Sprint(r.Data.UID), r.Data.UserName, nil
 }
 
-// ---- HTTP 处理器 ----
+// ==================== 设备身份 ====================
 
-// PlaybackGetConfig GET /playback/config → 配置 + 各小号映射覆盖数
+var reEmbyAuthField = regexp.MustCompile(`([A-Za-z]+)="([^"]*)"`)
+
+// playbackDeviceKeyFromUA 设备键：UA 的 fnv 哈希（同一播放器 UA 稳定）
+func playbackDeviceKeyFromUA(ua string) (string, string) {
+	if strings.TrimSpace(ua) == "" {
+		return "", ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(ua))
+	return "u" + fmt.Sprint(h.Sum32()), truncateStr(ua, 40)
+}
+
+// playbackBoundAlt 设备绑定的小号（无绑定返回 nil）
+func playbackBoundAlt(cfg *playbackCfg, db *gorm.DB, devKey string) *playbackAlt {
+	if devKey == "" {
+		return nil
+	}
+	var d model.PlaybackDevice
+	if err := db.Where("ua_hash = ?", devKey).First(&d).Error; err != nil || d.AltID == 0 {
+		return nil
+	}
+	for i := range cfg.Alts {
+		if cfg.Alts[i].ID == d.AltID && cfg.Alts[i].Enabled {
+			return &cfg.Alts[i]
+		}
+	}
+	return nil
+}
+
+// ==================== HTTP 处理器 ====================
+
+// PlaybackGetConfig GET /playback/config（Cookie 不回传）
 func (h *Handler) PlaybackGetConfig(c *gin.Context) {
 	cfg := loadPlaybackCfg()
 	type altOut struct {
-		playbackAlt
-		Covered int64  `json:"covered"` // 映射表已覆盖的文件数
-		Missing int64  `json:"missing"` // 台账有但小号没有的文件数
+		ID      int64  `json:"id"`
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+		Nick    string `json:"nick"`
+		RootCID string `json:"root_cid"`
+		Covered int64  `json:"covered"`
 		LastErr string `json:"last_err"`
 	}
 	out := make([]altOut, 0, len(cfg.Alts))
 	for _, a := range cfg.Alts {
-		o := altOut{playbackAlt: playbackAlt{
-			ID: a.ID, Name: a.Name, Enabled: a.Enabled, Nick: a.Nick, RootCid: a.RootCid,
-		}}
+		o := altOut{ID: a.ID, Name: a.Name, Enabled: a.Enabled, Nick: a.Nick, RootCID: a.RootCid}
 		model.DB.Model(&model.PlaybackAltFile{}).Where("account_id = ?", a.ID).Count(&o.Covered)
-		o.Missing = playbackMissingCount(a.ID)
+		playbackStateMu.Lock()
+		o.LastErr = playbackStateMap[a.ID]
+		playbackStateMu.Unlock()
 		out = append(out, o)
 	}
-	// 脱敏：Cookie 不回传
+	var devices []model.PlaybackDevice
+	model.DB.Order("last_seen DESC").Limit(50).Find(&devices)
 	c.JSON(http.StatusOK, gin.H{"cfg": gin.H{
-		"mode": cfg.Mode, "routing": cfg.Routing, "alts": out,
+		"multi_enabled":  cfg.MultiEnabled,
+		"copy_root_cid":  cfg.CopyRootCID,
+		"copy_root_name": cfg.CopyRootName,
+		"alts":           out,
+		"devices":        devices,
 	}})
 }
 
-// PlaybackAddAlt POST /playback/alt/add {name, cookie} → 验证并加入账号池
+// PlaybackSaveMulti POST /playback/multi
+func (h *Handler) PlaybackSaveMulti(c *gin.Context) {
+	var req struct {
+		MultiEnabled bool   `json:"multi_enabled"`
+		CopyRootCID  string `json:"copy_root_cid"`
+		CopyRootName string `json:"copy_root_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	cfg := loadPlaybackCfg()
+	cfg.MultiEnabled = req.MultiEnabled
+	if req.CopyRootCID != "" {
+		cfg.CopyRootCID = req.CopyRootCID
+		cfg.CopyRootName = req.CopyRootName
+	}
+	if err := savePlaybackCfg(cfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "已保存"})
+}
+
+// PlaybackAddAlt POST /playback/alt/add
 func (h *Handler) PlaybackAddAlt(c *gin.Context) {
 	var req struct {
 		Name   string `json:"name"`
@@ -161,23 +225,20 @@ func (h *Handler) PlaybackAddAlt(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cookie 验证失败: " + err.Error()})
 		return
 	}
-	// 主号判重：小号不能是主号自己
 	if mainCookie, err := h.get115Cookie(); err == nil && mainCookie != "" {
-		mainUID := ""
-		mainUID, _, _ = altVerifyCookie(mainCookie)
-		if uid != "" && uid == mainUID {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "该 Cookie 是主号自己，请填小号的"})
+		if mainUID, _, _ := altVerifyCookie(mainCookie); uid != "" && uid == mainUID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该 Cookie 是主号自己，请填观众的小号"})
 			return
 		}
 	}
 	cfg := loadPlaybackCfg()
 	for _, a := range cfg.Alts {
 		if auid, _, _ := altVerifyCookie(a.Cookie); uid != "" && auid == uid {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "该小号已在账号池中"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该小号已存在"})
 			return
 		}
 	}
-	var maxID int64 = 0
+	var maxID int64
 	for _, a := range cfg.Alts {
 		if a.ID > maxID {
 			maxID = a.ID
@@ -187,18 +248,16 @@ func (h *Handler) PlaybackAddAlt(c *gin.Context) {
 	if name == "" {
 		name = nick
 	}
-	cfg.Alts = append(cfg.Alts, playbackAlt{
-		ID: maxID + 1, Name: name, Cookie: cookie, Enabled: true, Nick: nick,
-	})
+	cfg.Alts = append(cfg.Alts, playbackAlt{ID: maxID + 1, Name: name, Cookie: cookie, Enabled: true, Nick: nick})
 	if err := savePlaybackCfg(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Printf("[播放账号] ✓ 小号「%s」已加入账号池（uid=%s）", name, uid)
+	log.Printf("[播放账号] ✓ 观众小号「%s」已添加（uid=%s）", name, uid)
 	c.JSON(http.StatusOK, gin.H{"message": "小号已添加并验证通过（" + nick + "）"})
 }
 
-// PlaybackDelAlt POST /playback/alt/del {id} → 移除小号及其映射
+// PlaybackDelAlt POST /playback/alt/del
 func (h *Handler) PlaybackDelAlt(c *gin.Context) {
 	var req struct {
 		ID int64 `json:"id"`
@@ -220,10 +279,11 @@ func (h *Handler) PlaybackDelAlt(c *gin.Context) {
 		return
 	}
 	model.DB.Where("account_id = ?", req.ID).Delete(&model.PlaybackAltFile{})
-	c.JSON(http.StatusOK, gin.H{"message": "已移除（映射已清理）"})
+	model.DB.Where("alt_id = ?", req.ID).Delete(&model.PlaybackDevice{})
+	c.JSON(http.StatusOK, gin.H{"message": "已移除"})
 }
 
-// PlaybackToggleAlt POST /playback/alt/toggle {id, enabled}
+// PlaybackToggleAlt POST /playback/alt/toggle
 func (h *Handler) PlaybackToggleAlt(c *gin.Context) {
 	var req struct {
 		ID      int64 `json:"id"`
@@ -246,10 +306,63 @@ func (h *Handler) PlaybackToggleAlt(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "已更新"})
 }
 
-// PlaybackSaveMode POST /playback/mode {mode, routing}
+// PlaybackBindDevice POST /playback/bind {device_key, alt_id}（0=解绑）
+func (h *Handler) PlaybackBindDevice(c *gin.Context) {
+	var req struct {
+		DeviceKey string `json:"device_key"`
+		AltID     int64  `json:"alt_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.DeviceKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	var d model.PlaybackDevice
+	if err := model.DB.Where("ua_hash = ?", req.DeviceKey).First(&d).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "设备不存在（需先播放一次）"})
+		return
+	}
+	d.AltID = req.AltID
+	d.AltName = ""
+	if req.AltID > 0 {
+		cfg := loadPlaybackCfg()
+		for _, a := range cfg.Alts {
+			if a.ID == req.AltID {
+				d.AltName = a.Name
+			}
+		}
+	}
+	model.DB.Save(&d)
+	c.JSON(http.StatusOK, gin.H{"message": "绑定已更新"})
+}
+
+// PlaybackSetAltRoot POST /playback/alt/root {id, cid}
+func (h *Handler) PlaybackSetAltRoot(c *gin.Context) {
+	var req struct {
+		ID  string `json:"id"`
+		CID string `json:"cid"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" || req.CID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	cfg := loadPlaybackCfg()
+	for i := range cfg.Alts {
+		if fmt.Sprint(cfg.Alts[i].ID) == req.ID {
+			cfg.Alts[i].RootCid = req.CID
+			if err := savePlaybackCfg(cfg); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "镜像目录已保存"})
+			return
+		}
+	}
+	c.JSON(http.StatusNotFound, gin.H{"error": "小号不存在"})
+}
+
+// PlaybackSaveMode POST /playback/mode {routing}
 func (h *Handler) PlaybackSaveMode(c *gin.Context) {
 	var req struct {
-		Mode    string `json:"mode"`
 		Routing string `json:"routing"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -257,13 +370,6 @@ func (h *Handler) PlaybackSaveMode(c *gin.Context) {
 		return
 	}
 	cfg := loadPlaybackCfg()
-	if req.Mode == "main" || req.Mode == "alt" {
-		if req.Mode == "alt" && len(cfg.Alts) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "账号池为空，先添加小号"})
-			return
-		}
-		cfg.Mode = req.Mode
-	}
 	if req.Routing == "device" || req.Routing == "round" {
 		cfg.Routing = req.Routing
 	}
@@ -274,12 +380,14 @@ func (h *Handler) PlaybackSaveMode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "已保存"})
 }
 
-// ---- 内容同步（分享+秒传） ----
+// PlaybackDevices GET /playback/devices
+func (h *Handler) PlaybackDevices(c *gin.Context) {
+	var devices []model.PlaybackDevice
+	model.DB.Order("last_seen DESC").Limit(50).Find(&devices)
+	c.JSON(http.StatusOK, gin.H{"data": devices})
+}
 
-// playbackSyncRunning 同步互斥（同步可能耗时较长）
-var playbackSyncRunning atomic.Bool
-
-// PlaybackSync POST /playback/sync → 触发一轮增量镜像
+// PlaybackSync POST /playback/sync
 func (h *Handler) PlaybackSync(c *gin.Context) {
 	if !playbackSyncRunning.CompareAndSwap(false, true) {
 		c.JSON(http.StatusConflict, gin.H{"error": "同步正在进行中"})
@@ -293,11 +401,12 @@ func (h *Handler) PlaybackSync(c *gin.Context) {
 				continue
 			}
 			alt := &cfg.Alts[i]
-			if msg, err := h.playbackSyncAlt(alt); err != nil {
-				log.Printf("[播放账号] ✗ 小号「%s」同步失败: %v", alt.Name, err)
+			n, err := h.playbackMirrorAlt(alt)
+			if err != nil {
+				log.Printf("[播放账号] ✗ 小号「%s」镜像失败: %v", alt.Name, err)
 				playbackSetAltErr(alt.ID, err.Error())
 			} else {
-				log.Printf("[播放账号] ✓ 小号「%s」%s", alt.Name, msg)
+				log.Printf("[播放账号] ✓ 小号「%s」镜像同步完成：覆盖 %d 个文件", alt.Name, n)
 				playbackSetAltErr(alt.ID, "")
 			}
 		}
@@ -305,143 +414,252 @@ func (h *Handler) PlaybackSync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "镜像同步已开始，结果见运行日志"})
 }
 
-// playbackSyncState 每小号最近一次同步状态（内存态，重启丢失无妨）
-var (
-	playbackStateMu  sync.Mutex
-	playbackStateMap = map[int64]string{}
-)
+// ==================== 镜像同步 ====================
 
-func playbackSetAltErr(id int64, msg string) {
-	playbackStateMu.Lock()
-	playbackStateMap[id] = msg
-	playbackStateMu.Unlock()
-}
+var playbackSyncRunning atomic.Bool
 
-// playbackMissingCount 台账有但该小号映射未覆盖的文件数
-func playbackMissingCount(accountID int64) int64 {
-	var covered int64
-	model.DB.Model(&model.PlaybackAltFile{}).Where("account_id = ?", accountID).Count(&covered)
-	var total int64
-	model.DB.Model(&model.SyncedFile{}).Where("kind = ? AND pick_code <> ''", "video").Count(&total)
-	n := total - covered
-	if n < 0 {
-		n = 0
-	}
-	return n
-}
-
-// playbackSyncAlt 单个小号的镜像同步：
-//  1. 主号台账（rel_path→pickcode）为基准
-//  2. 小号镜像目录树（rel_path→pickcode）
-//  3. 缺失文件：主号分享 → 小号 receive 到镜像目录（目录不存在先建）
-//  4. 落映射表
-func (h *Handler) playbackSyncAlt(alt *playbackAlt) (string, error) {
+// playbackMirrorAlt 小号预镜像（台账全量对账；播放时另有按需兜底）
+func (h *Handler) playbackMirrorAlt(alt *playbackAlt) (int, error) {
 	if strings.TrimSpace(alt.Cookie) == "" {
-		return "", fmt.Errorf("Cookie 为空")
+		return 0, fmt.Errorf("Cookie 为空")
 	}
-	// 主号基准：台账
 	var ledger []model.SyncedFile
 	if err := model.DB.Where("kind = ? AND pick_code <> ''", "video").Find(&ledger).Error; err != nil {
-		return "", err
+		return 0, err
 	}
 	if len(ledger) == 0 {
-		return "", fmt.Errorf("同步台账为空（先完成一次全量同步）")
+		return 0, fmt.Errorf("同步台账为空（先完成一次全量同步）")
 	}
-	ledgerMap := map[string]string{} // rel_path → main pickcode
+	ledgerMap := map[string]string{}
 	for _, sf := range ledger {
 		ledgerMap[strings.Trim(sf.RelPath, "/")] = sf.PickCode
 	}
-
-	// 小号镜像根目录（strmhub_media_alt），不存在则建
 	altOpsC := altOps(alt)
 	altRoot, err := altEnsureRoot(altOpsC, alt)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-
-	// 小号现有目录树
-	altTree := map[string]string{} // rel_path → alt pickcode
-	walkAltTree(altOpsC, altRoot, "", altTree)
-
-	// 差异：台账有、小号没有 → 需转存
-	var missing []string // rel_path 列表
+	altTree := map[string]string{}
+	walkAltDir(altOpsC, altRoot, "", altTree)
+	var missing []string
 	for rel := range ledgerMap {
 		if _, ok := altTree[rel]; !ok {
 			missing = append(missing, rel)
 		}
 	}
-	added, transferred := 0, 0
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		// 按目录分组转存（一批一批来，每批一个目录）
-		byDir := map[string][]string{}
-		for _, rel := range missing {
-			dir := relDirOf(rel)
-			byDir[dir] = append(byDir[dir], rel)
+	sort.Strings(missing)
+	byDir := map[string][]string{}
+	for _, rel := range missing {
+		byDir[relDirOf(rel)] = append(byDir[relDirOf(rel)], rel)
+	}
+	dirs := make([]string, 0, len(byDir))
+	for d := range byDir {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	mainCookie, _ := h.get115Cookie()
+	for _, dir := range dirs {
+		select {
+		case <-stopCh:
+			return playbackSaveMapping(alt.ID, ledgerMap, altTree), nil
+		default:
 		}
-		dirs := make([]string, 0, len(byDir))
-		for d := range byDir {
-			dirs = append(dirs, d)
+		var targetCid string
+		var derr error
+		if dir != "" {
+			targetCid, derr = altEnsureDir(altOpsC, altRoot, dir)
+		} else {
+			targetCid = altRoot
 		}
-		sort.Strings(dirs)
-		for _, dir := range dirs {
-			select {
-			case <-stopCh:
-				break
-			default:
+		if derr != nil || targetCid == "" {
+			continue
+		}
+		var fileIDs []string
+		for _, rel := range byDir[dir] {
+			if fid := mainFileIDByPick(mainCookie, ledgerMap[rel]); fid != "" {
+				fileIDs = append(fileIDs, fid)
 			}
-			rels := byDir[dir]
-			// 1) 小号侧建目录（逐级），拿到 cid
-			cid, err := altEnsureDir(altOpsC, altRoot, dir)
-			if err != nil {
-				log.Printf("[播放账号] ○ 目录 %s 创建失败: %v", dir, err)
-				continue
-			}
-			// 2) 主号对这些文件创建分享
-			mainCookie, _ := h.get115Cookie()
-			fileIDs := make([]string, 0, len(rels))
-			for _, rel := range rels {
-				if fid := mainFileIDByPick(mainCookie, ledgerMap[rel]); fid != "" {
-					fileIDs = append(fileIDs, fid)
-				}
-			}
-			if len(fileIDs) == 0 {
-				continue
-			}
-			shareCode, receiveCode, err := mainShareFiles(mainCookie, fileIDs)
-			if err != nil {
-				log.Printf("[播放账号] ○ 分享创建失败（%s）: %v", dir, err)
-				continue
-			}
-			// 3) 小号转存（小号 Cookie 走 receive 链路）
-			if err := altReceiveShare(alt.Cookie, shareCode, receiveCode, cid); err != nil {
-				log.Printf("[播放账号] ○ 转存失败（%s）: %v", dir, err)
-				continue
-			}
-			transferred += len(rels)
-			// 4) 重扫该目录更新映射
-			time.Sleep(500 * time.Millisecond)
-			walkAltDir(altOpsC, altRoot, dir, altTree)
+		}
+		if len(fileIDs) == 0 {
+			continue
+		}
+		shareCode, receiveCode, serr := mainShareFiles(mainCookie, fileIDs)
+		if serr != nil {
+			continue
+		}
+		if err := altReceiveShare(alt.Cookie, shareCode, receiveCode, targetCid); err != nil {
+			continue
+		}
+		time.Sleep(500 * time.Millisecond)
+		if dir != "" {
+			walkAltDir(altOpsC, targetCid, dir, altTree)
+		} else {
+			walkAltDir(altOpsC, altRoot, "", altTree)
 		}
 	}
-
-	// 落映射表
-	added = playbackSaveMapping(alt.ID, ledgerMap, altTree)
-	msg := fmt.Sprintf("镜像同步完成：覆盖 %d，本轮新增 %d（转存 %d 文件）", added, len(missing), transferred)
-	return msg, nil
+	return playbackSaveMapping(alt.ID, ledgerMap, altTree), nil
 }
 
-// altEnsureRoot 小号镜像根目录（固定名 strmhub_media_alt）
+// ==================== 按需副本 ====================
+
+// playbackRelPath pickcode → 台账相对路径
+func playbackRelPath(db *gorm.DB, pickcode string) string {
+	var sf model.SyncedFile
+	if err := db.Where("pick_code = ? AND kind = ?", pickcode, "video").First(&sf).Error; err != nil {
+		return ""
+	}
+	return strings.Trim(sf.RelPath, "/")
+}
+
+// playbackEnsureAltCopy 确保观众小号有该文件副本
+func (h *Handler) playbackEnsureAltCopy(alt *playbackAlt, rel string) (string, error) {
+	var m model.PlaybackAltFile
+	if err := model.DB.Where("account_id = ? AND rel_path = ?", alt.ID, rel).First(&m).Error; err == nil && m.AltPickCode != "" {
+		return m.AltPickCode, nil
+	}
+	mainCookie, err := h.get115Cookie()
+	if err != nil {
+		return "", err
+	}
+	var sf model.SyncedFile
+	if err := model.DB.Where("rel_path = ? AND kind = ?", rel, "video").First(&sf).Error; err != nil || sf.PickCode == "" {
+		return "", fmt.Errorf("台账无此文件")
+	}
+	fid := mainFileIDByPick(mainCookie, sf.PickCode)
+	if fid == "" {
+		return "", fmt.Errorf("主号文件定位失败")
+	}
+	altOpsC := altOps(alt)
+	altRoot, err := altEnsureRoot(altOpsC, alt)
+	if err != nil {
+		return "", err
+	}
+	dir := relDirOf(rel)
+	targetCid := altRoot
+	if dir != "" {
+		if targetCid, err = altEnsureDir(altOpsC, altRoot, dir); err != nil {
+			return "", err
+		}
+	}
+	shareCode, receiveCode, err := mainShareFiles(mainCookie, []string{fid})
+	if err != nil {
+		return "", err
+	}
+	if err := altReceiveShare(alt.Cookie, shareCode, receiveCode, targetCid); err != nil {
+		return "", err
+	}
+	time.Sleep(600 * time.Millisecond)
+	tree := map[string]string{}
+	walkAltDir(altOpsC, targetCid, dir, tree)
+	altPC := tree[rel]
+	if altPC == "" {
+		return "", fmt.Errorf("转存后未找到副本")
+	}
+	model.DB.Create(&model.PlaybackAltFile{AccountID: alt.ID, RelPath: rel, AltPickCode: altPC})
+	return altPC, nil
+}
+
+// playbackEnsureDeviceCopy 确保主号内该设备副本
+func (h *Handler) playbackEnsureDeviceCopy(cfg *playbackCfg, devKey, devName, pickcode string) (string, error) {
+	var c model.PlaybackCopy
+	if err := model.DB.Where("device_key = ? AND main_pick_code = ?", devKey, pickcode).First(&c).Error; err == nil && c.CopyPickCode != "" {
+		model.DB.Model(&c).Updates(map[string]interface{}{"last_played": time.Now()})
+		return c.CopyPickCode, nil
+	}
+	cookie, err := h.get115Cookie()
+	if err != nil {
+		return "", err
+	}
+	rel := playbackRelPath(model.DB, pickcode)
+	if rel == "" {
+		return "", fmt.Errorf("台账无此文件")
+	}
+	root := cfg.CopyRootCID
+	if root == "" {
+		ops, oerr := h.newPan115Ops()
+		if oerr != nil {
+			return "", oerr
+		}
+		cid, cerr := ops.mkdir("0", "多端播放")
+		if cerr != nil {
+			return "", cerr
+		}
+		cfg.CopyRootCID = cid
+		cfg.CopyRootName = "多端播放"
+		_ = savePlaybackCfg(cfg)
+		root = cid
+	}
+	dirName := devName
+	if dirName == "" {
+		dirName = devKey
+	}
+	dirName = sanitizePlaybackDirName(dirName)
+	ops, oerr := h.newPan115Ops()
+	if oerr != nil {
+		return "", oerr
+	}
+	dirCid, derr := ops.ensurePath(root, dirName)
+	if derr != nil {
+		return "", derr
+	}
+	fid := ""
+	var sf model.SyncedFile
+	if err := model.DB.Where("rel_path = ? AND kind = ?", rel, "video").First(&sf).Error; err == nil && sf.FileID != "" {
+		fid = sf.FileID
+	} else {
+		fid = mainFileIDByPick(cookie, pickcode)
+	}
+	if fid == "" {
+		return "", fmt.Errorf("主号文件定位失败")
+	}
+	copyPick, cerr := copy115File(cookie, fid, dirCid)
+	if cerr != nil {
+		return "", cerr
+	}
+	model.DB.Create(&model.PlaybackCopy{
+		DeviceKey: devKey, MainPickCode: pickcode, CopyPickCode: copyPick, RelPath: rel, LastPlayed: time.Now(),
+	})
+	return copyPick, nil
+}
+
+// ==================== 115 同账号复制 ====================
+
+// copy115File 同账号复制文件到目录
+func copy115File(cookie, fid, targetCid string) (string, error) {
+	form := url.Values{
+		"pid":    {targetCid},
+		"fid[0]": {fid},
+	}
+	body, err := httpPostForm115("https://webapi.115.com/files/copy", form, cookie, 15*time.Second)
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		State bool `json:"state"`
+		Data  struct {
+			PickCode string `json:"pick_code"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &r) != nil || !r.State {
+		return "", fmt.Errorf("复制被拒: %s", truncateStr(string(body), 100))
+	}
+	if r.Data.PickCode != "" {
+		return r.Data.PickCode, nil
+	}
+	return "", fmt.Errorf("复制响应无 pick_code: %s", truncateStr(string(body), 100))
+}
+
+// ==================== 工具函数 ====================
+
+// altEnsureRoot 小号副本根目录
 func altEnsureRoot(ops *pan115Ops, alt *playbackAlt) (string, error) {
 	if alt.RootCid != "" {
-		// 校验还在
 		if _, err := get115DirInfo(alt.Cookie, alt.RootCid); err == nil {
 			return alt.RootCid, nil
 		}
 	}
 	cid, err := ops.mkdir("0", "strmhub_media_alt")
 	if err != nil {
-		// 可能已存在：搜一遍
 		return "", fmt.Errorf("创建镜像根目录失败: %w", err)
 	}
 	alt.RootCid = cid
@@ -455,24 +673,16 @@ func altEnsureRoot(ops *pan115Ops, alt *playbackAlt) (string, error) {
 	return cid, nil
 }
 
-// walkAltTree 递归遍历小号镜像树（只收视频关心的全部文件映射）
-func walkAltTree(ops *pan115Ops, rootCid, prefix string, out map[string]string) {
-	walkAltDir(ops, rootCid, prefix, out)
-}
-
-// walkAltDir 递归遍历某个子目录
+// walkAltDir 递归遍历小号目录树
 func walkAltDir(ops *pan115Ops, cid, prefix string, out map[string]string) {
 	entries, _, err := ops.listEntries(cid, 0)
 	if err != nil {
 		return
 	}
-	var subDirs []struct {
-		id   string
-		name string
-	}
+	type sd struct{ id, name string }
+	var subs []sd
 	for _, e := range entries {
 		if fmt.Sprint(e["f"]) == "1" {
-			// 文件：rel = prefix + 文件名
 			name := fmt.Sprint(e["n"])
 			rel := name
 			if prefix != "" {
@@ -482,29 +692,25 @@ func walkAltDir(ops *pan115Ops, cid, prefix string, out map[string]string) {
 				out[rel] = pc
 			}
 		} else {
-			subDirs = append(subDirs, struct {
-				id   string
-				name string
-			}{fmt.Sprint(e["fid"]), fmt.Sprint(e["n"])})
+			subs = append(subs, sd{fmt.Sprint(e["fid"]), fmt.Sprint(e["n"])})
 		}
 	}
-	for _, sd := range subDirs {
-		rel := sd.name
+	for _, s := range subs {
+		rel := s.name
 		if prefix != "" {
-			rel = prefix + "/" + sd.name
+			rel = prefix + "/" + s.name
 		}
-		walkAltDir(ops, sd.id, rel, out)
+		walkAltDir(ops, s.id, rel, out)
 	}
 }
 
-// altEnsureDir 逐级确保小号侧目录存在（mkdir115 幂等：重名 115 返回错误但目录已在）
+// altEnsureDir 逐级确保目录存在
 func altEnsureDir(ops *pan115Ops, rootCid, relDir string) (string, error) {
 	cur := rootCid
 	for _, seg := range strings.Split(relDir, "/") {
 		if seg == "" {
 			continue
 		}
-		// 找现有
 		found := ""
 		dirs, _, _, err := ops.listDirs(cur)
 		if err == nil {
@@ -519,7 +725,6 @@ func altEnsureDir(ops *pan115Ops, rootCid, relDir string) (string, error) {
 			var err error
 			found, err = mkdir115(ops.cookie, cur, seg)
 			if err != nil {
-				// 重名冲突 = 已存在，重查
 				dirs, _, _, err2 := ops.listDirs(cur)
 				if err2 == nil {
 					for _, d := range dirs {
@@ -535,13 +740,12 @@ func altEnsureDir(ops *pan115Ops, rootCid, relDir string) (string, error) {
 			}
 		}
 		cur = found
-		time.Sleep(200 * time.Millisecond) // 目录创建有 115 端延迟
+		time.Sleep(200 * time.Millisecond)
 	}
 	return cur, nil
 }
 
-// mainFileIDByPick 主号 pickcode → file_id（files/getid 反查不可用，用
-// 文件 API：webapi files API 按 pickcode 查详情拿 fid）
+// mainFileIDByPick pickcode → file_id
 func mainFileIDByPick(cookie, pickCode string) string {
 	body, err := httpGet115Full("https://webapi.115.com/files/getinfo",
 		url.Values{"pick_code": {pickCode}}, cookie, ua115Unified(), 15*time.Second, nil)
@@ -560,7 +764,7 @@ func mainFileIDByPick(cookie, pickCode string) string {
 	return fmt.Sprint(r.Data[0].FileID)
 }
 
-// mainShareFiles 主号对一批 file_id 创建分享，返回 (share_code, receive_code)
+// mainShareFiles 主号创建分享
 func mainShareFiles(cookie string, fileIDs []string) (string, string, error) {
 	if len(fileIDs) == 0 {
 		return "", "", fmt.Errorf("无文件")
@@ -606,131 +810,29 @@ func randomCode(n int) string {
 	return string(b)
 }
 
-// playbackSaveMapping 落映射表（全量对账式：删旧插新，事务内）
+// playbackSaveMapping 映射落库
 func playbackSaveMapping(accountID int64, ledgerMap, altTree map[string]string) int {
-	type row struct {
-		RelPath  string
-		PickCode string
-	}
-	var rows []row
+	var rows []model.PlaybackAltFile
 	for rel := range ledgerMap {
 		if altPC, ok := altTree[rel]; ok && altPC != "" {
-			rows = append(rows, row{rel, altPC})
+			rows = append(rows, model.PlaybackAltFile{AccountID: accountID, RelPath: rel, AltPickCode: altPC})
 		}
 	}
 	model.DB.Where("account_id = ?", accountID).Delete(&model.PlaybackAltFile{})
 	if len(rows) == 0 {
 		return 0
 	}
-	batch := make([]model.PlaybackAltFile, 0, len(rows))
-	for _, r := range rows {
-		batch = append(batch, model.PlaybackAltFile{
-			AccountID: accountID, RelPath: r.RelPath, AltPickCode: r.PickCode,
-		})
-	}
-	for i := 0; i < len(batch); i += 500 {
+	for i := 0; i < len(rows); i += 500 {
 		end := i + 500
-		if end > len(batch) {
-			end = len(batch)
+		if end > len(rows) {
+			end = len(rows)
 		}
-		model.DB.CreateInBatches(batch[i:end], 200)
+		model.DB.CreateInBatches(rows[i:end], 200)
 	}
 	return len(rows)
 }
 
-// ---- 播放路由（302 取链接入） ----
-
-// playbackRouteForUA 为一次播放请求选小号：设备绑定（UA 哈希稳定映射）
-// 或轮询分摊；返回 nil 表示不用小号（主号）
-func playbackRouteForUA(cfg *playbackCfg, ua string) *playbackAlt {
-	if cfg.Mode != "alt" || len(cfg.Alts) == 0 {
-		return nil
-	}
-	var enabled []*playbackAlt
-	for i := range cfg.Alts {
-		if cfg.Alts[i].Enabled && strings.TrimSpace(cfg.Alts[i].Cookie) != "" {
-			enabled = append(enabled, &cfg.Alts[i])
-		}
-	}
-	if len(enabled) == 0 {
-		return nil
-	}
-	if cfg.Routing == "round" {
-		var n int64
-		model.DB.Model(&model.PlaybackDevice{}).Count(&n)
-		return enabled[int(n)%len(enabled)]
-	}
-	// 设备绑定：UA 哈希 → 固定小号（同设备永远同小号，直链缓存键稳定）
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(ua))
-	return enabled[int(h.Sum32())%len(enabled)]
-}
-
-// playbackResolve 播放取直链（小号模式）：
-// main pickcode → 台账 rel_path → 小号 pickcode → 小号 Cookie 取直链。
-// 返回 (直链, headers, 错误)；未启用/映射未命中返回 err=playbackSkipErr
-var errPlaybackSkip = fmt.Errorf("playback: 未命中小号映射，回退主号")
-
-func playbackResolve(db *gorm.DB, cfg *config.Config, mainPickcode, ua string) (string, map[string]string, error) {
-	pcfg := loadPlaybackCfg()
-	alt := playbackRouteForUA(pcfg, ua)
-	if alt == nil {
-		return "", nil, errPlaybackSkip
-	}
-	var sf model.SyncedFile
-	if err := db.Where("pick_code = ? AND kind = ?", mainPickcode, "video").First(&sf).Error; err != nil || sf.RelPath == "" {
-		return "", nil, errPlaybackSkip
-	}
-	var m model.PlaybackAltFile
-	if err := db.Where("account_id = ? AND rel_path = ?", alt.ID, strings.Trim(sf.RelPath, "/")).First(&m).Error; err != nil || m.AltPickCode == "" {
-		// 小号还没这个文件：记录待同步，回退主号
-		return "", nil, errPlaybackSkip
-	}
-	u, hdrs, err := get115DownloadURL(m.AltPickCode, alt.Cookie, ua)
-	if err != nil {
-		log.Printf("[播放账号] ○ 小号「%s」取直链失败，回退主号: %v", alt.Name, err)
-		return "", nil, errPlaybackSkip
-	}
-	// 设备登记（多端播放页展示）
-	playbackTouchDevice(ua, alt.ID, alt.Name)
-	return u, hdrs, nil
-}
-
-// playbackTouchDevice 设备登记/更新（多端播放 tab 展示设备→小号绑定）
-func playbackTouchDevice(ua string, altID int64, altName string) {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(ua))
-	uah := fmt.Sprint(h.Sum32())
-	var d model.PlaybackDevice
-	if err := model.DB.Where("ua_hash = ?", uah).First(&d).Error; err != nil {
-		d = model.PlaybackDevice{UAHash: uah, UA: truncateStr(ua, 200), FirstSeen: time.Now()}
-	}
-	d.AltID = altID
-	d.AltName = altName
-	d.LastSeen = time.Now()
-	model.DB.Save(&d)
-}
-
-// ---- 多端播放：设备列表 ----
-
-// PlaybackDevices GET /playback/devices → 已知设备与小号绑定
-func (h *Handler) PlaybackDevices(c *gin.Context) {
-	var devices []model.PlaybackDevice
-	model.DB.Order("last_seen DESC").Limit(50).Find(&devices)
-	c.JSON(http.StatusOK, gin.H{"data": devices})
-}
-
-// relDirOf 取路径的目录部分
-func relDirOf(rel string) string {
-	i := strings.LastIndex(rel, "/")
-	if i <= 0 {
-		return ""
-	}
-	return rel[:i]
-}
-
-// altReceiveShare 小号侧转存：snap 拿 fid → receive 进目标目录
-// （与 share.go 的 receive 链路同协议，但用小号 Cookie 且不触发整理）
+// altReceiveShare 小号侧转存
 func altReceiveShare(altCookie, shareCode, receiveCode, targetCid string) error {
 	var fids []string
 	for offset := 0; ; offset += 1150 {
@@ -786,8 +888,75 @@ func altReceiveShare(altCookie, shareCode, receiveCode, targetCid string) error 
 	return nil
 }
 
-// PlaybackAltQrStatus 小号扫码轮询：与主号扫码同协议（长轮询状态机），
-// 区别只在成功后——Cookie 不落主号，验证后直接加入播放账号池
+func relDirOf(rel string) string {
+	i := strings.LastIndex(rel, "/")
+	if i <= 0 {
+		return ""
+	}
+	return rel[:i]
+}
+
+// ==================== 播放路由 ====================
+
+var errPlaybackSkip = fmt.Errorf("playback: 无副本路由，回退主号")
+
+// sanitizePlaybackDirName 设备名做目录名时去除非法字符
+func sanitizePlaybackDirName(name string) string {
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune("/\\:*?\"<>|", r) {
+			return '_'
+		}
+		return r
+	}, name)
+}
+
+// playbackResolvePlay 起播解析：观众小号 → 设备副本 → 主号（skip）。
+// 返回 /pb/ 相对地址（errPlaybackSkip = 走主号 /d/ 原路径）
+func (h *Handler) playbackResolvePlay(db *gorm.DB, devKey, devName, pickcode, ua string) (string, error) {
+	cfg := loadPlaybackCfg()
+	if alt := playbackBoundAlt(cfg, db, devKey); alt != nil {
+		rel := playbackRelPath(db, pickcode)
+		if rel != "" {
+			altPC, err := h.playbackEnsureAltCopy(alt, rel)
+			if err == nil && altPC != "" {
+				return "/pb/u-" + fmt.Sprint(alt.ID) + "/" + altPC, nil
+			}
+			log.Printf("[播放账号] ○ 小号副本获取失败，回退: %v", err)
+		}
+	}
+	if cfg.MultiEnabled {
+		pc, err := h.playbackEnsureDeviceCopy(cfg, devKey, devName, pickcode)
+		if err == nil && pc != "" {
+			return "/pb/d-" + devKey + "/" + pc, nil
+		}
+		log.Printf("[播放账号] ○ 设备副本失败，回退主号: %v", err)
+	}
+	return "", errPlaybackSkip
+}
+
+// h0EnsureAltCopy playbackEnsureAltCopy 的包内直调变体
+func h0EnsureAltCopy(db *gorm.DB, alt *playbackAlt, rel string) (string, error) {
+	var m model.PlaybackAltFile
+	if err := db.Where("account_id = ? AND rel_path = ?", alt.ID, rel).First(&m).Error; err == nil && m.AltPickCode != "" {
+		return m.AltPickCode, nil
+	}
+	return "", fmt.Errorf("映射未命中")
+}
+
+// playbackResolve 主号 302 取链接入（小号/副本优先，未命中回退主号）。
+// 由 proxyDownloadURLFull 在每次取链时调用（含真实 UA）
+func playbackResolve(db *gorm.DB, cfg *config.Config, mainPickcode, ua string) (string, map[string]string, error) {
+	h := &Handler{DB: db, Config: cfg}
+	devKey, devName := playbackDeviceKeyFromUA(ua)
+	u, err := h.playbackResolvePlay(db, devKey, devName, mainPickcode, ua)
+	if err != nil {
+		return "", nil, errPlaybackSkip
+	}
+	// /pb/ 端点在 6086 代理上，组装本机可达地址
+	return "http://127.0.0.1:" + cfg.ProxyPortStr() + u, nil, nil
+}
+
+// PlaybackAltQrStatus 小号扫码轮询（成功 → Cookie 入账号池，不落主号）
 func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
 	var req struct {
 		Uid  string `json:"uid"`
@@ -805,12 +974,11 @@ func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
 	}
 	body, err := httpGetJSON(statusAPI, query, 60*time.Second)
 	if err != nil {
-		// 长轮询超时 = 仍在等待扫码
 		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
 		return
 	}
 	var st qrStatusResp
-	if err := json.Unmarshal(body, &st); err != nil {
+	if json.Unmarshal(body, &st) != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "解析状态失败"})
 		return
 	}
@@ -836,14 +1004,12 @@ func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cookie 验证失败: " + verr.Error()})
 			return
 		}
-		// 主号判重
-		if mainCookie, err := h.get115Cookie(); err == nil && mainCookie != "" {
+		if mainCookie, merr := h.get115Cookie(); merr == nil && mainCookie != "" {
 			if mainUID, _, _ := altVerifyCookie(mainCookie); uid != "" && uid == mainUID {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "扫的是主号自己，请用小号的 115 App 扫码"})
 				return
 			}
 		}
-		// 账号池判重
 		cfg := loadPlaybackCfg()
 		for _, a := range cfg.Alts {
 			if auid, _, _ := altVerifyCookie(a.Cookie); uid != "" && auid == uid {
@@ -873,31 +1039,4 @@ func (h *Handler) PlaybackAltQrStatus(c *gin.Context) {
 	default:
 		c.JSON(http.StatusOK, gin.H{"status": "waiting"})
 	}
-}
-
-// PlaybackSetAltRoot POST /playback/alt/root {id, cid} → 设置小号镜像根目录
-// （缺省自动在小号网盘根建 strmhub_media_alt；用户可选已有目录）
-func (h *Handler) PlaybackSetAltRoot(c *gin.Context) {
-	var req struct {
-		ID  string `json:"id"`
-		CID string `json:"cid"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" || req.CID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
-		return
-	}
-	cfg := loadPlaybackCfg()
-	for i := range cfg.Alts {
-		if fmt.Sprint(cfg.Alts[i].ID) == req.ID {
-			cfg.Alts[i].RootCid = req.CID
-			if err := savePlaybackCfg(cfg); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			log.Printf("[播放账号] ✓ 小号「%s」镜像目录已更新（cid=%s）", cfg.Alts[i].Name, req.CID)
-			c.JSON(http.StatusOK, gin.H{"message": "镜像目录已保存"})
-			return
-		}
-	}
-	c.JSON(http.StatusNotFound, gin.H{"error": "小号不存在"})
 }

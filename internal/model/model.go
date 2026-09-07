@@ -280,6 +280,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&OfflinePlay{},
 		&UploadMark{},
 		&PlaybackAltFile{},
+		&PlaybackCopy{},
 		&PlaybackDevice{},
 	); err != nil {
 		return nil, err
@@ -386,4 +387,15 @@ type PlaybackDevice struct {
 	AltName   string    `json:"alt_name" gorm:"size:100"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+}
+
+// PlaybackCopy 设备副本映射：设备 → 主号文件 → 副本 pickcode（多端播放）
+type PlaybackCopy struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	DeviceKey     string    `json:"device_key" gorm:"uniqueIndex:idx_dev_pick;size:40;not null"`
+	MainPickCode  string    `json:"main_pick_code" gorm:"uniqueIndex:idx_dev_pick;size:64;not null"`
+	CopyPickCode  string    `json:"copy_pick_code" gorm:"size:64"`
+	RelPath       string    `json:"rel_path" gorm:"size:500"`
+	LastPlayed    time.Time `json:"last_played"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
