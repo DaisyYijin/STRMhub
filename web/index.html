@@ -290,6 +290,20 @@
         </div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="cd2Save(this)">保存配置</button> <button class="btn btn-success" onclick="cd2ScanRun(this)">立即扫描</button></div></div>
       </div>
+      <div class="card" style="margin-top:12px">
+        <div class="form-row"><div class="label">实时监控整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">订阅 CD2 文件变更推送：监控目录里出现新视频时自动识别（AV 番号/TMDB/目录名兜底）→ 按重命名模板改名 → 按二级分类移到「CD2 扫描目录」下的 媒体类型/分类/片目目录 → 生成本地 STRM 并推送通知。识别失败的留在原地等重试。库内删除/改名会同步增删 STRM。</span></i></div><div class="control">
+          <div class="segmented-control" id="cd2-org-switch">
+            <div class="seg-item active" data-value="true" onclick="setCd2Org(true)">开启</div>
+            <div class="seg-item" data-value="false" onclick="setCd2Org(false)">关闭</div>
+          </div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">开关保存后约 10 秒内生效；同目录文件静默 8 秒后才开始整理</div>
+        </div></div>
+        <div class="form-row"><div class="label">监控目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的待整理目录（绝对路径）。往这里转存/下载新内容即可触发自动整理，等同 115 的「待整理文件夹」。</span></i></div><div class="control">
+          <div class="form-inline-group"><input type="text" id="cd2-org-pending" placeholder="如 /115网盘/待整理" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-pending')">选择目录</button></div>
+        </div></div>
+        <div class="form-row"><div class="label">监控状态</div><div class="control"><div class="form-inline-group"><span id="cd2-watch-status" style="font-size:12.5px">未加载</span></div></div></div>
+        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="cd2Save(this)">保存配置</button> <button class="btn btn-success" onclick="cd2OrgRun(this)">立即整理</button></div></div>
+      </div>
       </div>
     </div>
 

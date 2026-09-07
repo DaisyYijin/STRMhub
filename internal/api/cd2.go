@@ -33,9 +33,11 @@ type cd2Cfg struct {
 	Endpoint     string `json:"endpoint"` // host:port 或 http(s)://host:port，默认端口 19798
 	Username     string `json:"username"`
 	Password     string `json:"password"`
-	RootPath     string `json:"root_path"`     // CD2 内的扫描根目录（绝对路径，如 /115网盘/媒体）
+	RootPath     string `json:"root_path"`     // CD2 内的媒体库根（扫描根 / 整理目标根）
 	LocalPath    string `json:"local_path"`    // STRM 输出目录
 	PreferDirect bool   `json:"prefer_direct"` // 优先网盘直链（无 UA 要求时），否则始终走 CD2 中转
+	OrgEnabled   bool   `json:"org_enabled"`   // 实时监控整理开关
+	OrgPending   string `json:"org_pending"`   // 监控（待整理）目录，CD2 绝对路径
 }
 
 func (h *Handler) loadCd2Cfg() cd2Cfg {

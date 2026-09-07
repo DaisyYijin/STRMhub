@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const cd2Service = "clouddrive.CloudDriveFileSrv"
@@ -241,4 +242,148 @@ func (c *Client) downloadURLOnce(ctx context.Context, path string, direct bool) 
 	}
 	info.ExtraHeaders = out.AdditionalHeaders
 	return info, nil
+}
+
+// ==================== 写操作（整理用） ====================
+
+// invoke 带认证的一元调用，Unauthenticated 时重登一次再重试
+func (c *Client) invoke(ctx context.Context, method string, in, out interface{}) error {
+	actx, err := c.withAuth(ctx)
+	if err != nil {
+		return err
+	}
+	conn, err := c.getConn()
+	if err != nil {
+		return err
+	}
+	err = conn.Invoke(actx, method, in, out)
+	if authErr(err) {
+		c.invalidateToken()
+		actx, err = c.withAuth(ctx)
+		if err != nil {
+			return err
+		}
+		return conn.Invoke(actx, method, in, out)
+	}
+	return err
+}
+
+func opResultErr(res *pb.FileOperationResult) error {
+	if res == nil {
+		return nil
+	}
+	if !res.Success && !strings.Contains(strings.ToLower(res.ErrorMessage), "exist") {
+		return fmt.Errorf("%s", res.ErrorMessage)
+	}
+	return nil
+}
+
+// EnsureDir 逐级创建目录（已存在视为成功）。dir 为 CD2 绝对路径
+func (c *Client) EnsureDir(ctx context.Context, dir string) error {
+	segs := strings.Split(strings.Trim(dir, "/"), "/")
+	cur := ""
+	for _, seg := range segs {
+		if seg == "" {
+			continue
+		}
+		req := &pb.CreateFolderRequest{ParentPath: cur, FolderName: seg}
+		var out pb.CreateFolderResult
+		if err := c.invoke(ctx, cd2Service+"/CreateFolder", req, &out); err != nil {
+			// 目录已存在时 CD2 可能以 gRPC 错误或错误消息返回，都放行
+			if !strings.Contains(strings.ToLower(err.Error()), "exist") {
+				return fmt.Errorf("创建目录 %s/%s 失败: %w", cur, seg, err)
+			}
+		} else if err := opResultErr(out.Result); err != nil {
+			return fmt.Errorf("创建目录 %s/%s 失败: %w", cur, seg, err)
+		}
+		if cur == "" {
+			cur = "/" + seg
+		} else {
+			cur = cur + "/" + seg
+		}
+	}
+	return nil
+}
+
+// MoveFiles 把若干绝对路径移动到 destDir（同名跳过）
+func (c *Client) MoveFiles(ctx context.Context, paths []string, destDir string) error {
+	skip := pb.MoveFileRequest_Skip
+	req := &pb.MoveFileRequest{TheFilePaths: paths, DestPath: destDir, ConflictPolicy: &skip}
+	var out pb.FileOperationResult
+	if err := c.invoke(ctx, cd2Service+"/MoveFile", req, &out); err != nil {
+		return err
+	}
+	return opResultErr(&out)
+}
+
+// Rename 原地重命名（同目录）
+func (c *Client) Rename(ctx context.Context, path, newName string) error {
+	req := &pb.RenameFileRequest{TheFilePath: path, NewName: newName}
+	var out pb.FileOperationResult
+	if err := c.invoke(ctx, cd2Service+"/RenameFile", req, &out); err != nil {
+		return err
+	}
+	return opResultErr(&out)
+}
+
+// ==================== 实时变更推送 ====================
+
+// Change 一条文件系统变更事件
+type Change struct {
+	Type    string // create / delete / rename
+	IsDir   bool
+	Path    string
+	NewPath string // 仅 rename
+}
+
+// WatchOnce 订阅 PushMessage 流直到出错或 ctx 结束，把 FILE_SYSTEM_CHANGE
+// 事件回调给 onChange。重连策略由调用方负责
+func (c *Client) WatchOnce(ctx context.Context, onChange func(Change)) error {
+	actx, err := c.withAuth(ctx)
+	if err != nil {
+		return err
+	}
+	conn, err := c.getConn()
+	if err != nil {
+		return err
+	}
+	desc := &grpc.StreamDesc{StreamName: "PushMessage", ServerStreams: true}
+	stream, err := conn.NewStream(actx, desc, cd2Service+"/PushMessage")
+	if err != nil {
+		return fmt.Errorf("订阅 CD2 推送失败: %w", err)
+	}
+	if err := stream.SendMsg(&emptypb.Empty{}); err != nil {
+		return err
+	}
+	if err := stream.CloseSend(); err != nil {
+		return err
+	}
+	for {
+		msg := &pb.CloudDrivePushMessage{}
+		if err := stream.RecvMsg(msg); err != nil {
+			if err == io.EOF || ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("CD2 推送流中断: %w", err)
+		}
+		if msg.GetMessageType() != pb.CloudDrivePushMessage_FILE_SYSTEM_CHANGE {
+			continue
+		}
+		fc := msg.GetFileSystemChange()
+		if fc == nil {
+			continue
+		}
+		ch := Change{IsDir: fc.GetIsDirectory(), Path: fc.GetPath(), NewPath: fc.GetNewPath()}
+		switch fc.GetChangeType() {
+		case pb.FileSystemChange_CREATE:
+			ch.Type = "create"
+		case pb.FileSystemChange_DELETE:
+			ch.Type = "delete"
+		case pb.FileSystemChange_RENAME:
+			ch.Type = "rename"
+		default:
+			continue
+		}
+		onChange(ch)
+	}
 }

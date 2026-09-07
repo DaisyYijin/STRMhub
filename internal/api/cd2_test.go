@@ -10,6 +10,41 @@ import (
 	"strmhub/internal/cd2"
 )
 
+func TestCd2PathHelpers(t *testing.T) {
+	if got := cd2NormPath("/a/b/"); got != "/a/b" {
+		t.Errorf("norm: %q", got)
+	}
+	if got := cd2NormPath(""); got != "/" {
+		t.Errorf("norm empty: %q", got)
+	}
+	// 前缀判定：子路径含，兄弟路径不含
+	if !cd2HasPrefix("/媒体/电影", "/媒体") || !cd2HasPrefix("/媒体", "/媒体") {
+		t.Error("hasPrefix should match subtree")
+	}
+	if cd2HasPrefix("/媒体2/x", "/媒体") {
+		t.Error("hasPrefix must not match sibling prefix")
+	}
+	if !cd2HasPrefix("/任意", "/") {
+		t.Error("root / contains all")
+	}
+	// 拼接：跳过空段
+	if got := cd2Join("媒体", "", "/电影/", ""); got != "/媒体/电影" {
+		t.Errorf("join: %q", got)
+	}
+	// 库内路径 → STRM 相对位置
+	relDir, name := cd2RelStrm("/媒体", "/媒体/电影/XX/片/file.mkv")
+	if relDir != "电影/XX/片" || name != "file.mkv" {
+		t.Errorf("relStrm: %q %q", relDir, name)
+	}
+	if d, n := cd2RelStrm("/媒体", "/媒体"); d != "" || n != "" {
+		t.Errorf("relStrm root itself: %q %q", d, n)
+	}
+	// 本地 STRM 路径（与 writeStrmCd2 落盘位置同构）
+	if got := cd2LocalStrmPath("/data", "/媒体", "/媒体/电影/片/file.mkv"); got != filepath.Join("/data", "电影", "片", "file.mkv.strm") {
+		t.Errorf("localStrmPath: %q", got)
+	}
+}
+
 func TestCd2GrpcTarget(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"http://1.2.3.4:19798", "1.2.3.4:19798"},

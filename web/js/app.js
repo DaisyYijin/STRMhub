@@ -1632,6 +1632,7 @@ async function pan123ScanRun(btn) {
 // 两处共用同一份 setting（保存时带上另一页当前填写的值，与 123 盘同模式）
 
 let cd2PreferDirect = true;
+let cd2OrgEnabled = false;
 
 function cd2Gather() {
   return {
@@ -1641,6 +1642,8 @@ function cd2Gather() {
     root_path: val('cd2-root').trim(),
     local_path: val('cd2-local').trim(),
     prefer_direct: cd2PreferDirect,
+    org_enabled: cd2OrgEnabled,
+    org_pending: val('cd2-org-pending').trim(),
   };
 }
 
@@ -1649,6 +1652,36 @@ function setCd2Link(v) {
   document.querySelectorAll('#cd2-link-switch .seg-item').forEach(n => {
     n.classList.toggle('active', n.dataset.value === String(v));
   });
+}
+
+function setCd2Org(v) {
+  cd2OrgEnabled = v;
+  document.querySelectorAll('#cd2-org-switch .seg-item').forEach(n => {
+    n.classList.toggle('active', n.dataset.value === String(v));
+  });
+}
+
+async function cd2WatchStatus() {
+  const el = document.getElementById('cd2-watch-status');
+  if (!el) return;
+  try {
+    const d = await api('/cd2/org/status');
+    const s = d.data || {};
+    if (!s.enabled) {
+      el.textContent = '○ 未开启';
+      el.style.color = 'var(--text-3)';
+    } else if (s.running) {
+      el.textContent = '● 监控中（已整理 ' + (s.organized || 0) + ' 个单元' +
+        (s.last_event && s.last_event !== '01-01 01:01:01' ? '，最近事件 ' + s.last_event : '') + '）';
+      el.style.color = '#1f8a4c';
+    } else {
+      el.textContent = '● 启动中…' + (s.last_err ? '（' + s.last_err + '）' : '');
+      el.style.color = 'var(--warning)';
+    }
+  } catch (e) {
+    el.textContent = '状态加载失败';
+    el.style.color = 'var(--danger)';
+  }
 }
 
 async function cd2LoadUI() {
@@ -1660,8 +1693,11 @@ async function cd2LoadUI() {
     setVal('cd2-password', c.password || '');
     setVal('cd2-root', c.root_path || '');
     setVal('cd2-local', c.local_path || '/media');
+    setVal('cd2-org-pending', c.org_pending || '');
     setCd2Link(c.prefer_direct !== false);
+    setCd2Org(!!c.org_enabled);
   } catch (e) { /* 首次为空 */ }
+  cd2WatchStatus();
 }
 
 async function cd2Save(btn) {
@@ -1697,6 +1733,16 @@ async function cd2ScanRun(btn) {
   try {
     const d = await api('/cd2/scan', { method: 'POST' });
     toast(d.message || '扫描已开始');
+  } catch (e) { toast(e.message); }
+  btn.disabled = false;
+}
+
+async function cd2OrgRun(btn) {
+  if (!confirm('立即整理监控目录下所有待处理内容？')) return;
+  btn.disabled = true;
+  try {
+    const d = await api('/cd2/org/run', { method: 'POST' });
+    toast(d.message || '整理已开始');
   } catch (e) { toast(e.message); }
   btn.disabled = false;
 }

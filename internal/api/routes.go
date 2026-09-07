@@ -451,6 +451,8 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/cd2/test", h.Cd2Test)
 		protected.GET("/cd2/dirs", h.Cd2Dirs)
 		protected.POST("/cd2/scan", h.Cd2Scan)
+		protected.GET("/cd2/org/status", h.Cd2OrgStatus)
+		protected.POST("/cd2/org/run", h.Cd2OrgRun)
 
 		// 媒体库封面生成（分类聚合 TMDB 海报 → 合成封面 → 推送 Emby）
 		protected.GET("/covergen/config", h.CoverGenGetConfig)
