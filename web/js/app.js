@@ -151,20 +151,20 @@ function showPage(id) {
     loadConfigs();
     updateStrmExample();
   }
-  if (id === 'config-accounts') { loadAccount(); pan123LoadUI(); cd2LoadUI(); }
+  if (id === 'config-accounts') { loadAccount(); pan123LoadUI(); }
   if (id === 'config-extension') ck115LoadPage();
   if (id === 'organize') {
     loadConfigs();
     loadCategory();
     scrapeLoadPage();
     pan123LoadUI();
-    cd2LoadUI();
     loadWash();
   }
   if (id === 'sync') { loadConfigs(); previewCron(); pan123LoadUI(); }
   if (id === 'upload-download') { loadConfigs(); startOfflineTasksPoll(); }
   else stopOfflineTasksPoll();
   if (id === 'media-transfer') { gyLoadPage(); pansouLoadPage(); mukakuLoadPage(); re0LoadPage(); }
+  if (id === 'cd2') cd2LoadUI();
   if (id === 'playback') pbLoadPage();
   if (id === 'tgsub') tgSubLoadPage();
   if (id === 'config-message') loadConfigs();
