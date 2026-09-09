@@ -307,7 +307,7 @@
 
       <!-- 影视刮削 -->
       <div class="tab-panel" data-panel="scrape">
-      <div class="alert alert-info">影视刮削：按 TMDB 直接生成标准 NFO + 海报到本地媒体库对应片目目录，落盘后由「监控上传」自动回传 115 对应目录——替代"Emby 刮削到本地"。Emby 侧建议把元数据读取器设为「仅 NFO」，以本站数据为准。电视剧集生成 tvshow.nfo 与整季海报；集级 NFO 暂不生成。</div>
+      <div class="alert alert-info">影视刮削：按 TMDB 直接生成标准 NFO + 海报到本地媒体库对应片目目录，落盘后由「监控上传」自动回传 115 对应目录——替代"Emby 刮削到本地"。Emby 侧建议把元数据读取器设为「仅 NFO」，以本站数据为准。剧集生成 tvshow.nfo、整季海报与逐集同名 NFO（含 TMDB 集信息）；NFO 内含 fileinfo/streamdetails 轨道信息（ffprobe 探测的多音轨/内嵌字幕），播放器无需探测 strm 远端即可显示音轨字幕。</div>
       <div class="card">
         <div class="form-row"><div class="label">本地媒体库根目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">本地挂载的媒体库根目录（如 /media）。片目目录 = 根目录 + 台账相对路径，与监控上传的监控目录通常是同一个。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="scrape-root" placeholder="如 /media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('scrape-root')">选择目录</button></div></div></div>
         <div class="form-row"><div class="label">NFO 元数据</div><div class="control">

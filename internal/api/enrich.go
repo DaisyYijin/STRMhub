@@ -25,6 +25,17 @@ import (
 )
 
 // probeResult ffprobe 探测出的媒体信息（映射为 CMS 风格的画质串片段）
+// probeTrack 一条媒体轨道（NFO streamdetails 用，全量保留）
+type probeTrack struct {
+	Kind     string // video / audio / subtitle
+	Codec    string // ffprobe 原始编码名（h264/hevc/aac/eac3/subrip…）
+	Width    int
+	Height   int
+	Channels int
+	Language string // ISO 639 轨道语言（可能为空）
+	Title    string // 轨道名（内嵌字幕常带，如"简体中文"）
+}
+
 type probeResult struct {
 	Pix      string // 1080p / 2160p ...
 	Video    string // H264 / H265
@@ -32,6 +43,7 @@ type probeResult struct {
 	Effect   string // HDR / DV（探测出 side_data 时标注）
 	Duration int    // 秒
 	ProbedAt time.Time
+	Streams  []probeTrack // 全量轨道：视频/多音轨/多内嵌字幕（写 NFO streamdetails）
 }
 
 // probeMediaInfo 用镜像内置的 ffprobe 读直链头部，解析主视频流与主音轨
@@ -119,16 +131,21 @@ func probeMediaInfoFile(filePath string) (*probeResult, error) {
 	return parseProbeOutput(out)
 }
 
-// parseProbeOutput 解析 ffprobe JSON 输出（主视频流 + 主音轨 + HDR/DV side_data）
+// parseProbeOutput 解析 ffprobe JSON 输出（主视频流 + 主音轨 + HDR/DV side_data +
+// 全量轨道列表：多音轨/内嵌字幕的语言、声道、轨道名，供 NFO streamdetails 用）
 func parseProbeOutput(out []byte) (*probeResult, error) {
 	var probe struct {
 		Streams []struct {
-			CodecType    string `json:"codec_type"`
-			CodecName    string `json:"codec_name"`
-			Width        int    `json:"width"`
-			Height       int    `json:"height"`
-			Channels     int    `json:"channels"`
-			Duration     string `json:"duration"`
+			CodecType   string `json:"codec_type"`
+			CodecName   string `json:"codec_name"`
+			Width       int    `json:"width"`
+			Height      int    `json:"height"`
+			Channels    int    `json:"channels"`
+			Duration    string `json:"duration"`
+			Disposition struct {
+				AttachedPic int `json:"attached_pic"`
+			} `json:"disposition"`
+			Tags         map[string]string `json:"tags"`
 			SideDataList []struct {
 				SideDataType string `json:"side_data_type"`
 			} `json:"side_data_list"`
@@ -144,6 +161,19 @@ func parseProbeOutput(out []byte) (*probeResult, error) {
 	res := &probeResult{ProbedAt: time.Now()}
 	var videoFound, audioFound bool
 	for _, st := range probe.Streams {
+		// 封面/挂图视频流（attached_pic，mp4 内嵌封面）不算轨道
+		if st.CodecType == "video" && st.Disposition.AttachedPic == 1 {
+			continue
+		}
+		lang := probeTag(st.Tags, "language")
+		if lang == "und" {
+			lang = ""
+		}
+		res.Streams = append(res.Streams, probeTrack{
+			Kind: st.CodecType, Codec: st.CodecName,
+			Width: st.Width, Height: st.Height, Channels: st.Channels,
+			Language: lang, Title: probeTag(st.Tags, "title"),
+		})
 		if st.CodecType == "video" && !videoFound {
 			videoFound = true
 			res.Pix = pixFromHeight(st.Height)
@@ -177,6 +207,17 @@ func parseProbeOutput(out []byte) (*probeResult, error) {
 		res.Duration = int(d)
 	}
 	return res, nil
+}
+
+// probeTag 取流 tag（大小写两种键名 ffprobe 都可能给）
+func probeTag(tags map[string]string, key string) string {
+	if tags == nil {
+		return ""
+	}
+	if v, ok := tags[key]; ok {
+		return v
+	}
+	return tags[strings.ToUpper(key)]
 }
 
 func probeMediaInfo(directURL string, headers map[string]string) (*probeResult, error) {

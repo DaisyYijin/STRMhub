@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -185,6 +186,7 @@ type nfoMovie struct {
 	Plot          string        `xml:"plot"`
 	TmdbID        string        `xml:"tmdbid"`
 	IMDbID        string        `xml:"id"`
+	Fileinfo      *nfoFileInfo  `xml:"fileinfo,omitempty"`
 }
 
 type nfoTVShow struct {
@@ -200,6 +202,77 @@ type nfoTVShow struct {
 	Actors        []nfoActor    `xml:"actor"`
 	Plot          string        `xml:"plot"`
 	TmdbID        string        `xml:"tmdbid"`
+}
+
+// ---- 轨道信息（Kodi/Emby 标准的 fileinfo/streamdetails）----
+// 播放器/媒体库据此显示内嵌音轨与字幕，无需对 strm 远端 URL 做探测——
+// 对 strm 媒体库（探测常超时/不全）尤其重要
+
+type nfoStreamVideo struct {
+	Codec             string `xml:"codec,omitempty"`
+	Width             int    `xml:"width,omitempty"`
+	Height            int    `xml:"height,omitempty"`
+	DurationInSeconds int    `xml:"durationinseconds,omitempty"`
+}
+
+type nfoStreamAudio struct {
+	Codec    string `xml:"codec,omitempty"`
+	Language string `xml:"language,omitempty"`
+	Channels int    `xml:"channels,omitempty"`
+}
+
+type nfoStreamSubtitle struct {
+	Language string `xml:"language,omitempty"`
+	Name     string `xml:"name,omitempty"`
+}
+
+type nfoStreamDetails struct {
+	Video    *nfoStreamVideo     `xml:"video,omitempty"`
+	Audio    []nfoStreamAudio    `xml:"audio,omitempty"`
+	Subtitle []nfoStreamSubtitle `xml:"subtitle,omitempty"`
+}
+
+type nfoFileInfo struct {
+	StreamDetails *nfoStreamDetails `xml:"streamdetails"`
+}
+
+// nfoFileInfoFrom 探测结果 → streamdetails（无有效轨道时返回 nil）
+func nfoFileInfoFrom(probe *probeResult) *nfoFileInfo {
+	if probe == nil {
+		return nil
+	}
+	sd := &nfoStreamDetails{}
+	for _, s := range probe.Streams {
+		switch s.Kind {
+		case "video":
+			if sd.Video == nil {
+				sd.Video = &nfoStreamVideo{Codec: s.Codec, Width: s.Width, Height: s.Height, DurationInSeconds: probe.Duration}
+			}
+		case "audio":
+			sd.Audio = append(sd.Audio, nfoStreamAudio{Codec: s.Codec, Language: s.Language, Channels: s.Channels})
+		case "subtitle":
+			sd.Subtitle = append(sd.Subtitle, nfoStreamSubtitle{Language: s.Language, Name: s.Title})
+		}
+	}
+	if sd.Video == nil && len(sd.Audio) == 0 && len(sd.Subtitle) == 0 {
+		return nil
+	}
+	return &nfoFileInfo{StreamDetails: sd}
+}
+
+// ---- 集级 NFO（episodedetails，与视频同名落盘 xxx.mkv → xxx.mkv.nfo）----
+
+type nfoEpisode struct {
+	XMLName   xml.Name      `xml:"episodedetails"`
+	Title     string        `xml:"title"`
+	Season    int           `xml:"season"`
+	Episode   int           `xml:"episode"`
+	Aired     string        `xml:"aired"`
+	Plot      string        `xml:"plot"`
+	Ratings   []nfoRating   `xml:"ratings>rating"`
+	UniqueIDs []nfoUniqueID `xml:"uniqueid"`
+	Thumb     string        `xml:"thumb"`
+	Fileinfo  *nfoFileInfo  `xml:"fileinfo,omitempty"`
 }
 
 func marshalNFO(v any) ([]byte, error) {
@@ -360,9 +433,9 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 			continue
 		}
 		if t.kind == "av" {
-			h.scrapeAVOne(cfg, dir, t.num)
+			h.scrapeAVOne(cfg, dir, t.num, t.key)
 		} else {
-			h.scrapeOne(tc, cfg, dir, t.kind, t.title, t.year, t.tmdbID)
+			h.scrapeOne(tc, cfg, dir, t.key, t.kind, t.title, t.year, t.tmdbID)
 		}
 		scrapeMu.Lock()
 		scrapeSt.Done++
@@ -373,22 +446,23 @@ func (h *Handler) scrapeAll(cfg scrapeCfg) {
 
 // nfoAV JAV/Kodi 元数据（番号/标题/演员/厂牌/日期/封面）
 type nfoAV struct {
-	XMLName       xml.Name   `xml:"movie"`
-	Title         string     `xml:"title"`
-	OriginalTitle string     `xml:"originaltitle"`
-	Num           string     `xml:"num"`
-	UniqueNum     string     `xml:"uniqueid"`
-	Premiered     string     `xml:"premiered"`
-	Runtime       int        `xml:"runtime"`
-	Studio        string     `xml:"studio"`
-	Director      string     `xml:"director"`
-	Actors        []nfoActor `xml:"actor"`
-	Plot          string     `xml:"plot"`
-	Set           string     `xml:"set"`
+	XMLName       xml.Name     `xml:"movie"`
+	Title         string       `xml:"title"`
+	OriginalTitle string       `xml:"originaltitle"`
+	Num           string       `xml:"num"`
+	UniqueNum     string       `xml:"uniqueid"`
+	Premiered     string       `xml:"premiered"`
+	Runtime       int          `xml:"runtime"`
+	Studio        string       `xml:"studio"`
+	Director      string       `xml:"director"`
+	Actors        []nfoActor   `xml:"actor"`
+	Plot          string       `xml:"plot"`
+	Set           string       `xml:"set"`
+	Fileinfo      *nfoFileInfo `xml:"fileinfo,omitempty"`
 }
 
-// scrapeAVOne AV 条目：MetaTube 元数据 → <番号>.nfo + poster.jpg
-func (h *Handler) scrapeAVOne(cfg scrapeCfg, dir, num string) {
+// scrapeAVOne AV 条目：MetaTube 元数据 → <番号>.nfo + poster.jpg（含轨道信息）
+func (h *Handler) scrapeAVOne(cfg scrapeCfg, dir, num, key string) {
 	meta := metatubeFetchCached(num)
 	if meta == nil || meta.Status != "ok" {
 		scrapeAddErr("%s: MetaTube 未命中（未配置或未收录）", num)
@@ -410,6 +484,11 @@ func (h *Handler) scrapeAVOne(cfg scrapeCfg, dir, num string) {
 		for _, a := range actors {
 			nfo.Actors = append(nfo.Actors, nfoActor{Name: a})
 		}
+		if rows := scrapeDirVideoRows(key); len(rows) > 0 {
+			if probe, perr := probeFileNow(rows[0].PickCode); perr == "" {
+				nfo.Fileinfo = nfoFileInfoFrom(probe)
+			}
+		}
 		if b, err := marshalNFO(nfo); err == nil {
 			if _, err := writeMetaFile(dir, meta.Num+".nfo", b, cfg.Force); err != nil {
 				scrapeAddErr("%s: 写 %s.nfo 失败 %v", num, meta.Num, err)
@@ -428,7 +507,7 @@ func (h *Handler) scrapeAVOne(cfg scrapeCfg, dir, num string) {
 }
 
 // scrapeOne 单个片目：详情 → NFO + 图片
-func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title, year string, tmdbID int) {
+func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, key, kind, title, year string, tmdbID int) {
 	kindPath := kind
 	params := map[string]string{"language": "zh-CN", "append_to_response": "credits"}
 	body, err := tc.get("/"+kindPath+"/"+strconv.Itoa(tmdbID), params)
@@ -455,6 +534,17 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title, yea
 
 	// ---- NFO ----
 	if cfg.WriteNFO {
+		// 片目录下的视频文件（含 pickcode）：探测轨道写 streamdetails；
+		// 剧集还逐集生成同名集级 NFO
+		videoRows := scrapeDirVideoRows(key)
+		var mainProbe *probeResult
+		if len(videoRows) > 0 {
+			if p, perr := probeFileNow(videoRows[0].PickCode); perr == "" && p != nil {
+				mainProbe = p
+			} else if perr != "" {
+				scrapeAddErr("%s: 轨道探测失败（%s），NFO 不含 streamdetails", title, truncateStr(perr, 80))
+			}
+		}
 		if kind == "movie" {
 			var d struct {
 				Title         string  `json:"title"`
@@ -513,6 +603,7 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title, yea
 			for _, pc := range d.ProductionCompanies {
 				nfo.Studios = append(nfo.Studios, pc.Name)
 			}
+			nfo.Fileinfo = nfoFileInfoFrom(mainProbe)
 			if b, err := marshalNFO(nfo); err == nil {
 				if _, err := writeMetaFile(dir, "movie.nfo", b, cfg.Force); err != nil {
 					scrapeAddErr("%s: 写 movie.nfo 失败 %v", title, err)
@@ -558,6 +649,50 @@ func (h *Handler) scrapeOne(tc *TmdbClient, cfg scrapeCfg, dir, kind, title, yea
 			if b, err := marshalNFO(nfo); err == nil {
 				if _, err := writeMetaFile(dir, "tvshow.nfo", b, cfg.Force); err != nil {
 					scrapeAddErr("%s: 写 tvshow.nfo 失败 %v", title, err)
+				}
+			}
+			// 集级 NFO：每集与视频同名（xxx.mkv → xxx.mkv.nfo）落在集文件旁，
+			// TMDB 集信息（标题/首播/简介/剧照）+ 该集轨道 streamdetails。
+			// 解析不出集号的集文件跳过（tvshow.nfo 与海报仍正常生成）
+			for _, sf := range videoRows {
+				if scrapeStopRequested() {
+					return
+				}
+				base := strings.TrimSuffix(path.Base(sf.RelPath), ".strm")
+				fp := parseFileName(base)
+				if fp.Episode == 0 {
+					continue
+				}
+				season := fp.Season
+				if season == 0 {
+					season = 1
+				}
+				ep := tc.tmdbSeasonEpisodes(tmdbID, season)[fp.Episode]
+				epNFO := nfoEpisode{
+					Season:  season,
+					Episode: fp.Episode,
+					Title:   ep.Name,
+					Aired:   ep.AirDate,
+					Plot:    ep.Overview,
+					UniqueIDs: []nfoUniqueID{
+						{Type: "tmdb", Default: true, Value: strconv.Itoa(tmdbID)},
+					},
+				}
+				if ep.VoteAverage > 0 {
+					epNFO.Ratings = []nfoRating{{Name: "tmdb", Max: 10, Default: true, Value: ep.VoteAverage}}
+				}
+				if ep.StillPath != "" {
+					epNFO.Thumb = tmdbImageBase() + "/t/p/w500" + ep.StillPath
+				}
+				if probe, perr := probeFileNow(sf.PickCode); perr == "" {
+					epNFO.Fileinfo = nfoFileInfoFrom(probe)
+				}
+				if b, err := marshalNFO(epNFO); err == nil {
+					epDir := filepath.Join(cfg.LocalRoot, filepath.FromSlash(path.Dir(sf.RelPath)))
+					_ = os.MkdirAll(epDir, 0o755)
+					if _, err := writeMetaFile(epDir, base+".nfo", b, cfg.Force); err != nil {
+						scrapeAddErr("%s: 写集 NFO %s 失败 %v", title, base, err)
+					}
 				}
 			}
 		}
@@ -614,4 +749,71 @@ func dateYear(d string) string {
 		return d[:4]
 	}
 	return d
+}
+
+// scrapeDirVideoRows 台账里某片目录（key 含库名前缀）下的视频文件行，
+// 取 pickcode 供轨道探测；带前缀/任意前缀两级 LIKE 兜底（与洗版查询同套路）
+func scrapeDirVideoRows(key string) []model.SyncedFile {
+	base := strings.Trim(key, "/")
+	if base == "" {
+		return nil
+	}
+	var sfs []model.SyncedFile
+	model.DB.Where("rel_path LIKE ?", base+"/%").Limit(300).Find(&sfs)
+	if len(sfs) == 0 {
+		model.DB.Where("rel_path LIKE ?", "%/"+base+"/%").Limit(300).Find(&sfs)
+	}
+	var out []model.SyncedFile
+	for _, sf := range sfs {
+		if sf.PickCode == "" || !strings.HasSuffix(strings.ToLower(sf.RelPath), ".strm") {
+			continue
+		}
+		if isVideoName(strings.TrimSuffix(path.Base(sf.RelPath), ".strm")) {
+			out = append(out, sf)
+		}
+	}
+	return out
+}
+
+// ---- TMDB 集信息（按季拉取，进程内缓存）----
+
+type tmdbEpisodeInfo struct {
+	Name          string  `json:"name"`
+	AirDate       string  `json:"air_date"`
+	Overview      string  `json:"overview"`
+	StillPath     string  `json:"still_path"`
+	EpisodeNumber int     `json:"episode_number"`
+	VoteAverage   float64 `json:"vote_average"`
+}
+
+var (
+	scrapeSeasonMu    sync.Mutex
+	scrapeSeasonCache = map[string]map[int]tmdbEpisodeInfo{}
+)
+
+// tmdbSeasonEpisodes 某季的集信息映射（集号 → 信息）；TMDB 失败返回空表
+// （集标题/剧照缺失时集级 NFO 仍会生成季集号与轨道信息）
+func (tc *TmdbClient) tmdbSeasonEpisodes(tvID, season int) map[int]tmdbEpisodeInfo {
+	cacheKey := fmt.Sprintf("%d:%d", tvID, season)
+	scrapeSeasonMu.Lock()
+	if m, ok := scrapeSeasonCache[cacheKey]; ok {
+		scrapeSeasonMu.Unlock()
+		return m
+	}
+	scrapeSeasonMu.Unlock()
+	m := map[int]tmdbEpisodeInfo{}
+	if body, err := tc.get(fmt.Sprintf("/tv/%d/season/%d", tvID, season), map[string]string{"language": "zh-CN"}); err == nil {
+		var r struct {
+			Episodes []tmdbEpisodeInfo `json:"episodes"`
+		}
+		if json.Unmarshal(body, &r) == nil {
+			for _, e := range r.Episodes {
+				m[e.EpisodeNumber] = e
+			}
+		}
+	}
+	scrapeSeasonMu.Lock()
+	scrapeSeasonCache[cacheKey] = m
+	scrapeSeasonMu.Unlock()
+	return m
 }
