@@ -130,6 +130,7 @@ type MediaLibrary struct {
 	Year          string    `json:"year" gorm:"size:10"`
 	MediaType     string    `json:"media_type" gorm:"size:20;index"` // movie, tv
 	Category      string    `json:"category" gorm:"size:50;index"`   // 仪表盘/门户按分类聚合高频查询
+	Source        string    `json:"source" gorm:"size:20;index"`     // 整理来源：空=115，cd2=CloudDrive2（洗版查记录时隔离）
 	TargetPath    string    `json:"target_path" gorm:"size:500"`
 	OrigLanguage  string    `json:"original_language" gorm:"size:20"`
 	OrigCountry   string    `json:"origin_country" gorm:"size:100"`
@@ -391,11 +392,11 @@ type PlaybackDevice struct {
 
 // PlaybackCopy 设备副本映射：设备 → 主号文件 → 副本 pickcode（多端播放）
 type PlaybackCopy struct {
-	ID            uint      `json:"id" gorm:"primaryKey"`
-	DeviceKey     string    `json:"device_key" gorm:"uniqueIndex:idx_dev_pick;size:40;not null"`
-	MainPickCode  string    `json:"main_pick_code" gorm:"uniqueIndex:idx_dev_pick;size:64;not null"`
-	CopyPickCode  string    `json:"copy_pick_code" gorm:"size:64"`
-	RelPath       string    `json:"rel_path" gorm:"size:500"`
-	LastPlayed    time.Time `json:"last_played"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	DeviceKey    string    `json:"device_key" gorm:"uniqueIndex:idx_dev_pick;size:40;not null"`
+	MainPickCode string    `json:"main_pick_code" gorm:"uniqueIndex:idx_dev_pick;size:64;not null"`
+	CopyPickCode string    `json:"copy_pick_code" gorm:"size:64"`
+	RelPath      string    `json:"rel_path" gorm:"size:500"`
+	LastPlayed   time.Time `json:"last_played"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

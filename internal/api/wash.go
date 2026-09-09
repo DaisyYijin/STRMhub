@@ -22,19 +22,19 @@ import (
 
 // washRule 单条优先级规则（YAML priority_level 数组元素，字段与 CMS 一致）
 type washRule struct {
-	ResourceTeam    string `yaml:"resource_team" json:"resource_team"`
-	ResourcePix     string `yaml:"resource_pix" json:"resource_pix"`
-	ResourceType    string `yaml:"resource_type" json:"resource_type"`
-	ResourceEffect  string `yaml:"resource_effect" json:"resource_effect"`
+	ResourceTeam   string `yaml:"resource_team" json:"resource_team"`
+	ResourcePix    string `yaml:"resource_pix" json:"resource_pix"`
+	ResourceType   string `yaml:"resource_type" json:"resource_type"`
+	ResourceEffect string `yaml:"resource_effect" json:"resource_effect"`
 }
 
 // washStrategy 一条完整洗版策略（UI 的 YAML 编辑器格式，与 CMS 对齐）
 type washStrategy struct {
-	Mode             string     `yaml:"mode"`              // coexist/skip/replace/max_size/min_size
-	Scope            string     `yaml:"scope"`             // all=全局一个版本 / group=按分辨率分组各留一个
-	MediaType        string     `yaml:"media_type"`        // movie/tv（空=匹配所有）
-	Category         string     `yaml:"category"`          // 匹配二级分类名，逗号分隔（空=所有）
-	PriorityLevel    []washRule `yaml:"priority_level"`    // 优先级规则（上面的优先）
+	Mode             string     `yaml:"mode"`               // coexist/skip/replace/max_size/min_size
+	Scope            string     `yaml:"scope"`              // all=全局一个版本 / group=按分辨率分组各留一个
+	MediaType        string     `yaml:"media_type"`         // movie/tv（空=匹配所有）
+	Category         string     `yaml:"category"`           // 匹配二级分类名，逗号分隔（空=所有）
+	PriorityLevel    []washRule `yaml:"priority_level"`     // 优先级规则（上面的优先）
 	OldVersionTarget string     `yaml:"old_version_target"` // 旧版去向 redundant/existing（默认 redundant）
 }
 
@@ -123,9 +123,10 @@ func ruleMatch(name string, r washRule) bool {
 }
 
 // matchField 单字段匹配（CMS 语义）：逗号分隔多值——
-//   "2160p,4k"    = 命中任一正值即通过（正值间 OR）
-//   "!DV,!DV.HDR" = 任一排除词命中即不通过（负值间 AND NOT）
-//   混合时：先看排除（命中即否），再看正值（命中任一即是），全未命中且存在正值则否
+//
+//	"2160p,4k"    = 命中任一正值即通过（正值间 OR）
+//	"!DV,!DV.HDR" = 任一排除词命中即不通过（负值间 AND NOT）
+//	混合时：先看排除（命中即否），再看正值（命中任一即是），全未命中且存在正值则否
 func matchField(name, cond, value string) bool {
 	cond = strings.TrimSpace(cond)
 	if cond == "" {
@@ -160,12 +161,11 @@ func matchField(name, cond, value string) bool {
 	return !hasPositive
 }
 
-
 // 画质提取已迁移到 resource.go 的 ParseResourceInfo（完整版）
-func extractPix(name string) string   { return ParseResourceInfo(name).Pix }
-func extractType(name string) string  { return ParseResourceInfo(name).Type }
+func extractPix(name string) string    { return ParseResourceInfo(name).Pix }
+func extractType(name string) string   { return ParseResourceInfo(name).Type }
 func extractEffect(name string) string { return ParseResourceInfo(name).Effect }
-func extractTeam(name string) string  { return ParseResourceInfo(name).Team }
+func extractTeam(name string) string   { return ParseResourceInfo(name).Team }
 
 // washDecision 洗版判定：返回是否替换（新版本优于库内版本）
 func washDecision(newName string, libraryNames []string, rules []washRule) bool {
@@ -217,9 +217,9 @@ func ledgerPrefixOf(ops *pan115Ops, cfg *OrgConfig) string {
 
 // washStrategyCache YAML 解析结果缓存（1 分钟），避免每个文件都重新解析
 var (
-	washCacheMu   sync.Mutex
-	washCacheVal  []washStrategy
-	washCacheAt   time.Time
+	washCacheMu  sync.Mutex
+	washCacheVal []washStrategy
+	washCacheAt  time.Time
 )
 
 func washStrategyCache() []washStrategy {
@@ -233,11 +233,15 @@ func washStrategyCache() []washStrategy {
 	return washCacheVal
 }
 
-
-// lookupMediaRecord 查库内整理记录（命中返回记录）
+// lookupMediaRecord 查库内整理记录（命中返回记录）。
+// source：空=115（历史行 source 为空），cd2=CloudDrive2——两来源记录隔离
 func lookupMediaRecord(media *TmdbMedia) (*model.MediaLibrary, bool) {
+	return lookupMediaRecordSrc(media, "")
+}
+
+func lookupMediaRecordSrc(media *TmdbMedia, source string) (*model.MediaLibrary, bool) {
 	var rec model.MediaLibrary
-	if err := model.DB.Where("tmdb_id = ? AND media_type = ?", media.TmdbID, media.MediaType).First(&rec).Error; err != nil {
+	if err := model.DB.Where("tmdb_id = ? AND media_type = ? AND source = ?", media.TmdbID, media.MediaType, source).First(&rec).Error; err != nil {
 		return nil, false
 	}
 	return &rec, true
@@ -255,6 +259,7 @@ const (
 //     清理台账/记录，返回 washReplaced 让调用方继续正常入库
 //   - 旧版更好 → 返回 washNotBetter，调用方应把新文件移「已存在」
 //   - 无规则/库内无文件 → 返回 washSkip
+//
 // targetDir 必须是目录（不含文件名）：台账按 rel_path LIKE dir+"/%" 匹配，
 // 此前调用方传入的 TargetPath 是文件路径，恒查空 → 洗版从未真正生效
 func tryWashReplace(ops *pan115Ops, cfg *OrgConfig, media *TmdbMedia, newName, targetDir string, onLog func(string)) string {

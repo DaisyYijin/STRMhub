@@ -45,6 +45,33 @@ func TestCd2PathHelpers(t *testing.T) {
 	}
 }
 
+func TestCd2DupExists(t *testing.T) {
+	ex := []cd2.File{
+		{Name: "A.mkv", Size: 100, Sha1: "aa11"},
+		{Name: "B.mkv", Size: 200},
+	}
+	// 同 SHA1（文件名/大小都不同也算重复）
+	if !cd2DupExists(ex, cd2.File{Name: "C.mkv", Size: 999, Sha1: "AA11"}, "C.mkv") {
+		t.Error("sha1 match (case-insensitive) should be dup")
+	}
+	// 整理后同名同大小（网盘不提供 SHA1 的兜底）
+	if !cd2DupExists(ex, cd2.File{Name: "old.mkv", Size: 200}, "B.mkv") {
+		t.Error("same name+size should be dup")
+	}
+	// 同名不同大小：可能只是同片不同版本，交给洗版判定，不算重复
+	if cd2DupExists(ex, cd2.File{Name: "old.mkv", Size: 201}, "B.mkv") {
+		t.Error("same name diff size should not be dup")
+	}
+	// 全新文件
+	if cd2DupExists(ex, cd2.File{Name: "D.mkv", Size: 300, Sha1: "ff99"}, "D.mkv") {
+		t.Error("no match")
+	}
+	// 一方无 SHA1 不误判
+	if cd2DupExists(ex, cd2.File{Name: "A.mkv", Size: 100}, "Z.mkv") {
+		t.Error("one-side missing sha1 must not match by sha1")
+	}
+}
+
 func TestCd2GrpcTarget(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"http://1.2.3.4:19798", "1.2.3.4:19798"},

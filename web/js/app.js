@@ -1644,6 +1644,7 @@ function cd2Gather() {
     prefer_direct: cd2PreferDirect,
     org_enabled: cd2OrgEnabled,
     org_pending: val('cd2-org-pending').trim(),
+    org_existing: val('cd2-org-existing').trim(),
   };
 }
 
@@ -1696,6 +1697,7 @@ async function cd2LoadUI() {
     setVal('cd2-root', c.root_path || '');
     setVal('cd2-local', c.local_path || '/media');
     setVal('cd2-org-pending', c.org_pending || '');
+    setVal('cd2-org-existing', c.org_existing || '');
     setCd2Link(c.prefer_direct !== false);
     setCd2Org(!!c.org_enabled);
   } catch (e) { /* 首次为空 */ }

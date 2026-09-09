@@ -369,6 +369,14 @@ func cd2NotifySchedule(title, target string) {
 
 var cd2OrgMu sync.Mutex
 
+// cd2MovePlan 一个视频的落位计划（整理引擎内部传递）
+type cd2MovePlan struct {
+	vf      cd2.File
+	newName string
+	rootRel string // 片目根（相对媒体库）
+	dstDir  string // 实际落位目录（剧集含 Season 层）
+}
+
 // Cd2OrgStatus GET /cd2/org/status：监控运行状态
 func (h *Handler) Cd2OrgStatus(c *gin.Context) {
 	cfg := h.loadCd2Cfg()
@@ -577,12 +585,16 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 	category := classifyMedia(media)
 	typeRoot := mediaTypeCategory(media.MediaType)
 
-	// ===== 逐视频：模板重命名 + 移动 + STRM =====
-	domain, format, keepExt, _ := h.getStrmConfig()
-	if domain == "" {
-		domain = "http://127.0.0.1:" + h.Config.ProxyPortStr()
+	// 主视频排首位（洗版判定/整理记录以它为准）
+	for i, v := range videos {
+		if v.Name == mainVideo.Name && i != 0 {
+			videos[0], videos[i] = videos[i], videos[0]
+			break
+		}
 	}
-	var movedRootDir, movedMediaDir string
+
+	// ===== 落位计划：逐视频算模板新名与目标目录 =====
+	plans := make([]cd2MovePlan, 0, len(videos))
 	for _, vf := range videos {
 		fp := parseFileName(vf.Name)
 		if fp.Season == 0 {
@@ -598,30 +610,100 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 		if media.MediaType == "tv" && len(parts) >= 2 { // Season 层
 			dstDir = cd2Join(rootRel, parts[1])
 		}
-		if err := cl.EnsureDir(ctx, dstDir); err != nil {
+		plans = append(plans, cd2MovePlan{vf: vf, newName: parts[len(parts)-1], rootRel: rootRel, dstDir: dstDir})
+	}
+
+	// ===== 去重/洗版开关：需配置「已存在」目录且不在媒体库子树内 =====
+	existingRoot := cd2NormPath(cfg.OrgExisting)
+	washOn := existingRoot != "/" && !cd2HasPrefix(existingRoot, cd2NormPath(cfg.RootPath))
+	if cfg.OrgExisting != "" && !washOn {
+		log.Printf("[CD2整理] ○ 已存在目录在媒体库内，去重/洗版停用: %s", existingRoot)
+	}
+	if washOn {
+		switch h.cd2TryWash(ctx, cl, cfg, media, category, plans[0], existingRoot) {
+		case washNotBetter:
+			// 库内已有更优版本：整个单元（含附件）转已存在/<单元名>/
+			dest := cd2Join(existingRoot, path.Base(unitDir))
+			diverted := 0
+			for _, p := range plans {
+				if h.cd2DivertExisting(ctx, cl, dest, cd2Join(unitDir, p.vf.Name), p.vf.Name) {
+					diverted++
+				}
+			}
+			for _, sf := range subs {
+				if h.cd2DivertExisting(ctx, cl, dest, cd2Join(unitDir, sf.Name), sf.Name) {
+					diverted++
+				}
+			}
+			for _, mf := range metas {
+				if h.cd2DivertExisting(ctx, cl, dest, cd2Join(unitDir, mf.Name), mf.Name) {
+					diverted++
+				}
+			}
+			log.Printf("[CD2整理] ○ 《%s》洗版判定：库内版本更优，%d 个文件 → %s", media.Title, diverted, dest)
+			cd2Watch.bumpOrganized()
+			if notify {
+				cd2NotifySchedule(dirName, "已存在（库内版本更优）")
+			}
+			return
+			// washReplaced：旧版已让位，继续正常入库
+		}
+	}
+
+	// ===== 逐视频：去重 → 改名 → 移动 → STRM =====
+	domain, format, keepExt, _ := h.getStrmConfig()
+	if domain == "" {
+		domain = "http://127.0.0.1:" + h.Config.ProxyPortStr()
+	}
+	dstCache := map[string][]cd2.File{} // 目标目录现有文件（单元内复用；含本单元刚入库的）
+	var movedRootDir, movedMediaDir string
+	recordName := "" // 主视频最终落位的文件名（整理记录用）
+	for _, p := range plans {
+		if washOn {
+			files, ok := dstCache[p.dstDir]
+			if !ok {
+				files, err = cl.ListDir(ctx, p.dstDir)
+				if err != nil {
+					files = nil // 目录尚不存在/查询失败：跳过去重，移动照常
+				}
+				dstCache[p.dstDir] = files
+			}
+			if cd2DupExists(files, p.vf, p.newName) {
+				if h.cd2DivertExisting(ctx, cl, existingRoot, cd2Join(unitDir, p.vf.Name), p.vf.Name) {
+					log.Printf("[CD2整理] ○ 去重：%s 与库内文件相同（SHA1/同名同大小），转已存在", p.vf.Name)
+				}
+				continue
+			}
+		}
+		if err := cl.EnsureDir(ctx, p.dstDir); err != nil {
 			log.Printf("[CD2整理] ✗ 创建目录失败: %v", err)
 			return
 		}
-		newName := parts[len(parts)-1]
-		src := cd2Join(unitDir, vf.Name)
-		if newName != vf.Name {
+		newName := p.newName
+		src := cd2Join(unitDir, p.vf.Name)
+		if newName != p.vf.Name {
 			if err := cl.Rename(ctx, src, newName); err != nil {
-				log.Printf("[CD2整理] ○ 改名失败 %s→%s（按原名移动）: %v", vf.Name, newName, err)
-				newName = vf.Name
+				log.Printf("[CD2整理] ○ 改名失败 %s→%s（按原名移动）: %v", p.vf.Name, newName, err)
+				newName = p.vf.Name
 			} else {
 				src = cd2Join(unitDir, newName)
 			}
 		}
-		if err := cl.MoveFiles(ctx, []string{src}, dstDir); err != nil {
-			log.Printf("[CD2整理] ✗ 移动失败 %s → %s: %v", src, dstDir, err)
+		if err := cl.MoveFiles(ctx, []string{src}, p.dstDir); err != nil {
+			log.Printf("[CD2整理] ✗ 移动失败 %s → %s: %v", src, p.dstDir, err)
 			continue
 		}
-		finalPath := cd2Join(dstDir, newName)
+		finalPath := cd2Join(p.dstDir, newName)
 		relDir, _ := cd2RelStrm(cfg.RootPath, finalPath)
 		if _, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, false, relDir, newName, h.cd2MakeID(finalPath)); err != nil {
 			log.Printf("[CD2整理] ○ STRM 写入失败 %s: %v", finalPath, err)
 		}
-		movedRootDir, movedMediaDir = rootRel, dstDir
+		// 入库后补进目标缓存：同单元内后续重复集也能被拦下
+		dstCache[p.dstDir] = append(dstCache[p.dstDir], cd2.File{Name: newName, Size: p.vf.Size, Sha1: p.vf.Sha1})
+		movedRootDir, movedMediaDir = p.rootRel, p.dstDir
+		if recordName == "" {
+			recordName = newName
+		}
 	}
 
 	// ===== 附件跟随：字幕 → 视频所在目录；NFO/封面 → 片目根目录 =====
@@ -655,4 +737,171 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 	if notify {
 		cd2NotifySchedule(dirName, movedMediaDir)
 	}
+	// 整理记录（CD2 洗版判定用；路径相对媒体库根，与 115 记录按来源隔离）
+	if movedMediaDir != "" && recordName != "" {
+		relTarget := strings.Trim(strings.TrimPrefix(movedMediaDir, cd2NormPath(cfg.RootPath)), "/")
+		recordMedia(media, category, relTarget+"/"+recordName, "cd2")
+	}
+}
+
+// cd2DupExists 去重判定：目标目录现有文件中已有同 SHA1 文件，
+// 或整理后同名同大小文件（网盘不提供 SHA1 时的兜底）
+func cd2DupExists(existing []cd2.File, f cd2.File, newName string) bool {
+	for _, e := range existing {
+		if f.Sha1 != "" && e.Sha1 != "" && strings.EqualFold(e.Sha1, f.Sha1) {
+			return true
+		}
+		if e.Name == newName && e.Size > 0 && e.Size == f.Size {
+			return true
+		}
+	}
+	return false
+}
+
+// cd2DivertExisting 把监控目录里的文件转进指定目录（已存在及其子目录）；
+// 返回是否成功。失败时文件留在原地等下轮
+func (h *Handler) cd2DivertExisting(ctx context.Context, cl *cd2.Client, dest, src, label string) bool {
+	if err := cl.EnsureDir(ctx, dest); err != nil {
+		log.Printf("[CD2整理] ✗ 已存在目录不可用（%s）: %v", truncateStr(dest, 60), err)
+		return false
+	}
+	if err := cl.MoveFiles(ctx, []string{src}, dest); err != nil {
+		log.Printf("[CD2整理] ○ 转移失败 %s → %s: %v", label, truncateStr(dest, 60), err)
+		return false
+	}
+	return true
+}
+
+// cd2TryWash 洗版判定（与 115 的 tryWashReplace 同语义；比较对象来自 CD2
+// 实时目录列表而非本地台账，天然新鲜）。返回 washReplaced/washNotBetter/washSkip：
+//   - replaced：旧版已迁「已存在/洗版-旧版本/<片目[/Season]>」，本地 STRM 已清，
+//     调用方继续正常入库
+//   - notbetter：库内更优，调用方应把新单元转已存在
+//   - skip：未配置策略/无整理记录/库内无文件/新集/coexist 等，正常入库
+func (h *Handler) cd2TryWash(ctx context.Context, cl *cd2.Client, cfg cd2Cfg, media *TmdbMedia, category string, mainPlan cd2MovePlan, existingRoot string) string {
+	rec, ok := lookupMediaRecordSrc(media, "cd2")
+	if !ok {
+		return washSkip
+	}
+	st := matchWashStrategy(media.MediaType, category)
+	if st == nil || len(st.PriorityLevel) == 0 {
+		return washSkip
+	}
+	mode := st.Mode
+	if mode == "" {
+		mode = "replace"
+	}
+	// 记录里的 TargetPath 是相对媒体库的文件路径；TV 的目录段即 Season 层
+	targetDir := path.Dir(strings.Trim(rec.TargetPath, "/"))
+	files, err := cl.ListDir(ctx, cd2Join(cfg.RootPath, targetDir))
+	if err != nil || len(files) == 0 {
+		return washSkip
+	}
+	var libNames []string
+	var libVideos, libOthers []cd2.File
+	for _, f := range files {
+		if f.IsDir {
+			continue
+		}
+		libNames = append(libNames, f.Name)
+		if classifyFile(f.Name) == FileTypeVideo {
+			libVideos = append(libVideos, f)
+		} else {
+			libOthers = append(libOthers, f)
+		}
+	}
+	if len(libNames) == 0 {
+		return washSkip
+	}
+	// 比较对象选取：剧集用同一集；电影取第一个视频
+	oldName := ""
+	if media.MediaType == "tv" {
+		if newEp := parseFileName(mainPlan.newName).Episode; newEp > 0 {
+			for _, ln := range libNames {
+				if parseFileName(ln).Episode == newEp {
+					oldName = ln
+					break
+				}
+			}
+		}
+	}
+	if oldName == "" {
+		for _, ln := range libNames {
+			if classifyFile(ln) == FileTypeVideo {
+				oldName = ln
+				break
+			}
+		}
+	}
+	if oldName == "" {
+		oldName = libNames[0]
+	}
+	// 新集守卫：该集在库内从未出现 → 新增集正常入库，不做画质比较
+	if media.MediaType == "tv" {
+		if newEp := parseFileName(mainPlan.newName).Episode; newEp > 0 {
+			if parseFileName(oldName).Episode != newEp {
+				return washSkip
+			}
+		}
+	}
+	if mode == "coexist" {
+		log.Printf("[CD2整理] ○ 洗版判定：coexist 模式，%s 与库内版本共存入库", truncateStr(mainPlan.newName, 60))
+		return washSkip
+	}
+	if mode == "skip" {
+		log.Printf("[CD2整理] ○ 洗版判定：skip 模式，库内已有 %s", truncateStr(mainPlan.newName, 60))
+		return washNotBetter
+	}
+	if st.Scope == "group" {
+		newPix := strings.ToLower(ParseResourceInfo(mainPlan.newName).Pix)
+		oldPix := strings.ToLower(ParseResourceInfo(oldName).Pix)
+		if newPix != oldPix {
+			log.Printf("[CD2整理] ○ 洗版判定：group 模式新分辨率分组（%s vs 库内 %s），共存入库", newPix, oldPix)
+			return washSkip
+		}
+	}
+	if !washDecision(mainPlan.newName, []string{oldName}, st.PriorityLevel) {
+		log.Printf("[CD2整理] ○ 《%s》洗版判定：库内版本更优（mode=%s）", media.Title, mode)
+		return washNotBetter
+	}
+	// 新版更优：旧版迁出（group 只搬同分辨率组，附件不随迁；
+	// 旧版去向配置统一映射到「已存在」，不做真删除）
+	moveOut := append([]cd2.File(nil), libVideos...)
+	if st.Scope == "group" {
+		newPix := strings.ToLower(ParseResourceInfo(mainPlan.newName).Pix)
+		filtered := moveOut[:0]
+		for _, f := range moveOut {
+			if strings.ToLower(ParseResourceInfo(f.Name).Pix) == newPix {
+				filtered = append(filtered, f)
+			}
+		}
+		moveOut = filtered
+	} else {
+		moveOut = append(moveOut, libOthers...)
+	}
+	destRel := path.Base(targetDir)
+	if strings.HasPrefix(strings.ToLower(destRel), "season") {
+		destRel = path.Base(path.Dir(targetDir)) + "/" + destRel
+	}
+	dest := cd2Join(existingRoot, "洗版-旧版本", destRel)
+	if err := cl.EnsureDir(ctx, dest); err != nil {
+		log.Printf("[CD2整理] ✗ 洗版：创建旧版目录失败: %v（本轮跳过，库保持原状）", err)
+		return washSkip
+	}
+	if len(moveOut) > 0 {
+		paths := make([]string, 0, len(moveOut))
+		for _, f := range moveOut {
+			paths = append(paths, f.Path)
+		}
+		if err := cl.MoveFiles(ctx, paths, dest); err != nil {
+			log.Printf("[CD2整理] ✗ 洗版迁移旧版失败: %v（本轮跳过，库保持原状）", err)
+			return washSkip
+		}
+		// 迁出的旧版清除本地 STRM（CD2 删除事件随后也会清，双保险幂等）
+		for _, f := range moveOut {
+			h.cd2RemoveStrm(cfg, f.Path)
+		}
+	}
+	log.Printf("[CD2整理] ✦ 《%s》洗版：旧版 %d 个文件 → %s", media.Title, len(moveOut), truncateStr(dest, 60))
+	return washReplaced
 }

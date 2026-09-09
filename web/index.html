@@ -301,6 +301,10 @@
         <div class="form-row"><div class="label">监控目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的待整理目录（绝对路径）。往这里转存/下载新内容即可触发自动整理，等同 115 的「待整理文件夹」。</span></i></div><div class="control">
           <div class="form-inline-group"><input type="text" id="cd2-org-pending" placeholder="如 /115网盘/待整理" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-pending')">选择目录</button></div>
         </div></div>
+        <div class="form-row"><div class="label">已存在目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">去重与洗版的去向：新文件与库内 SHA1/同名同大小文件相同、或洗版判定不敌库内版本时，转存到这里保留备查。必须配置在「CD2 扫描目录」之外，否则会停用去重/洗版。留空 = 不做去重和洗版。</span></i></div><div class="control">
+          <div class="form-inline-group"><input type="text" id="cd2-org-existing" placeholder="如 /115网盘/已存在" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-existing')">选择目录</button></div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">洗版策略与 115 共用（重命名规则页的「洗版策略」）；洗版淘汰的旧版进 已存在/洗版-旧版本/</div>
+        </div></div>
         <div class="form-row"><div class="label">监控状态</div><div class="control"><div class="form-inline-group"><span id="cd2-watch-status" style="font-size:12.5px">未加载</span></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="cd2Save(this)">保存配置</button> <button class="btn btn-success" onclick="cd2OrgRun(this)">立即整理</button></div></div>
       </div>

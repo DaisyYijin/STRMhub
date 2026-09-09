@@ -42,6 +42,7 @@ type cd2Cfg struct {
 	PreferDirect bool   `json:"prefer_direct"` // 优先网盘直链（无 UA 要求时），否则始终走 CD2 中转
 	OrgEnabled   bool   `json:"org_enabled"`   // 实时监控整理开关
 	OrgPending   string `json:"org_pending"`   // 监控（待整理）目录，CD2 绝对路径
+	OrgExisting  string `json:"org_existing"`  // 已存在目录（去重命中/洗版淘汰旧版去向），建议在媒体库根之外
 }
 
 func (h *Handler) loadCd2Cfg() cd2Cfg {

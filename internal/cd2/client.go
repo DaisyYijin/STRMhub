@@ -135,12 +135,13 @@ func (c *Client) withAuth(ctx context.Context) (context.Context, error) {
 	return metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+tok)), nil
 }
 
-// File 目录项（只取 STRM 相关字段）
+// File 目录项（只取 STRM/整理相关字段）
 type File struct {
 	Name  string
 	Path  string // CD2 内绝对路径
 	Size  int64
 	IsDir bool
+	Sha1  string // 网盘提供时用于去重（fileHashes[HashType.Sha1]）
 }
 
 // ListDir 列出一层目录（GetSubFiles 服务端流，可能分批返回）
@@ -186,7 +187,11 @@ func (c *Client) listDirOnce(ctx context.Context, path string) ([]File, error) {
 			if f == nil {
 				continue
 			}
-			files = append(files, File{Name: f.Name, Path: f.FullPathName, Size: f.Size, IsDir: f.IsDirectory})
+			fi := File{Name: f.Name, Path: f.FullPathName, Size: f.Size, IsDir: f.IsDirectory}
+			if sha, ok := f.FileHashes[2]; ok { // HashType: Sha1=2
+				fi.Sha1 = strings.ToLower(sha)
+			}
+			files = append(files, fi)
 		}
 	}
 	return files, nil
