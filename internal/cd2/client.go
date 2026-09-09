@@ -197,58 +197,6 @@ func (c *Client) listDirOnce(ctx context.Context, path string) ([]File, error) {
 	return files, nil
 }
 
-// URLInfo GetDownloadUrlPath 结果
-type URLInfo struct {
-	ProxyPath    string // CD2 中转地址模板（含 {SCHEME}/{HOST}/{PREVIEW} 占位符）
-	ExpiresIn    uint64 // 秒；HasExpires=false 表示不过期
-	HasExpires   bool
-	DirectURL    string // 网盘原始直链（可能为空）
-	UserAgent    string // 访问 DirectURL 必需的 UA（空表示无要求）
-	ExtraHeaders map[string]string
-}
-
-// DownloadURL 取播放地址。direct=true 时附带请求网盘原始直链
-func (c *Client) DownloadURL(ctx context.Context, path string, direct bool) (*URLInfo, error) {
-	info, err := c.downloadURLOnce(ctx, path, direct)
-	if authErr(err) {
-		c.invalidateToken()
-		info, err = c.downloadURLOnce(ctx, path, direct)
-	}
-	return info, err
-}
-
-func (c *Client) downloadURLOnce(ctx context.Context, path string, direct bool) (*URLInfo, error) {
-	actx, err := c.withAuth(ctx)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := c.getConn()
-	if err != nil {
-		return nil, err
-	}
-	req := &pb.GetDownloadUrlPathRequest{Path: path, Preview: false, LazyRead: true, GetDirectUrl: direct}
-	var out pb.DownloadUrlPathInfo
-	if err := conn.Invoke(actx, cd2Service+"/GetDownloadUrlPath", req, &out); err != nil {
-		return nil, fmt.Errorf("CD2 取直链失败: %w", err)
-	}
-	if out.DownloadUrlPath == "" && out.DirectUrl == nil {
-		return nil, fmt.Errorf("CD2 未返回播放地址（文件是否存在？）")
-	}
-	info := &URLInfo{ProxyPath: out.DownloadUrlPath}
-	if out.ExpiresIn != nil {
-		info.ExpiresIn = *out.ExpiresIn
-		info.HasExpires = true
-	}
-	if out.DirectUrl != nil {
-		info.DirectURL = *out.DirectUrl
-	}
-	if out.UserAgent != nil {
-		info.UserAgent = *out.UserAgent
-	}
-	info.ExtraHeaders = out.AdditionalHeaders
-	return info, nil
-}
-
 // ==================== 写操作（整理用） ====================
 
 // invoke 带认证的一元调用，Unauthenticated 时重登一次再重试

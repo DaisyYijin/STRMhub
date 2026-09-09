@@ -1,10 +1,6 @@
 package api
 
 import (
-	"encoding/base64"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"strmhub/internal/cd2"
@@ -31,17 +27,23 @@ func TestCd2PathHelpers(t *testing.T) {
 	if got := cd2Join("媒体", "", "/电影/", ""); got != "/媒体/电影" {
 		t.Errorf("join: %q", got)
 	}
-	// 库内路径 → STRM 相对位置
-	relDir, name := cd2RelStrm("/媒体", "/媒体/电影/XX/片/file.mkv")
-	if relDir != "电影/XX/片" || name != "file.mkv" {
-		t.Errorf("relStrm: %q %q", relDir, name)
+}
+
+func TestCd2GrpcTarget(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"http://1.2.3.4:19798", "1.2.3.4:19798"},
+		{"https://nas.local:9900", "nas.local:9900"},
+		{"nas.local", "nas.local:19798"},
+		{"1.2.3.4:9900", "1.2.3.4:9900"},
 	}
-	if d, n := cd2RelStrm("/媒体", "/媒体"); d != "" || n != "" {
-		t.Errorf("relStrm root itself: %q %q", d, n)
+	for _, c := range cases {
+		got, err := cd2GrpcTarget(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("cd2GrpcTarget(%q) = %q,%v want %q", c.in, got, err, c.want)
+		}
 	}
-	// 本地 STRM 路径（与 writeStrmCd2 落盘位置同构）
-	if got := cd2LocalStrmPath("/data", "/媒体", "/媒体/电影/片/file.mkv"); got != filepath.Join("/data", "电影", "片", "file.mkv.strm") {
-		t.Errorf("localStrmPath: %q", got)
+	if _, err := cd2GrpcTarget("  "); err == nil {
+		t.Error("empty endpoint should error")
 	}
 }
 
@@ -69,129 +71,5 @@ func TestCd2DupExists(t *testing.T) {
 	// 一方无 SHA1 不误判
 	if cd2DupExists(ex, cd2.File{Name: "A.mkv", Size: 100}, "Z.mkv") {
 		t.Error("one-side missing sha1 must not match by sha1")
-	}
-}
-
-func TestCd2GrpcTarget(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"http://1.2.3.4:19798", "1.2.3.4:19798"},
-		{"https://nas.local:9900", "nas.local:9900"},
-		{"nas.local", "nas.local:19798"},
-		{"1.2.3.4:9900", "1.2.3.4:9900"},
-	}
-	for _, c := range cases {
-		got, err := cd2GrpcTarget(c.in)
-		if err != nil || got != c.want {
-			t.Errorf("cd2GrpcTarget(%q) = %q,%v want %q", c.in, got, err, c.want)
-		}
-	}
-	if _, err := cd2GrpcTarget("  "); err == nil {
-		t.Error("empty endpoint should error")
-	}
-}
-
-func TestCd2BuildProxyURL(t *testing.T) {
-	got := cd2BuildProxyURL("http://192.168.1.5:19798", "/static/{SCHEME}/{HOST}/{PREVIEW}/a/b.mkv?token=x")
-	want := "http://192.168.1.5:19798/static/http/192.168.1.5:19798/false/a/b.mkv?token=x"
-	if got != want {
-		t.Errorf("got %q want %q", got, want)
-	}
-	// 无前缀地址默认 http + 19798
-	got = cd2BuildProxyURL("nas.local", "static/{SCHEME}/x")
-	want = "http://nas.local:19798/static/http/x"
-	if got != want {
-		t.Errorf("got %q want %q", got, want)
-	}
-}
-
-func TestCd2PickTarget(t *testing.T) {
-	const ep = "http://n:19798"
-	// 无 UA 要求的直链优先
-	got := cd2PickTarget(ep, true, &cd2.URLInfo{DirectURL: "https://dl/x.mkv", ProxyPath: "/p"})
-	if got != "https://dl/x.mkv" {
-		t.Errorf("direct preferred: %q", got)
-	}
-	// 有 UA 要求 → 中转（播放器无法自定义 UA）
-	got = cd2PickTarget(ep, true, &cd2.URLInfo{DirectURL: "https://dl/x.mkv", UserAgent: "android", ProxyPath: "/static/{SCHEME}/{HOST}/{PREVIEW}/x"})
-	if !strings.Contains(got, "http://n:19798/static/http/n:19798/false/x") {
-		t.Errorf("UA-bound direct should fall back to proxy: %q", got)
-	}
-	// 未开直链偏好 → 中转
-	got = cd2PickTarget(ep, false, &cd2.URLInfo{DirectURL: "https://dl/x.mkv", ProxyPath: "/p"})
-	if got != "http://n:19798/p" {
-		t.Errorf("no prefer: %q", got)
-	}
-	// 什么都没有 → 空
-	if got := cd2PickTarget(ep, true, &cd2.URLInfo{}); got != "" {
-		t.Errorf("empty info: %q", got)
-	}
-}
-
-func TestCd2Sign(t *testing.T) {
-	secret := []byte("0123456789abcdef0123456789abcdef")
-	b64id := cd2B64Of("/阿里云盘/媒体/电影/a.mkv")
-	sig := cd2SignWith(secret, b64id)
-	if len(sig) != 16 {
-		t.Fatalf("sig len: %d", len(sig))
-	}
-	if !cd2VerifyWith(secret, b64id, sig) {
-		t.Error("verify should pass")
-	}
-	if cd2VerifyWith(secret, cd2B64Of("/其他路径.mkv"), sig) {
-		t.Error("tampered path should fail")
-	}
-	if cd2VerifyWith([]byte("another-secret-32-bytes!!"), b64id, sig) {
-		t.Error("wrong secret should fail")
-	}
-	// id 拆分：{b64}.{sig}[.ext]
-	id := b64id + "." + sig + ".mkv"
-	gotB64, gotSig, ok := cd2ParseID(id)
-	if !ok || gotB64 != b64id || gotSig != sig {
-		t.Errorf("parseID: %q %q ok=%v", gotB64, gotSig, ok)
-	}
-	if _, _, ok := cd2ParseID(b64id); ok {
-		t.Error("无签名旧格式应被拒绝")
-	}
-	if _, _, ok := cd2ParseID(b64id + "..mkv"); ok {
-		t.Error("空签名应被拒绝")
-	}
-}
-
-func TestWriteStrmCd2(t *testing.T) {
-	dir := t.TempDir()
-	full := "/115网盘/媒体/剧/E01.mkv"
-	idPart := cd2B64Of(full) + ".aabbccddeeff0011"
-	written, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, false, "剧/第一季", "E01.mkv", idPart)
-	if err != nil || !written {
-		t.Fatalf("write: %v written=%v", err, written)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, "剧", "第一季", "E01.mkv.strm"))
-	body := string(b)
-	if !strings.HasPrefix(body, "http://p:6086/cd2/") {
-		t.Fatalf("bad strm content: %q", body)
-	}
-	seg := strings.SplitN(strings.TrimPrefix(body, "http://p:6086/cd2/"), ".", 2)[0]
-	if seg == "" || strings.ContainsAny(seg, "=+/") {
-		t.Errorf("id 应为无填充 base64url: %q", seg)
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(seg)
-	if err != nil || string(decoded) != full {
-		t.Errorf("id 解码回环失败: %q err=%v", decoded, err)
-	}
-	if !strings.HasSuffix(body, ".mkv") {
-		t.Errorf("keepExt 应保留扩展名: %q", body)
-	}
-	// skipExist：内容一致 → 跳过；内容变化（域名/签名变）→ 自动改写
-	written2, err := writeStrmCd2(dir, "http://p:6086", "file_id", true, true, "剧/第一季", "E01.mkv", idPart)
-	if err != nil || written2 {
-		t.Errorf("same content should skip: %v written=%v", err, written2)
-	}
-	written3, err := writeStrmCd2(dir, "http://new:6086", "file_id", true, true, "剧/第一季", "E01.mkv", idPart)
-	if err != nil || !written3 {
-		t.Errorf("changed content should rewrite: %v written=%v", err, written3)
-	}
-	b2, _ := os.ReadFile(filepath.Join(dir, "剧", "第一季", "E01.mkv.strm"))
-	if !strings.HasPrefix(string(b2), "http://new:6086/cd2/") {
-		t.Errorf("rewrite content wrong: %q", string(b2))
 	}
 }

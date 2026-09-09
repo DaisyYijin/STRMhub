@@ -1627,11 +1627,10 @@ async function pan123ScanRun(btn) {
   btn.disabled = false;
 }
 
-// ==================== CloudDrive2（多云盘聚合） ====================
-// 账号在「账号管理 → CloudDrive2」，扫描配置在「自动整理 → CloudDrive2」，
-// 两处共用同一份 setting（保存时带上另一页当前填写的值，与 123 盘同模式）
+// ==================== CloudDrive2（多云盘聚合：只做整理） ====================
+// 独立菜单页（连接账号 + 实时监控整理）；STRM 由项目原生增量同步生成，
+// 播放走 /d/ 直链，CD2 不在播放路径上
 
-let cd2PreferDirect = true;
 let cd2OrgEnabled = false;
 
 function cd2Gather() {
@@ -1640,19 +1639,10 @@ function cd2Gather() {
     username: val('cd2-username').trim(),
     password: val('cd2-password').trim(),
     root_path: val('cd2-root').trim(),
-    local_path: val('cd2-local').trim(),
-    prefer_direct: cd2PreferDirect,
     org_enabled: cd2OrgEnabled,
     org_pending: val('cd2-org-pending').trim(),
     org_existing: val('cd2-org-existing').trim(),
   };
-}
-
-function setCd2Link(v) {
-  cd2PreferDirect = v;
-  document.querySelectorAll('#cd2-link-switch .seg-item').forEach(n => {
-    n.classList.toggle('active', n.dataset.value === String(v));
-  });
 }
 
 function setCd2Org(v) {
@@ -1695,10 +1685,8 @@ async function cd2LoadUI() {
     setVal('cd2-username', c.username || '');
     setVal('cd2-password', c.password || '');
     setVal('cd2-root', c.root_path || '');
-    setVal('cd2-local', c.local_path || '/media');
     setVal('cd2-org-pending', c.org_pending || '');
     setVal('cd2-org-existing', c.org_existing || '');
-    setCd2Link(c.prefer_direct !== false);
     setCd2Org(!!c.org_enabled);
   } catch (e) { /* 首次为空 */ }
   cd2WatchStatus();
@@ -1731,16 +1719,6 @@ async function cd2Test(btn) {
     result.textContent = '✗ ' + e.message;
     result.style.color = 'var(--danger)';
   }
-  btn.disabled = false;
-}
-
-async function cd2ScanRun(btn) {
-  if (!confirm('开始扫描 CD2 目录并生成 STRM？')) return;
-  btn.disabled = true;
-  try {
-    const d = await api('/cd2/scan', { method: 'POST' });
-    toast(d.message || '扫描已开始');
-  } catch (e) { toast(e.message); }
   btn.disabled = false;
 }
 

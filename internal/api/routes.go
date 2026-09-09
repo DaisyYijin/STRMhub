@@ -445,12 +445,11 @@ func SetupRoutes(r *gin.RouterGroup, db *gorm.DB, cfg *config.Config) {
 		protected.POST("/pan123/qrcode", h.Pan123Qrcode)
 		protected.GET("/pan123/qrcode/poll", h.Pan123QrcodePoll)
 
-		// CloudDrive2（多云盘聚合，gRPC）：列目录生成 STRM + 播放 302
+		// CloudDrive2（多云盘聚合，gRPC）：只做整理，STRM 由原生增量同步生成
 		protected.GET("/cd2/config", h.Cd2GetConfig)
 		protected.POST("/cd2/config", h.Cd2SaveConfig)
 		protected.POST("/cd2/test", h.Cd2Test)
 		protected.GET("/cd2/dirs", h.Cd2Dirs)
-		protected.POST("/cd2/scan", h.Cd2Scan)
 		protected.GET("/cd2/org/status", h.Cd2OrgStatus)
 		protected.POST("/cd2/org/run", h.Cd2OrgRun)
 

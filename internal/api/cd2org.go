@@ -2,17 +2,19 @@ package api
 
 // CD2 实时监控整理：
 //
-// 订阅 CD2 的 PushMessage 文件系统变更流，监控目录（OrgPending）里出现新视频
-// 时防抖合并（同目录文件视为同一部影视），然后走与 115 整理同源的策略链：
+// 订阅 CD2 的 PushMessage 文件系统变更流，监控目录（OrgPending，可以是 CD2
+// 挂载的任意网盘）里出现新视频时防抖合并（同目录文件视为同一部影视），
+// 然后走与 115 整理同源的策略链：
 //
 //	识别（AV 番号 → TMDB 文件名 → 目录名兜底 → MetaTube 标题）
 //	→ 重命名模板（buildNewNameWithTemplate，含 Season 目录）
 //	→ 二级分类（classifyMedia + mediaTypeCategory）
-//	→ CD2 写操作（Rename 原地改名 → MoveFile 移到 媒体库根/分类/片目目录）
-//	→ 生成本地 STRM（writeStrmCd2，带 HMAC 签名）
+//	→ CD2 写操作（Rename 原地改名 → MoveFile 移到 整理目标根/分类/片目目录）
 //
-// 媒体库根（RootPath）内的删除/改名事件同步增删本地 STRM；库内新增只镜像
-// STRM、绝不整理（防"监控目录包含媒体库"的误配置自我消化库内容）。
+// CD2 只负责整理（含跨网盘搬运）；STRM 由项目本身生成——整理目标根指向
+// CD2 挂载的 115 媒体库路径，整理完成后自动触发一次增量同步（cd2AutoSync），
+// 原生生成 STRM、播放走 /d/ 直链，CD2 完全不在播放路径上。
+// 目标树内的删除/改名等变化也由增量同步按 SyncDelete 策略处理。
 // 识别失败的内容留在监控目录原地（不移动），等下次事件或手动整理重试。
 // 整理单元全局串行（cd2OrgMu），事件驱动与手动整理不会交叉执行。
 
@@ -21,9 +23,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -215,28 +215,6 @@ func cd2Join(segs ...string) string {
 	return "/" + strings.Join(parts, "/")
 }
 
-// cd2RelStrm 本地 STRM 相对路径：fullPath 相对 root 的位置，
-// 返回 relDir（"/"分隔，无前后斜杠）与文件名
-func cd2RelStrm(root, fullPath string) (relDir, name string) {
-	root, fullPath = cd2NormPath(root), cd2NormPath(fullPath)
-	rel := strings.TrimPrefix(fullPath, root)
-	rel = strings.Trim(rel, "/")
-	if rel == "" {
-		return "", ""
-	}
-	dir, f := path.Split(rel)
-	return strings.Trim(dir, "/"), f
-}
-
-// cd2LocalStrmPath fullPath 对应的本地 STRM 文件绝对路径（与 writeStrmCd2 同构）
-func cd2LocalStrmPath(localRoot, root, fullPath string) string {
-	relDir, name := cd2RelStrm(root, fullPath)
-	if name == "" {
-		return ""
-	}
-	return filepath.Join(localRoot, filepath.FromSlash(relDir), name+".strm")
-}
-
 // ==================== 事件处理 ====================
 
 // 防抖表：监控目录下同一父目录的新文件合并为一个整理单元，
@@ -250,75 +228,31 @@ var (
 
 func (h *Handler) cd2HandleChange(ch cd2.Change) {
 	cd2Watch.touchEvt()
-	cfg := h.loadCd2Cfg()
-	libRoot := cd2NormPath(cfg.RootPath)
-	pendRoot := cd2NormPath(cfg.OrgPending)
-
-	switch ch.Type {
-	case "delete":
-		if cd2HasPrefix(ch.Path, libRoot) {
-			h.cd2RemoveStrm(cfg, ch.Path)
-			log.Printf("[CD2监控] ✂ 库内删除，移除 STRM: %s", truncateStr(ch.Path, 70))
-		}
-	case "rename":
-		if cd2HasPrefix(ch.Path, libRoot) {
-			h.cd2RemoveStrm(cfg, ch.Path)
-		}
-		if ch.NewPath != "" && cd2HasPrefix(ch.NewPath, libRoot) && !ch.IsDir {
-			if h.cd2MirrorStrm(cfg, ch.NewPath) == nil {
-				log.Printf("[CD2监控] ✎ 库内改名，更新 STRM: %s", truncateStr(ch.NewPath, 70))
-			}
-		}
-	case "create":
-		// 媒体库子树优先判定：只镜像 STRM，绝不整理——防"监控目录包含
-		// 媒体库"的误配置把库内容再整理一遍
-		if cd2HasPrefix(ch.Path, libRoot) {
-			if !ch.IsDir && isVideoName(path.Base(ch.Path)) && h.cd2MirrorStrm(cfg, ch.Path) == nil {
-				log.Printf("[CD2监控] ▷ 库内新增，补 STRM: %s", truncateStr(ch.Path, 70))
-			}
-			return
-		}
-		if cd2HasPrefix(ch.Path, pendRoot) && !ch.IsDir {
-			dir := path.Dir(cd2NormPath(ch.Path))
-			cd2DebounceMu.Lock()
-			if t, ok := cd2Debounce[dir]; ok {
-				t.Reset(cd2DebounceDelay)
-			} else {
-				cd2Debounce[dir] = time.AfterFunc(cd2DebounceDelay, func() {
-					cd2DebounceMu.Lock()
-					delete(cd2Debounce, dir)
-					cd2DebounceMu.Unlock()
-					h.cd2OrganizeUnit(dir, "")
-				})
-			}
-			cd2DebounceMu.Unlock()
-		}
-	}
-}
-
-// cd2MirrorStrm 为库内文件补写 STRM（内容一致则跳过）
-func (h *Handler) cd2MirrorStrm(cfg cd2Cfg, fullPath string) error {
-	relDir, name := cd2RelStrm(cfg.RootPath, fullPath)
-	if name == "" || !isVideoName(name) {
-		return fmt.Errorf("非视频或路径无效")
-	}
-	domain, format, keepExt, skipExist := h.getStrmConfig()
-	if domain == "" {
-		domain = "http://127.0.0.1:" + h.Config.ProxyPortStr()
-	}
-	_, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, skipExist, relDir, name, h.cd2MakeID(fullPath))
-	return err
-}
-
-// cd2RemoveStrm 删除库内文件对应的本地 STRM
-func (h *Handler) cd2RemoveStrm(cfg cd2Cfg, fullPath string) {
-	p := cd2LocalStrmPath(cfg.LocalPath, cfg.RootPath, fullPath)
-	if p == "" {
+	if ch.Type != "create" || ch.IsDir {
 		return
 	}
-	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-		log.Printf("[CD2监控] ○ 移除 STRM 失败 %s: %v", p, err)
+	cfg := h.loadCd2Cfg()
+	// 整理目标树内的变动（含整理引擎自己的落位动作）交给 115 增量同步
+	// 处理，绝不反过来触发整理——防"监控目录包含目标树"的误配置自我消化
+	if cd2HasPrefix(ch.Path, cd2NormPath(cfg.RootPath)) {
+		return
 	}
+	if !cd2HasPrefix(ch.Path, cd2NormPath(cfg.OrgPending)) {
+		return
+	}
+	dir := path.Dir(cd2NormPath(ch.Path))
+	cd2DebounceMu.Lock()
+	if t, ok := cd2Debounce[dir]; ok {
+		t.Reset(cd2DebounceDelay)
+	} else {
+		cd2Debounce[dir] = time.AfterFunc(cd2DebounceDelay, func() {
+			cd2DebounceMu.Lock()
+			delete(cd2Debounce, dir)
+			cd2DebounceMu.Unlock()
+			h.cd2OrganizeUnit(dir, "")
+		})
+	}
+	cd2DebounceMu.Unlock()
 }
 
 // ==================== 通知聚合 ====================
@@ -454,7 +388,7 @@ func (h *Handler) cd2OrganizeUnit(unitDir, focusFile string) {
 // 调用方须持有 cd2OrgMu；notify=true 时进聚合并入通知
 func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 	cfg := h.loadCd2Cfg()
-	if cfg.RootPath == "" || cfg.LocalPath == "" {
+	if cfg.RootPath == "" {
 		return
 	}
 	unitDir = cd2NormPath(unitDir)
@@ -650,11 +584,7 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 		}
 	}
 
-	// ===== 逐视频：去重 → 改名 → 移动 → STRM =====
-	domain, format, keepExt, _ := h.getStrmConfig()
-	if domain == "" {
-		domain = "http://127.0.0.1:" + h.Config.ProxyPortStr()
-	}
+	// ===== 逐视频：去重 → 改名 → 移动 =====
 	dstCache := map[string][]cd2.File{} // 目标目录现有文件（单元内复用；含本单元刚入库的）
 	var movedRootDir, movedMediaDir string
 	recordName := "" // 主视频最终落位的文件名（整理记录用）
@@ -692,11 +622,6 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 		if err := cl.MoveFiles(ctx, []string{src}, p.dstDir); err != nil {
 			log.Printf("[CD2整理] ✗ 移动失败 %s → %s: %v", src, p.dstDir, err)
 			continue
-		}
-		finalPath := cd2Join(p.dstDir, newName)
-		relDir, _ := cd2RelStrm(cfg.RootPath, finalPath)
-		if _, err := writeStrmCd2(cfg.LocalPath, domain, format, keepExt, false, relDir, newName, h.cd2MakeID(finalPath)); err != nil {
-			log.Printf("[CD2整理] ○ STRM 写入失败 %s: %v", finalPath, err)
 		}
 		// 入库后补进目标缓存：同单元内后续重复集也能被拦下
 		dstCache[p.dstDir] = append(dstCache[p.dstDir], cd2.File{Name: newName, Size: p.vf.Size, Sha1: p.vf.Sha1})
@@ -737,11 +662,47 @@ func (h *Handler) cd2OrganizeUnitCore(unitDir, focusFile string, notify bool) {
 	if notify {
 		cd2NotifySchedule(dirName, movedMediaDir)
 	}
-	// 整理记录（CD2 洗版判定用；路径相对媒体库根，与 115 记录按来源隔离）
+	// 整理记录（CD2 洗版判定用；路径相对整理目标根，与 115 记录按来源隔离）
 	if movedMediaDir != "" && recordName != "" {
 		relTarget := strings.Trim(strings.TrimPrefix(movedMediaDir, cd2NormPath(cfg.RootPath)), "/")
 		recordMedia(media, category, relTarget+"/"+recordName, "cd2")
 	}
+	// STRM 由项目原生生成：整理落位后防抖触发一次增量同步
+	// （文件已在 115 挂载内，同步会按台账生成 /d/ STRM 并按需刷新 Emby）
+	h.cd2AutoSyncSchedule()
+}
+
+// cd2AutoSyncSchedule 整理后增量同步（30 秒防抖聚合）：批量单元连续整理时
+// 只在最后一个单元落位后跑一次，避免整季入库触发几十次同步
+var (
+	cd2SyncMu    sync.Mutex
+	cd2SyncTimer *time.Timer
+)
+
+const cd2AutoSyncDelay = 30 * time.Second
+
+func (h *Handler) cd2AutoSyncSchedule() {
+	cd2SyncMu.Lock()
+	defer cd2SyncMu.Unlock()
+	if cd2SyncTimer != nil {
+		cd2SyncTimer.Reset(cd2AutoSyncDelay)
+		return
+	}
+	cd2SyncTimer = time.AfterFunc(cd2AutoSyncDelay, func() {
+		cd2SyncMu.Lock()
+		cd2SyncTimer = nil
+		cd2SyncMu.Unlock()
+		p := h.incrParamsFromConfig()
+		sum, err := h.executeIncrementalSync(p)
+		if err != nil {
+			log.Printf("[CD2整理] ○ 整理后增量同步失败: %v", err)
+			return
+		}
+		log.Printf("[CD2整理] ▷ 整理后增量同步：视频 %d（生成 STRM %d）", sum.Videos, sum.StrmCreated)
+		if sum.StrmCreated+sum.AssetsDownloaded > 0 {
+			h.notifyEmbyRefresh(p.LocalPath)
+		}
+	})
 }
 
 // cd2DupExists 去重判定：目标目录现有文件中已有同 SHA1 文件，
@@ -897,11 +858,8 @@ func (h *Handler) cd2TryWash(ctx context.Context, cl *cd2.Client, cfg cd2Cfg, me
 			log.Printf("[CD2整理] ✗ 洗版迁移旧版失败: %v（本轮跳过，库保持原状）", err)
 			return washSkip
 		}
-		// 迁出的旧版清除本地 STRM（CD2 删除事件随后也会清，双保险幂等）
-		for _, f := range moveOut {
-			h.cd2RemoveStrm(cfg, f.Path)
-		}
 	}
+	// 旧版迁出后其 STRM 由整理后的增量同步按 SyncDelete 策略清理
 	log.Printf("[CD2整理] ✦ 《%s》洗版：旧版 %d 个文件 → %s", media.Title, len(moveOut), truncateStr(dest, 60))
 	return washReplaced
 }

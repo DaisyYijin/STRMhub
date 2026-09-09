@@ -169,10 +169,10 @@
       </div>
     </div>
 
-    <!-- CloudDrive2（多云盘聚合：连接 / STRM 扫描 / 实时监控整理） -->
+    <!-- CloudDrive2（多云盘聚合：只做整理，STRM/播放走项目原生 115 链路） -->
     <div class="page" id="page-cd2">
       <div class="card">
-        <div class="alert alert-info" style="margin-bottom:10px">CloudDrive2（CD2）是第三方多云盘聚合服务：在任意机器上部署 CD2 并挂载你的网盘，StrmHub 通过其 gRPC 接口扫描目录、生成 STRM、播放时取直链 302——等于一次性接入阿里/夸克/百度/天翼/OneDrive/S3 等 CD2 支持的全部网盘。先在本卡片完成连接，再到下方配置扫描与监控。</div>
+        <div class="alert alert-info" style="margin-bottom:10px">CloudDrive2（CD2）是第三方多云盘聚合服务，在本项目里定位是「跨网盘整理引擎」：监控 CD2 挂载的任意网盘（阿里/夸克/百度/天翼/115…）里的待整理目录，自动识别、按重命名模板改名、按二级分类归位，并跨网盘搬运到整理目标根。STRM 生成与播放完全走项目原生链路——整理目标根须指向 CD2 挂载的 115 媒体库路径，整理完成后自动触发一次增量同步生成 /d/ STRM，播放不经过 CD2。</div>
         <div class="form-row"><div class="label">服务地址<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 的服务地址（与网页管理端同地址同端口，默认 19798）。支持 IP/域名，可带 http(s):// 前缀。StrmHub 服务器必须能直接访问该地址（Docker 部署时填宿主机可达的 IP，不要填 127.0.0.1）。</span></i></div><div class="control"><input type="text" id="cd2-endpoint" placeholder="如 192.168.1.10:19798" class="inline-input" style="max-width:320px"></div></div>
         <div class="form-row"><div class="label">账号密码<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 本地账号，即登录 CD2 网页管理端用的用户名和密码（不是网盘账号）。token 过期会自动重新登录；账号若开启了两步验证暂不支持。</span></i></div><div class="control"><div class="form-inline-group"><input type="text" id="cd2-username" placeholder="用户名" class="inline-input"><input type="password" id="cd2-password" placeholder="密码" class="inline-input"></div></div></div>
         <div class="form-row"><div class="label">连接状态</div><div class="control"><div class="form-inline-group"><button class="btn btn-success" onclick="cd2Test(this)">测试连接</button><span id="cd2-test-result" style="font-size:12.5px"></span></div></div></div>
@@ -180,34 +180,20 @@
       </div>
 
       <div class="card" style="margin-top:12px">
-        <div class="form-row"><div class="label">CD2 扫描目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的绝对路径（如 /阿里云盘/媒体），即 CD2 侧的媒体库根。CD2 根目录（/）下是各个已挂载的网盘，从这里逐级选择即可。实时监控整理的目标也落在这里。</span></i></div><div class="control">
-          <div class="form-inline-group"><input type="text" id="cd2-root" placeholder="如 /115网盘/媒体" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-root')">选择目录</button></div>
-        </div></div>
-        <div class="form-row"><div class="label">本地媒体库目录</div><div class="control">
-          <div class="form-inline-group"><input type="text" id="cd2-local" value="/media" class="inline-input"><button class="btn btn-outline" onclick="openLocalDirPicker('cd2-local')">选择目录</button></div>
-        </div></div>
-        <div class="form-row"><div class="label">播放链路<i class="help-tip" tabindex="0">?<span class="tip-bubble">直链优先：网盘原始直链（无 UA 要求时）让播放器直连网盘，速度最快、不占 CD2 机器带宽；CD2 中转：一律经 CD2 服务器转发流量，100% 兼容所有网盘，但受 CD2 所在机器上行带宽限制。</span></i></div><div class="control">
-          <div class="segmented-control" id="cd2-link-switch">
-            <div class="seg-item active" data-value="true" onclick="setCd2Link(true)">直链优先</div>
-            <div class="seg-item" data-value="false" onclick="setCd2Link(false)">CD2中转</div>
-          </div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:4px">有 UA/请求头要求的直链会自动回退到 CD2 中转</div>
-        </div></div>
-        <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="cd2Save(this)">保存配置</button> <button class="btn btn-success" onclick="cd2ScanRun(this)">立即扫描</button></div></div>
-      </div>
-
-      <div class="card" style="margin-top:12px">
-        <div class="form-row"><div class="label">实时监控整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">订阅 CD2 文件变更推送：监控目录里出现新视频时自动识别（AV 番号/TMDB/目录名兜底）→ 按重命名模板改名 → 按二级分类移到「CD2 扫描目录」下的 媒体类型/分类/片目目录 → 生成本地 STRM 并推送通知。识别失败的留在原地等重试。库内删除/改名会同步增删 STRM。</span></i></div><div class="control">
+        <div class="form-row"><div class="label">实时监控整理<i class="help-tip" tabindex="0">?<span class="tip-bubble">订阅 CD2 文件变更推送：监控目录里出现新视频时自动识别（AV 番号/TMDB/目录名兜底）→ 按重命名模板改名 → 按二级分类跨网盘搬运到「整理目标根」下的 媒体类型/分类/片目目录 → 自动触发增量同步生成原生 STRM 并推送通知。识别失败的留在原地等重试。</span></i></div><div class="control">
           <div class="segmented-control" id="cd2-org-switch">
             <div class="seg-item active" data-value="true" onclick="setCd2Org(true)">开启</div>
             <div class="seg-item" data-value="false" onclick="setCd2Org(false)">关闭</div>
           </div>
           <div style="font-size:12px;color:var(--text-3);margin-top:4px">开关保存后约 10 秒内生效；同目录文件静默 8 秒后才开始整理</div>
         </div></div>
-        <div class="form-row"><div class="label">监控目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的待整理目录（绝对路径）。往这里转存/下载新内容即可触发自动整理，等同 115 的「待整理文件夹」。</span></i></div><div class="control">
-          <div class="form-inline-group"><input type="text" id="cd2-org-pending" placeholder="如 /115网盘/待整理" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-pending')">选择目录</button></div>
+        <div class="form-row"><div class="label">整理目标根<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的绝对路径，必须指向 CD2 挂载的 115 媒体库目录（如 /115网盘/媒体库），且该目录要在 StrmHub「账号同步」的同步范围内——文件整理到这里后由项目原生增量同步生成 STRM。</span></i></div><div class="control">
+          <div class="form-inline-group"><input type="text" id="cd2-root" placeholder="如 /115网盘/媒体库" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-root')">选择目录</button></div>
         </div></div>
-        <div class="form-row"><div class="label">已存在目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">去重与洗版的去向：新文件与库内 SHA1/同名同大小文件相同、或洗版判定不敌库内版本时，转存到这里保留备查。必须配置在「CD2 扫描目录」之外，否则会停用去重/洗版。留空 = 不做去重和洗版。</span></i></div><div class="control">
+        <div class="form-row"><div class="label">监控目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的待整理目录（绝对路径，可以是任意网盘——阿里/夸克的资源会跨网盘搬运进 115）。往这里转存/下载新内容即可触发自动整理，等同 115 的「待整理文件夹」。</span></i></div><div class="control">
+          <div class="form-inline-group"><input type="text" id="cd2-org-pending" placeholder="如 /阿里云盘/待整理" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-pending')">选择目录</button></div>
+        </div></div>
+        <div class="form-row"><div class="label">已存在目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">去重与洗版的去向：新文件与库内 SHA1/同名同大小文件相同、或洗版判定不敌库内版本时，转存到这里保留备查。必须配置在「整理目标根」之外，否则会停用去重/洗版。留空 = 不做去重和洗版。</span></i></div><div class="control">
           <div class="form-inline-group"><input type="text" id="cd2-org-existing" placeholder="如 /115网盘/已存在" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-org-existing')">选择目录</button></div>
           <div style="font-size:12px;color:var(--text-3);margin-top:4px">洗版策略与 115 共用（重命名规则页的「洗版策略」）；洗版淘汰的旧版进 已存在/洗版-旧版本/</div>
         </div></div>
