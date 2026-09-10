@@ -267,6 +267,21 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// 可选 HTTPS（TLS_ENABLE=1）：自签名证书自动生成并持久化，浏览器首次
+	// 访问需一次"高级→继续前往"；Go 的 RunTLS 自动启用 HTTP/2——所有请求
+	// 复用单条连接，明文 HTTP 跨境链路的按连接重置干扰基本失效
+	if config.TLSEnabled() {
+		certPath, keyPath, err := cfg.EnsureTLSCert()
+		if err != nil {
+			log.Printf("[TLS] ✗ 证书准备失败，回退 HTTP: %v", err)
+		} else {
+			log.Printf("[TLS] ✓ HTTPS 已启用：https://<服务器IP>:%d（自签名证书 %s；浏览器首次访问需一次\"继续前往\"，HTTP/2 自动生效）", cfg.Port, filepath.Base(certPath))
+			if err := r.RunTLS(":"+cfg.PortStr(), certPath, keyPath); err != nil {
+				log.Fatalf("启动失败: %v", err)
+			}
+			return
+		}
+	}
 	log.Printf("管理后台已启动（端口 %d）", cfg.Port)
 	if err := r.Run(":" + cfg.PortStr()); err != nil {
 		log.Fatalf("启动失败: %v", err)
