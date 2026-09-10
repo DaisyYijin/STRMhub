@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>StrmHub</title>
   <link rel="icon" href="/cms-115.png">
-  <link rel="stylesheet" href="/vendor/cm5/codemirror.min.css">
   <link rel="stylesheet" href="/css/style.css?v=32">
 </head>
 <body>
@@ -1499,10 +1498,22 @@ av:
   </div>
 </div>
 
-<script src="/vendor/cm5/codemirror.min.js"></script>
-  <script src="/vendor/cm5/mode/yaml.min.js"></script>
-  <script src="/vendor/cm5/active-line.min.js"></script>
-  <script src="/js/app.js?v=109"></script>
+  <script>
+  // app.js 加载失败（跨境连接重置高发）自动换缓存串退避重试（1s/3s/6s）——
+  // 连发重试在链路抖动窗口内会全部打空，间隔要拉开；刷新期间偶发的
+  // RESET 不再需要用户手动再刷一次
+  function retryAppScript(n) {
+    n = n || 1;
+    if (n > 3) return;
+    setTimeout(function () {
+      var s = document.createElement('script');
+      s.src = '/js/app.js?v=109&r=' + Date.now();
+      s.onerror = function () { retryAppScript(n + 1); };
+      document.body.appendChild(s);
+    }, n === 1 ? 1000 : (n === 2 ? 3000 : 6000));
+  }
+  </script>
+  <script src="/js/app.js?v=109" onerror="retryAppScript()"></script>
   <script>
   // 白屏守门：登录页与主界面的根容器默认都是 display:none，由 app.js 决定
   // 显示哪个。app.js 加载失败（刷新时网络抖动）或初始化挂起（鉴权请求无响应）

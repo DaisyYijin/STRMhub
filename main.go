@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,6 +25,36 @@ import (
 // BuildSHA 构建时由 CI 注入（-ldflags "-X main.BuildSHA=xxx"），
 // 用于日志/UI 确认运行的是哪个提交（排查"更新没生效"类问题）
 var BuildSHA = "dev"
+
+// inlinedIndexHTML 返回把 style.css 内联进 <style> 的 index.html（启动时
+// 准备一次）。替换标记是 HTML 里的 style.css link 标签；标记不存在（新版
+// HTML 配旧二进制等）时返回 nil，调用方回退为原样文件服务。
+// 内联读取失败不影响启动：nil 回退，CSS 仍走外链
+var indexHTMLMarker = `<link rel="stylesheet" href="/css/style.css?v=32">`
+
+func inlinedIndexHTML() []byte {
+	inlinedOnce.Do(func() {
+		html, err := os.ReadFile("./web/index.html")
+		if err != nil || !bytes.Contains(html, []byte(indexHTMLMarker)) {
+			return
+		}
+		css, err := os.ReadFile("./web/css/style.css")
+		if err != nil {
+			return
+		}
+		// </style> 在合法 CSS 里不会出现，无需转义
+		out := bytes.Replace(html, []byte(indexHTMLMarker),
+			append([]byte("<style>\n"), append(css, []byte("\n</style>")...)...), 1)
+		log.Printf("[前端] ✓ style.css(%dKB) 已内联进 index.html（弱网防连接重置）", len(css)/1024)
+		inlinedHTML = out
+	})
+	return inlinedHTML
+}
+
+var (
+	inlinedOnce sync.Once
+	inlinedHTML []byte
+)
 
 // rotatingWriter 大小轮转日志写入器：超过 maxBytes 时切割
 // （app.log → app.log.1 → .2 → .3，最旧的丢弃）
@@ -188,9 +220,17 @@ func main() {
 	r.Static("/js", "./web/js")
 	r.Static("/vendor", "./web/vendor") // CodeMirror 等第三方前端库
 	r.StaticFile("/cms-115.png", "./web/cms-115.png")
-	// index.html 禁用启发式缓存：升级后浏览器总是重新校验，避免页面拿到旧 HTML 搭配新 ?v= 资产
+	// index.html 禁用启发式缓存：升级后浏览器总是重新校验，避免页面拿到旧 HTML 搭配新 ?v= 资产。
+	// CSS 内联进 HTML：跨境明文 HTTP 下首条连接（HTML 文档）几乎总能成功，
+	// 而后续并行拉的静态资源大概率被连接重置（ERR_CONNECTION_RESET）——
+	// 样式随 HTML 同一条连接送达，页面不再出现"结构在、样式丢"的裸版；
+	// CodeMirror 改为用到时才加载（首屏请求从 7 个减到 2 个）
 	serveIndex := func(c *gin.Context) {
 		c.Header("Cache-Control", "no-cache")
+		if inlined := inlinedIndexHTML(); inlined != nil {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", inlined)
+			return
+		}
 		c.File("./web/index.html")
 	}
 	r.GET("/", serveIndex)

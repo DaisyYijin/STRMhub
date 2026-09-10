@@ -2939,25 +2939,69 @@ function attachYamlHighlight(id) {
   const ta = document.getElementById(id);
   if (!ta || ta.dataset.yamlHl) return;
   ta.dataset.yamlHl = '1';
-  // CodeMirror 5（真实文本模型：选区/删除精确，自带 YAML 高亮与行号）。
-  // 资源缺失时退化为普通文本域——无高亮但行为绝对精确，不再用叠层假编辑器
-  if (!window.CodeMirror) return;
-  const cm = CodeMirror.fromTextArea(ta, {
-    mode: 'yaml',
-    lineNumbers: true,
-    styleActiveLine: true,
-    lineWrapping: false,
-    tabSize: 2,
-    indentUnit: 2,
+  // CodeMirror 5 懒加载：编辑器所在面板可见时才拉取资源并挂载
+  // （隐藏面板永不与视口相交——用户真正打开分类/洗版策略才发 vendor 请求，
+  // 首屏请求只剩 HTML+app.js；弱网下每个并行请求都是被重置的候选）。
+  // 资源加载失败退化为普通文本域——无高亮但行为绝对精确
+  const mount = () => {
+    ensureCodeMirror().then(() => {
+      const ta2 = document.getElementById(id);
+      if (!window.CodeMirror || !ta2 || ta2._yamlRender) return;
+      const cm = CodeMirror.fromTextArea(ta2, {
+        mode: 'yaml',
+        lineNumbers: true,
+        styleActiveLine: true,
+        lineWrapping: false,
+        tabSize: 2,
+        indentUnit: 2,
+      });
+      cm.setSize('100%', 'auto');
+      // 兼容旧读写端：
+      //   写：el.value = X; el._yamlRender()   → 同步进编辑器
+      //   读：el._yamlSync() 后再读 el.value
+      ta2._yamlRender = () => { cm.setValue(ta2.value); cm.refresh(); refreshVisibleCM(ta2.parentNode); };
+      ta2._yamlSync = () => cm.save();
+      if (ta2.value) cm.setValue(ta2.value); // 懒加载期间可能已回填内容
+      window._cmInstances = window._cmInstances || [];
+      window._cmInstances.push(cm);
+    }).catch(() => { /* 加载失败保持纯文本域 */ });
+  };
+  if (typeof IntersectionObserver === 'undefined') { mount(); return; }
+  const io = new IntersectionObserver((entries) => {
+    if (entries.some(e => e.isIntersecting)) {
+      io.disconnect();
+      mount();
+    }
   });
-  cm.setSize('100%', 'auto');
-  // 兼容旧读写端：
-  //   写：el.value = X; el._yamlRender()   → 同步进编辑器
-  //   读：el._yamlSync() 后再读 el.value
-  ta._yamlRender = () => { cm.setValue(ta.value); cm.refresh(); refreshVisibleCM(ta.parentNode); };
-  ta._yamlSync = () => cm.save();
-  window._cmInstances = window._cmInstances || [];
-  window._cmInstances.push(cm);
+  io.observe(ta);
+}
+
+// ensureCodeMirror 按需加载 CodeMirror 5（CSS+主库+yaml 模式+active-line，
+// 顺序注入；任一步失败 reject，调用方降级为纯文本域）
+function ensureCodeMirror() {
+  if (window.CodeMirror) return Promise.resolve();
+  if (!ensureCodeMirror._p) {
+    ensureCodeMirror._p = (async () => {
+      const load = (src) => new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = res;
+        s.onerror = () => rej(new Error('load fail: ' + src));
+        document.body.appendChild(s);
+      });
+      if (!document.getElementById('cm-style')) {
+        const link = document.createElement('link');
+        link.id = 'cm-style';
+        link.rel = 'stylesheet';
+        link.href = '/vendor/cm5/codemirror.min.css';
+        document.head.appendChild(link);
+      }
+      await load('/vendor/cm5/codemirror.min.js');
+      await load('/vendor/cm5/mode/yaml.min.js');
+      await load('/vendor/cm5/active-line.min.js');
+    })().catch(e => { ensureCodeMirror._p = null; throw e; }); // 失败可重试
+  }
+  return ensureCodeMirror._p;
 }
 
 // ==================== 日志级别 ====================
