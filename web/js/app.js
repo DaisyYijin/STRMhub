@@ -23,12 +23,27 @@ async function api(path, options = {}) {
   if (!init.signal && timeoutMs > 0 && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
     init.signal = AbortSignal.timeout(timeoutMs);
   }
+  // 跨境链路对连接的掐断是按概率的（同一批请求有的成功有的 RESET）：
+  // GET 幂等，网络层失败（TypeError "Failed to fetch"）自动换新连接重试
+  // 一次，失败率从 p 降到 p²；POST 不重试，防重复提交
+  const isGet = !init.method || String(init.method).toUpperCase() === 'GET';
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await apiOnce(path, init, token);
+    } catch (e) {
+      if (!(isGet && attempt === 0 && e instanceof TypeError)) throw e;
+      await new Promise(r => setTimeout(r, 350 + Math.random() * 450));
+    }
+  }
+}
+
+async function apiOnce(path, init, token) {
   const res = await fetch(API + '/api' + path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      ...options.headers,
+      ...init.headers,
     },
   });
   // 仅当 401 来自鉴权中间件（固定文案 未登录/登录已过期）才清令牌回登录页；
