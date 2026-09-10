@@ -123,6 +123,62 @@ func parseJSON(data string, out interface{}) error {
 // playbackInfoPathRe 匹配 Emby 播放信息接口（/Items/{id}/PlaybackInfo）
 var playbackInfoPathRe = regexp.MustCompile(`(?i)^/items/[^/]+/playbackinfo$`)
 
+// itemDetailPathRe 匹配条目详情接口（GET /Users/{uid}/Items/{id}）——
+// 用户打开详情页 = 即将播放的强意图信号，此时预取直链比 PlaybackInfo
+// 时再取多争取几秒到几十秒（StrmAssistant「把探测挪出起播关键路径」
+// 思路在反代层的落点）
+var itemDetailPathRe = regexp.MustCompile(`(?i)^/users/[^/]+/items/\d+$`)
+
+// resolveStrmURLCached strm 路径 → 直链 URL：优先读 strm 文件；容器路径
+// 不一致读不到时用同步台账反查。结果进 5 分钟缓存（详情页预取与
+// PlaybackInfo 改写共用，重复读文件/查台账浪费）
+func resolveStrmURLCached(db *gorm.DB, cfg *config.Config, strmPath string) string {
+	strmURLCacheMu.Lock()
+	if e, ok := strmURLCache[strmPath]; ok && time.Since(e.at) < 5*time.Minute {
+		u := e.url
+		strmURLCacheMu.Unlock()
+		return u
+	}
+	strmURLCacheMu.Unlock()
+	u := readStrmDirectURL(db, cfg, strmPath)
+	if u == "" {
+		u = directURLFromLedger(db, cfg, filepath.Base(strmPath))
+	}
+	if u != "" {
+		strmURLCacheMu.Lock()
+		if len(strmURLCache) >= 4096 {
+			type kv struct {
+				k string
+				t time.Time
+			}
+			var all []kv
+			for k, v := range strmURLCache {
+				all = append(all, kv{k, v.at})
+			}
+			sort.Slice(all, func(i, j int) bool { return all[i].t.Before(all[j].t) })
+			for _, e := range all[:len(all)/4] {
+				delete(strmURLCache, e.k)
+			}
+		}
+		strmURLCache[strmPath] = strmURLCacheEntry{url: u, at: time.Now()}
+		strmURLCacheMu.Unlock()
+	}
+	return u
+}
+
+// pickcodeOfDirectURL 从本机 /d/ 直链 URL 提取 pickcode（非 /d/ 链接返回空）
+func pickcodeOfDirectURL(u string) string {
+	i := strings.LastIndex(u, "/d/")
+	if i <= 0 {
+		return ""
+	}
+	pc := strings.TrimLeft(u[i+3:], "/")
+	if j := strings.IndexAny(pc, "?#"); j > 0 {
+		pc = pc[:j]
+	}
+	return pc
+}
+
 // rewritePlaybackInfo 直连改写中间件（MediaWarp/CMS 同款思路）：
 // 拦截 PlaybackInfo 响应，把 strm 媒体源从本地文件改写成其内容指向的
 // 直链 URL 并强制直连播放——播放器直接从 115 CDN 取流，彻底绕开
@@ -172,40 +228,7 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 				// 部分 Emby 版本已把 strm 展开成 URL 放在 Path，直接使用
 				directURL = strmPath
 			} else if isStrm {
-				// 直链来源：优先读 strm 文件；容器路径不一致读不到时用同步台账反查。
-				// 结果进 60 秒缓存（每次播放都触发，重复读文件/查台账浪费）
-				strmURLCacheMu.Lock()
-				if e, ok := strmURLCache[strmPath]; ok && time.Since(e.at) < 5*time.Minute {
-					directURL = e.url
-					strmURLCacheMu.Unlock()
-				} else {
-					strmURLCacheMu.Unlock()
-					directURL = readStrmDirectURL(db, cfg, strmPath)
-					if directURL == "" {
-						directURL = directURLFromLedger(db, cfg, filepath.Base(strmPath))
-					}
-					if directURL != "" {
-						strmURLCacheMu.Lock()
-						if len(strmURLCache) >= 4096 {
-							// 容量上限：淘汰最旧的四分之一（播放过的 strm 数量
-							// 无上限增长会吃内存）
-							type kv struct {
-								k string
-								t time.Time
-							}
-							var all []kv
-							for k, v := range strmURLCache {
-								all = append(all, kv{k, v.at})
-							}
-							sort.Slice(all, func(i, j int) bool { return all[i].t.Before(all[j].t) })
-							for _, e := range all[:len(all)/4] {
-								delete(strmURLCache, e.k)
-							}
-						}
-						strmURLCache[strmPath] = strmURLCacheEntry{url: directURL, at: time.Now()}
-						strmURLCacheMu.Unlock()
-					}
-				}
+				directURL = resolveStrmURLCached(db, cfg, strmPath)
 			}
 			if directURL == "" {
 				if isStrm {
@@ -221,15 +244,9 @@ func rewritePlaybackInfo(db *gorm.DB, cfg *config.Config) func(*http.Response) e
 			// 与客户端 UA——立即后台取直链填缓存。播放器拿到响应、起播、
 			// 再请求 /d/ 时（几百毫秒后）缓存已热，取链的 ~1s 从起播关键
 			// 路径上彻底消失（幂等：/d/ 命中缓存时无任何额外动作）
-			if i := strings.LastIndex(directURL, "/d/"); i > 0 {
-				pc := strings.TrimLeft(directURL[i+3:], "/")
-				if j := strings.IndexAny(pc, "?#"); j > 0 {
-					pc = pc[:j]
-				}
-				if pc != "" {
-					playerUA := resp.Request.Header.Get("User-Agent")
-					prefetchPickcodeLink(db, cfg, pc, playerUA)
-				}
+			if pc := pickcodeOfDirectURL(directURL); pc != "" {
+				playerUA := resp.Request.Header.Get("User-Agent")
+				prefetchPickcodeLink(db, cfg, pc, playerUA)
 			}
 			ms["Path"] = directURL
 			ms["Protocol"] = "Http"
@@ -478,6 +495,58 @@ func normalizeDirectURL(db *gorm.DB, cfg *config.Config, u, clientHost string) s
 }
 
 // registerEmbyProxy 在 gin 引擎上注册 Emby 反代路由
+// prefetchOnItemDetail 详情页预取中间件：客户端打开条目详情
+// （GET /Users/{uid}/Items/{id}）即视为即将播放的意图信号，此刻后台预取
+// 直链（用详情请求的 UA，与随后的播放请求同设备同 UA，缓存直接命中）。
+// 用户浏览详情到按下播放之间的几秒到几十秒里取链已完成，PlaybackInfo
+// 时刻的预取退化为纯缓存命中；幂等（已热/在途不重复取）
+func prefetchOnItemDetail(db *gorm.DB, cfg *config.Config) func(*http.Response) error {
+	return func(resp *http.Response) error {
+		if resp.Request == nil || resp.StatusCode != http.StatusOK || resp.Request.Method != http.MethodGet {
+			return nil
+		}
+		if !itemDetailPathRe.MatchString(resp.Request.URL.Path) {
+			return nil
+		}
+		if !strings.Contains(resp.Header.Get("Content-Type"), "json") {
+			return nil
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		var d struct {
+			Path string `json:"Path"`
+		}
+		if json.Unmarshal(body, &d) != nil || d.Path == "" {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Path), ".strm") {
+			return nil // 本地文件/音频等非 strm 条目
+		}
+		u := resolveStrmURLCached(db, cfg, d.Path)
+		if pc := pickcodeOfDirectURL(u); pc != "" {
+			prefetchPickcodeLink(db, cfg, pc, resp.Request.Header.Get("User-Agent"))
+			vlog("[Emby直连] ○ 详情页预取直链: %s", truncateStr(d.Path, 70))
+		}
+		return nil
+	}
+}
+
+// embyModifyResponse 组合中间件：详情页预取 + PlaybackInfo 直连改写
+func embyModifyResponse(db *gorm.DB, cfg *config.Config) func(*http.Response) error {
+	prefetch := prefetchOnItemDetail(db, cfg)
+	rewrite := rewritePlaybackInfo(db, cfg)
+	return func(resp *http.Response) error {
+		if err := prefetch(resp); err != nil {
+			return err
+		}
+		return rewrite(resp)
+	}
+}
+
 func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	r.Any("/emby/*path", func(c *gin.Context) {
 		target := getEmbyTarget(db, cfg)
@@ -511,7 +580,7 @@ func registerEmbyProxy(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				req.Header.Set("X-Original-Host", c.Request.Host)
 			},
 			FlushInterval:  -1, // 流式响应立即刷新（视频播放需要）
-			ModifyResponse: rewritePlaybackInfo(db, cfg),
+			ModifyResponse: embyModifyResponse(db, cfg),
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				log.Printf("[Emby反代] 转发失败: %v", err)
 				http.Error(w, "Emby 服务器无法连接: "+err.Error(), http.StatusBadGateway)
