@@ -15,8 +15,16 @@ function esc(s) {
 let authRedirecting = false; // 401 只引导一次，避免多个轮询同时触发重复跳转
 async function api(path, options = {}) {
   const token = localStorage.getItem('token');
+  // 默认超时：无超时的 fetch 在连接挂起（公网抖动）时会永久 pending，
+  // 页面停在"登录页/主界面都未显示"的空白态；默认 60s，可传 timeoutMs 覆盖
+  const init = { ...options };
+  const timeoutMs = init.timeoutMs !== undefined ? init.timeoutMs : 60000;
+  delete init.timeoutMs;
+  if (!init.signal && timeoutMs > 0 && typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
+    init.signal = AbortSignal.timeout(timeoutMs);
+  }
   const res = await fetch(API + '/api' + path, {
-    ...options,
+    ...init,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -239,7 +247,8 @@ function refreshVisibleCM(scope) {
 // 随机密码，见容器日志）。网页注册功能已移除
 async function checkAuth() {
   try {
-    const data = await api('/auth/status');
+    // 短超时：鉴权状态挂起时快速落到登录页，而不是让整页停在空白
+    const data = await api('/auth/status', { timeoutMs: 10000 });
     if (!localStorage.getItem('token')) {
       showAuth(!data.initialized);
     } else {

@@ -1502,5 +1502,19 @@ av:
   <script src="/vendor/cm5/mode/yaml.min.js"></script>
   <script src="/vendor/cm5/active-line.min.js"></script>
   <script src="/js/app.js?v=109"></script>
+  <script>
+  // 白屏守门：登录页与主界面的根容器默认都是 display:none，由 app.js 决定
+  // 显示哪个。app.js 加载失败（刷新时网络抖动）或初始化挂起（鉴权请求无响应）
+  // 时两个都保持隐藏 = 整页空白无任何反馈。8 秒后兜底亮出登录页；
+  // 若 app.js 稍后自行完成初始化，会正常切换覆盖，互不冲突
+  setTimeout(function () {
+    var a = document.getElementById('auth-page'), m = document.getElementById('main-app');
+    if (a && m && a.style.display === 'none' && m.style.display === 'none') {
+      a.style.display = 'flex';
+      var h = document.getElementById('auth-heading');
+      if (h && h.textContent === '请输入账号密码登录') h.textContent = '加载缓慢，请刷新重试';
+    }
+  }, 8000);
+  </script>
 </body>
 </html>
