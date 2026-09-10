@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -269,14 +271,22 @@ func main() {
 
 	// 可选 HTTPS（TLS_ENABLE=1）：自签名证书自动生成并持久化，浏览器首次
 	// 访问需一次"高级→继续前往"；Go 的 RunTLS 自动启用 HTTP/2——所有请求
-	// 复用单条连接，明文 HTTP 跨境链路的按连接重置干扰基本失效
+	// 复用单条连接，明文 HTTP 跨境链路的按连接重置干扰基本失效。
+	// 同端口自动识别协议：旧书签/地址栏仍发 http:// 的连接被 308 跳转到
+	// https://，而不是握手报错刷日志
 	if config.TLSEnabled() {
 		certPath, keyPath, err := cfg.EnsureTLSCert()
 		if err != nil {
 			log.Printf("[TLS] ✗ 证书准备失败，回退 HTTP: %v", err)
 		} else {
-			log.Printf("[TLS] ✓ HTTPS 已启用：https://<服务器IP>:%d（自签名证书 %s；浏览器首次访问需一次\"继续前往\"，HTTP/2 自动生效）", cfg.Port, filepath.Base(certPath))
-			if err := r.RunTLS(":"+cfg.PortStr(), certPath, keyPath); err != nil {
+			log.Printf("[TLS] ✓ HTTPS 已启用：https://<服务器IP>:%d（自签名证书 %s；浏览器首次访问需一次\"继续前往\"，HTTP/2 自动生效；http:// 访问自动跳转）", cfg.Port, filepath.Base(certPath))
+			ln, err := net.Listen("tcp", ":"+cfg.PortStr())
+			if err != nil {
+				log.Fatalf("启动失败: %v", err)
+			}
+			srv := &http.Server{Handler: r}
+			log.Printf("管理后台已启动（端口 %d，HTTPS）", cfg.Port)
+			if err := srv.ServeTLS(&tlsAutoListener{Listener: ln}, certPath, keyPath); err != nil {
 				log.Fatalf("启动失败: %v", err)
 			}
 			return
@@ -287,3 +297,70 @@ func main() {
 		log.Fatalf("启动失败: %v", err)
 	}
 }
+
+// ==================== TLS 端口的明文自动跳转 ====================
+
+// tlsAutoListener 按首字节分流：0x16 = TLS ClientHello 交给 HTTPS 服务；
+// 其余按明文 HTTP 处理（308 跳转 https:// 同主机同端口），扫描器/半开连接
+// 直接关闭。旧 http:// 书签由此无感纠正，不再出现
+// "client sent an HTTP request to an HTTPS server" 的握手报错刷屏
+type tlsAutoListener struct {
+	net.Listener
+}
+
+var tlsRedirectSrv = &http.Server{
+	Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Host 含端口，同端口跳转直接可用；308 保留方法与请求体
+		http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusPermanentRedirect)
+	}),
+	ReadHeaderTimeout: 5 * time.Second,
+}
+
+func (l *tlsAutoListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		pc := &peekConn{Conn: conn, br: bufio.NewReader(conn)}
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		first, perr := pc.br.Peek(1)
+		_ = conn.SetReadDeadline(time.Time{})
+		if perr == nil && len(first) == 1 && first[0] == 0x16 {
+			return pc, nil
+		}
+		if perr != nil {
+			conn.Close() // 5 秒无字节（探测/半开）：静默丢弃
+			continue
+		}
+		// 明文请求：给一个回包（308 或 400）后由 http.Server 关闭连接
+		go func(pc *peekConn) {
+			_ = tlsRedirectSrv.Serve(&oneConnListener{conn: pc})
+		}(pc)
+	}
+}
+
+// peekConn 首字节已从 bufio 预读，Read 先消费缓冲再走底层连接
+type peekConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func (c *peekConn) Read(b []byte) (int, error) { return c.br.Read(b) }
+
+// oneConnListener 只服务一条连接的适配器（Serve 完成即返回）
+type oneConnListener struct {
+	conn net.Conn
+	done bool
+}
+
+func (l *oneConnListener) Accept() (net.Conn, error) {
+	if l.done {
+		return nil, io.EOF
+	}
+	l.done = true
+	return l.conn, nil
+}
+
+func (l *oneConnListener) Close() error   { return nil }
+func (l *oneConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
