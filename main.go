@@ -170,12 +170,17 @@ func main() {
 	// 用中间件而非精确路由：r.Static 注册 /css/*filepath 通配，gin 不允许
 	// 与 /css/style.css 精确段共存（路由树冲突 → 启动 panic）
 	r.Use(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/css/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/js/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/vendor/") {
-			// no-store：浏览器完全不缓存。文件很小（app.js ~120KB），
-			// 换来"更新必定生效"，杜绝旧脚本调用新接口的排障灾难
+		p := c.Request.URL.Path
+		if strings.HasPrefix(p, "/js/") {
+			// no-store：浏览器完全不缓存。app.js 是"更新必须生效"的关键，
+			// 杜绝旧脚本调用新接口的排障灾难
 			c.Header("Cache-Control", "no-store")
+		} else if strings.HasPrefix(p, "/css/") || strings.HasPrefix(p, "/vendor/") {
+			// 协商缓存（no-cache + Last-Modified）：跨境访问下静态资源常被
+			// 连接重置（ERR_CONNECTION_RESET），刷新时这批请求最易碎；
+			// 协商命中返回 304 空体，比整文件重拉快且小，重置窗口显著缩小。
+			// 内容仍随镜像更新（校验通过才用缓存）
+			c.Header("Cache-Control", "no-cache")
 		}
 		c.Next()
 	})
