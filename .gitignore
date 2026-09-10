@@ -40,3 +40,9 @@ emby-pulse-main/
 tmp_cms/
 tmp_p115/
 tmp_re0/
+
+# 本地测试实例（含测试凭证，绝不入库）
+.localtest/
+
+# 第三方参考源码
+StrmAssistant-main/

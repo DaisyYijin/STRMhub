@@ -19,6 +19,7 @@ import (
 	"strmhub/internal/model"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 )
 
@@ -190,6 +191,13 @@ func main() {
 		// 通配 * 会放行任意自定义头
 		AllowHeaders: []string{"Authorization", "Content-Type"},
 	}))
+	// gzip 压缩：管理界面 HTML/JS/CSS 全是文本，未压缩时单页 ~400KB——
+	// 弱网跨境链路下这个传输量本身就是被连接重置的重灾区（对比同机其他
+	// 项目 gzip 后 ~10KB 从不出事）。压缩后 HTML ~35KB / app.js ~45KB；
+	// 备份等 zip 文件排除（已压缩，再压只费 CPU）
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedExtensions([]string{
+		".png", ".gif", ".jpeg", ".jpg", ".webp", ".ico", ".zip", ".gz", ".db",
+	})))
 
 	// API 路由
 	apiGroup := r.Group("/api")
@@ -203,15 +211,12 @@ func main() {
 	// 与 /css/style.css 精确段共存（路由树冲突 → 启动 panic）
 	r.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if strings.HasPrefix(p, "/js/") {
-			// no-store：浏览器完全不缓存。app.js 是"更新必须生效"的关键，
-			// 杜绝旧脚本调用新接口的排障灾难
-			c.Header("Cache-Control", "no-store")
-		} else if strings.HasPrefix(p, "/css/") || strings.HasPrefix(p, "/vendor/") {
-			// 协商缓存（no-cache + Last-Modified）：跨境访问下静态资源常被
-			// 连接重置（ERR_CONNECTION_RESET），刷新时这批请求最易碎；
-			// 协商命中返回 304 空体，比整文件重拉快且小，重置窗口显著缩小。
-			// 内容仍随镜像更新（校验通过才用缓存）
+		if strings.HasPrefix(p, "/js/") ||
+			strings.HasPrefix(p, "/css/") || strings.HasPrefix(p, "/vendor/") {
+			// 协商缓存（no-cache + Last-Modified）：每次刷新发条件请求，命中
+			// 返回 304 空体——弱网下比整文件重拉小得多；镜像更新后文件
+			// mtime 变化，条件请求立刻拿新内容（更新即时生效，等价 no-store
+			// 的正确性，但刷新传输量从 200KB 级降到几十字节）
 			c.Header("Cache-Control", "no-cache")
 		}
 		c.Next()
