@@ -245,6 +245,11 @@ func (c *Config) LoadSettings() (SettingMap, error) {
 	}
 	var s SettingMap
 	if err := yaml.Unmarshal(data, &s); err != nil {
+		// 文件损坏（半截写入/磁盘问题）：读侧全部回空、写侧禁止覆盖——
+		// 只报一次，避免 GetSetting 热路径刷日志
+		settingsCorruptLog.Do(func() {
+			log.Printf("[配置] ⚠ setting.yaml 解析失败（%v），全部配置读取回空；已禁止覆盖保存防二次丢失，请从系统备份恢复后重启", err)
+		})
 		return nil, err
 	}
 	if s == nil {
@@ -257,6 +262,9 @@ func (c *Config) LoadSettings() (SettingMap, error) {
 // LoadSettings→改→WriteFile 会互相覆盖丢 key
 var settingsMu sync.Mutex
 
+// settingsCorruptLog 配置文件损坏告警只发一次（读热路径不刷屏）
+var settingsCorruptLog sync.Once
+
 // GetSetting 读取单个配置
 func (c *Config) GetSetting(key string) string {
 	s, err := c.LoadSettings()
@@ -267,14 +275,15 @@ func (c *Config) GetSetting(key string) string {
 }
 
 // SaveSetting 保存单个配置（保留其他配置）。临时文件+rename 原子落盘：
-// 进程中途被杀/断电不会留下截断的 setting.yaml（截断文件会让全部配置
-// 读取回退到 DB 旧值，损坏被掩盖）
+// 进程中途被杀/断电不会留下截断的 setting.yaml。
+// 读失败（文件损坏等）绝不能拿空表覆盖——那会把其他所有配置一键清空，
+// 此处直接中止保存并报错，原始文件保留待从备份恢复
 func (c *Config) SaveSetting(key, value string) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 	s, err := c.LoadSettings()
 	if err != nil {
-		s = SettingMap{}
+		return fmt.Errorf("读取现有配置失败，为防覆盖丢失已中止保存: %w", err)
 	}
 	s[key] = value
 	data, err := yaml.Marshal(&s)
