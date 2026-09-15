@@ -104,14 +104,13 @@ func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 			key := fmt.Sprintf("%s|%s|%s|%s|%s|%v|%s|%s",
 				c.Endpoint, c.Username, c.Password, c.OrgPending, c.RootPath, c.OrgEnabled,
 				h.getSettingValue("org-basic"), h.getSettingValue("full"))
-			on := c.OrgEnabled && c.OrgPending != "" && c.RootPath != "" && c.Endpoint != ""
-			if !on && !(c.OrgEnabled && c.RootPath != "" && c.Endpoint != "") {
+			if !c.OrgEnabled || c.Endpoint == "" {
 				if cancel != nil {
 					cancel()
 					cancel = nil
 					runKey = ""
 					cd2Watch.setRunning(false)
-					log.Printf("[CD2监控] ○ 已停止（配置关闭或未完成）")
+					log.Printf("[CD2监控] ○ 已停止（配置关闭或账号未配置）")
 				}
 				continue
 			}
@@ -124,12 +123,12 @@ func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 				cd2Watch.setRunning(false)
 				log.Printf("[CD2监控] ↻ 配置变更，重启监控流")
 			}
-			// 监控/已存在目录从「自动整理 → 基础配置」的 115 目录派生
-			//（失败保留旧值，下轮重试）
+			// 三个目录全部从「自动整理 → 基础配置」的 115 目录派生：
+			// 整理目标根未配置时自动探测 CD2 挂载（失败保留旧值，下轮重试）
 			if err := h.cd2RefreshOrgDirs(); err != nil {
-				log.Printf("[CD2监控] ○ 派生目录刷新失败（保留旧值，稍后重试）: %v", err)
+				log.Printf("[CD2监控] ○ 目录派生失败（保留旧值，稍后重试）: %v", err)
 				c = h.loadCd2Cfg()
-				if c.OrgPending == "" {
+				if c.OrgPending == "" || c.RootPath == "" {
 					cd2Watch.setErr(err.Error())
 					continue
 				}
@@ -251,19 +250,17 @@ func cd2DeriveMount(rootPath, lib115 string) (string, error) {
 }
 
 // cd2RefreshOrgDirs 从「自动整理 → 基础配置」的 115 目录派生 CD2 侧的
-// 监控/已存在目录并写回 cd2 配置：
+// 整理目标根 / 监控 / 已存在目录并写回 cd2 配置——CD2 页不需要填任何目录：
 //
-//	挂载根 = 整理目标根 - 115 库完整路径（库 cid 来自全量同步配置，absPathOf 解析）
-//	监控目录 = 挂载根 + 待整理目录的 115 路径（优先 org-basic 的 *_path 字段）
-//	已存在目录 = 挂载根 + 已存在目录的 115 路径
+//	115 库完整路径 = 库 cid（全量同步配置）经 absPathOf 解析
+//	整理目标根 = 未配置时自动探测：遍历 CD2 根下的挂载，挂载+库路径 存在
+//	          且其子目录名集合与 115 库顶层目录一致（同账号指纹）的即命中
+//	挂载根 = 整理目标根 - 115 库路径尾段；监控/已存在 = 挂载根 + 对应 115 路径
 //
 // 任一环节失败返回错误并保留旧派生值（调用方继续用旧值，稍后重试）。
-// 修改 115 整理目录后无需在 CD2 页做任何事，监控流自动按新目录重启
+// 修改 115 整理目录或 CD2 重新挂载后，监控循环自动重算并按新目录重启
 func (h *Handler) cd2RefreshOrgDirs() error {
 	cfg := h.loadCd2Cfg()
-	if cfg.RootPath == "" {
-		return nil
-	}
 	var ob struct {
 		Pending      string `json:"pending"`
 		PendingPath  string `json:"pending_path"`
@@ -313,6 +310,27 @@ func (h *Handler) cd2RefreshOrgDirs() error {
 	if lib115 == "" {
 		return fmt.Errorf("115 媒体库路径解析失败（cid=%s，检查 Cookie 通道）", fullCfg.Cid)
 	}
+	lib115 = "/" + strings.Trim(lib115, "/")
+
+	// 整理目标根为空 → 自动探测挂载（需要 CD2 客户端）
+	if cfg.RootPath == "" {
+		cl, cerr := h.cd2Client()
+		if cerr != nil {
+			return cerr
+		}
+		libDirs, _, _, ferr := fetch115Dirs(ops.cookie, ua115Unified(), fullCfg.Cid)
+		if ferr != nil {
+			libDirs = nil // 顶层目录拉取失败：退化为仅按路径存在性探测
+		}
+		found, derr := cd2DiscoverRoot(cl, lib115, libDirs)
+		if derr != nil {
+			return derr
+		}
+		cfg.RootPath = found
+		h.saveCd2Cfg(cfg)
+		log.Printf("[CD2] ✓ 已自动识别 115 媒体库挂载：%s", found)
+	}
+
 	mount, err := cd2DeriveMount(cfg.RootPath, lib115)
 	if err != nil {
 		return err
@@ -324,6 +342,72 @@ func (h *Handler) cd2RefreshOrgDirs() error {
 		log.Printf("[CD2] ✓ 目录已按 115 整理配置派生：监控 %s，已存在 %s", newPend, newExist)
 	}
 	return nil
+}
+
+// cd2DiscoverRoot 在 CD2 根下找到 115 媒体库所在的挂载：
+// 候选 = 根目录下 挂载+115库路径 可列目录的挂载；多个候选时用
+// 「115 库顶层子目录名集合与 CD2 侧完全一致」消歧（同一账号的指纹）。
+// 返回 CD2 侧库完整路径
+func cd2DiscoverRoot(cl *cd2.Client, lib115 string, libChildren []gin.H) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	roots, err := cl.ListDir(ctx, "/")
+	if err != nil {
+		return "", fmt.Errorf("列 CD2 挂载失败: %w", err)
+	}
+	libNames := map[string]bool{}
+	for _, d := range libChildren {
+		if n, ok := d["name"].(string); ok && n != "" {
+			libNames[n] = true
+		}
+	}
+	var pathHits []string // 挂载+库路径 存在的候选
+	for _, m := range roots {
+		if !m.IsDir {
+			continue
+		}
+		cand := cd2Join(m.Path, lib115)
+		if _, err := cl.ListDir(ctx, cand); err != nil {
+			continue // 该挂载下没有这个路径
+		}
+		pathHits = append(pathHits, cand)
+	}
+	if len(pathHits) == 0 {
+		return "", fmt.Errorf("CD2 挂载里找不到 115 媒体库 %s（确认 CD2 已挂载该 115 账号）", lib115)
+	}
+	if len(pathHits) == 1 || len(libNames) == 0 {
+		return pathHits[0], nil
+	}
+	// 多个挂载都有同路径：按顶层子目录名集合一致消歧
+	for _, cand := range pathHits {
+		children, err := cl.ListDir(ctx, cand)
+		if err != nil {
+			continue
+		}
+		names := map[string]bool{}
+		for _, f := range children {
+			if f.IsDir {
+				names[f.Name] = true
+			}
+		}
+		if cd2SameKeySet(names, libNames) {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("多个 CD2 挂载都含 %s 且无法按内容消歧（子目录不一致），请确认只挂载主 115 账号", lib115)
+}
+
+// cd2SameKeySet 两个非空集合的键完全一致
+func cd2SameKeySet(a, b map[string]bool) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // ==================== 事件处理 ====================

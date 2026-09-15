@@ -187,11 +187,8 @@
           </div>
           <div style="font-size:12px;color:var(--text-3);margin-top:4px">开关保存后约 10 秒内生效；同目录文件静默 8 秒后才开始整理</div>
         </div></div>
-        <div class="form-row"><div class="label">整理目标根<i class="help-tip" tabindex="0">?<span class="tip-bubble">CD2 内的绝对路径，必须指向 CD2 挂载的 115 媒体库目录（如 /115网盘/影视库/媒体库），且与「账号同步」的媒体库是同一个目录——文件整理到这里后由项目原生增量同步生成 STRM。</span></i></div><div class="control">
-          <div class="form-inline-group"><input type="text" id="cd2-root" placeholder="如 /115网盘/影视库/媒体库" class="inline-input"><button class="btn btn-outline" onclick="openCd2DirPicker('cd2-root')">选择目录</button></div>
-        </div></div>
-        <div class="form-row"><div class="label">派生目录<i class="help-tip" tabindex="0">?<span class="tip-bubble">监控目录与已存在目录不再单独填写：自动取「自动整理 → 基础配置」里 115 的 待整理/已存在 目录，按整理目标根映射到 CD2 侧（挂载根 = 整理目标根去掉 115 库路径尾段）。在 115 那边改目录，这里保存后自动跟随。</span></i></div><div class="control">
-          <div id="cd2-derived-dirs" style="font-size:12.5px;color:var(--text-2);line-height:1.8;background:var(--border);border-radius:8px;padding:8px 12px;min-width:280px">未派生（保存并开启后自动按 115 整理目录生成）</div>
+        <div class="form-row"><div class="label">目录（全自动）<i class="help-tip" tabindex="0">?<span class="tip-bubble">无需填写任何目录：整理目标根自动探测 CD2 里的 115 媒体库挂载；监控/已存在目录自动取「自动整理 → 基础配置」里 115 的对应目录映射到 CD2 侧。在 115 那边改目录，这里自动跟随。</span></i></div><div class="control">
+          <div id="cd2-derived-dirs" style="font-size:12.5px;color:var(--text-2);line-height:1.8;background:var(--border);border-radius:8px;padding:8px 12px;min-width:280px">未识别（保存并开启后自动探测）</div>
         </div></div>
         <div class="form-row"><div class="label">监控状态</div><div class="control"><div class="form-inline-group"><span id="cd2-watch-status" style="font-size:12.5px">未加载</span></div></div></div>
         <div class="form-row"><div class="label"></div><div class="control"><button class="btn btn-primary" onclick="cd2Save(this)">保存配置</button> <button class="btn btn-success" onclick="cd2OrgRun(this)">立即整理</button></div></div>

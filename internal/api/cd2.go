@@ -118,8 +118,11 @@ func (h *Handler) Cd2SaveConfig(c *gin.Context) {
 	if req.Password == settingMask {
 		req.Password = old.Password
 	}
-	// 监控/已存在目录已改为按 115 整理目录自动派生（前端不再填写）：
-	// 请求里为空时保留旧派生值，避免把派生缓存冲掉
+	// 三个目录均已自动派生（前端不再填写）：请求里为空时保留旧派生值，
+	// 避免把派生缓存冲掉
+	if req.RootPath == "" {
+		req.RootPath = old.RootPath
+	}
 	if req.OrgPending == "" {
 		req.OrgPending = old.OrgPending
 	}

@@ -1662,9 +1662,9 @@ function cd2Gather() {
     endpoint: val('cd2-endpoint').trim(),
     username: val('cd2-username').trim(),
     password: val('cd2-password').trim(),
-    root_path: val('cd2-root').trim(),
     org_enabled: cd2OrgEnabled,
-    // 监控/已存在目录不再填写：后端按 115 整理目录自动派生
+    // 三个目录均自动派生：目标根探测 CD2 的 115 挂载，
+    // 监控/已存在取「自动整理 → 基础配置」映射
   };
 }
 
@@ -1707,14 +1707,14 @@ async function cd2LoadUI() {
     setVal('cd2-endpoint', c.endpoint || '');
     setVal('cd2-username', c.username || '');
     setVal('cd2-password', c.password || '');
-    setVal('cd2-root', c.root_path || '');
     setCd2Org(!!c.org_enabled);
     const dd = document.getElementById('cd2-derived-dirs');
     if (dd) {
-      if (c.org_pending) {
-        dd.innerHTML = '监控目录：<b>' + esc(c.org_pending) + '</b><br>已存在目录：' + esc(c.org_existing || '（未配置）');
+      if (c.root_path) {
+        dd.innerHTML = '整理目标根：<b>' + esc(c.root_path) + '</b><br>监控目录：' + esc(c.org_pending || '（识别中…）')
+          + '<br>已存在目录：' + esc(c.org_existing || '（识别中…）');
       } else {
-        dd.textContent = '未派生（保存并开启后自动按 115 整理目录生成）';
+        dd.textContent = '未识别（保存并开启后自动探测 CD2 的 115 媒体库挂载）';
       }
     }
   } catch (e) { /* 首次为空 */ }

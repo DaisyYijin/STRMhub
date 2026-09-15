@@ -29,6 +29,22 @@ func TestCd2PathHelpers(t *testing.T) {
 	}
 }
 
+func TestCd2SameKeySet(t *testing.T) {
+	a := map[string]bool{"电影": true, "剧集": true}
+	if !cd2SameKeySet(a, map[string]bool{"剧集": true, "电影": true}) {
+		t.Error("同集合应相等")
+	}
+	if cd2SameKeySet(a, map[string]bool{"电影": true}) {
+		t.Error("缺键不相等")
+	}
+	if cd2SameKeySet(a, map[string]bool{"电影": true, "剧集": true, "动漫": true}) {
+		t.Error("多键不相等")
+	}
+	if cd2SameKeySet(map[string]bool{}, map[string]bool{}) {
+		t.Error("空集合不判等（无指纹意义）")
+	}
+}
+
 func TestCd2DeriveMount(t *testing.T) {
 	// 常规：目标根 = 挂载名 + 115 库完整路径
 	m, err := cd2DeriveMount("/115网盘/影视库/媒体库", "/影视库/媒体库")
