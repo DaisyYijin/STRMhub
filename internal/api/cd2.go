@@ -118,11 +118,27 @@ func (h *Handler) Cd2SaveConfig(c *gin.Context) {
 	if req.Password == settingMask {
 		req.Password = old.Password
 	}
+	// 监控/已存在目录已改为按 115 整理目录自动派生（前端不再填写）：
+	// 请求里为空时保留旧派生值，避免把派生缓存冲掉
+	if req.OrgPending == "" {
+		req.OrgPending = old.OrgPending
+	}
+	if req.OrgExisting == "" {
+		req.OrgExisting = old.OrgExisting
+	}
 	if _, err := cd2GrpcTarget(req.Endpoint); req.Endpoint != "" && err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	h.saveCd2Cfg(req)
+	if req.OrgEnabled {
+		// 开启状态下保存：立即按最新 115 目录刷新派生目录
+		//（失败保留旧值，监控循环会自动重试）
+		if err := h.cd2RefreshOrgDirs(); err != nil {
+			c.JSON(http.StatusOK, gin.H{"message": "已保存（目录派生暂失败，沿用旧值稍后自动重试: " + err.Error() + "）"})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "已保存"})
 }
 

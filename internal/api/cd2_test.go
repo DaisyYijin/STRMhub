@@ -29,6 +29,31 @@ func TestCd2PathHelpers(t *testing.T) {
 	}
 }
 
+func TestCd2DeriveMount(t *testing.T) {
+	// 常规：目标根 = 挂载名 + 115 库完整路径
+	m, err := cd2DeriveMount("/115网盘/影视库/媒体库", "/影视库/媒体库")
+	if err != nil || m != "/115网盘" {
+		t.Errorf("derive: %q err=%v", m, err)
+	}
+	// 库在 115 根下（单层）
+	m, err = cd2DeriveMount("/cloud/媒体库", "/媒体库")
+	if err != nil || m != "/cloud" {
+		t.Errorf("single seg: %q err=%v", m, err)
+	}
+	// 目标根本身就是 115 根（库路径=根）不合法
+	if _, err := cd2DeriveMount("/115网盘", ""); err == nil {
+		t.Error("空库路径应报错")
+	}
+	// 目标根与库路径不对应（指向了别的目录）
+	if _, err := cd2DeriveMount("/115网盘/电影", "/影视库/媒体库"); err == nil {
+		t.Error("不对应应报错")
+	}
+	// 尾段相同但中间不同（恰好同名）也应报错
+	if _, err := cd2DeriveMount("/a/媒体库", "/b/媒体库"); err == nil {
+		t.Error("同尾段不同路径应报错")
+	}
+}
+
 func TestCd2GrpcTarget(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"http://1.2.3.4:19798", "1.2.3.4:19798"},

@@ -1664,8 +1664,7 @@ function cd2Gather() {
     password: val('cd2-password').trim(),
     root_path: val('cd2-root').trim(),
     org_enabled: cd2OrgEnabled,
-    org_pending: val('cd2-org-pending').trim(),
-    org_existing: val('cd2-org-existing').trim(),
+    // 监控/已存在目录不再填写：后端按 115 整理目录自动派生
   };
 }
 
@@ -1709,9 +1708,15 @@ async function cd2LoadUI() {
     setVal('cd2-username', c.username || '');
     setVal('cd2-password', c.password || '');
     setVal('cd2-root', c.root_path || '');
-    setVal('cd2-org-pending', c.org_pending || '');
-    setVal('cd2-org-existing', c.org_existing || '');
     setCd2Org(!!c.org_enabled);
+    const dd = document.getElementById('cd2-derived-dirs');
+    if (dd) {
+      if (c.org_pending) {
+        dd.innerHTML = '监控目录：<b>' + esc(c.org_pending) + '</b><br>已存在目录：' + esc(c.org_existing || '（未配置）');
+      } else {
+        dd.textContent = '未派生（保存并开启后自动按 115 整理目录生成）';
+      }
+    }
   } catch (e) { /* 首次为空 */ }
   cd2WatchStatus();
   // 状态自动刷新（离开页面后元素不在即空转，重新进入会重置定时器）
@@ -1722,8 +1727,9 @@ async function cd2LoadUI() {
 async function cd2Save(btn) {
   btn.disabled = true;
   try {
-    await api('/cd2/config', { method: 'POST', body: JSON.stringify(cd2Gather()) });
-    toast('配置已保存');
+    const d = await api('/cd2/config', { method: 'POST', body: JSON.stringify(cd2Gather()) });
+    toast(d.message || '配置已保存');
+    cd2LoadUI(); // 刷新派生目录显示（保存时后端会按 115 目录刷新）
   } catch (e) { toast('保存失败：' + e.message); }
   btn.disabled = false;
 }

@@ -20,6 +20,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -99,10 +100,12 @@ func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 		for {
 			time.Sleep(10 * time.Second)
 			c := h.loadCd2Cfg()
-			key := fmt.Sprintf("%s|%s|%s|%s|%s|%v",
-				c.Endpoint, c.Username, c.Password, c.OrgPending, c.RootPath, c.OrgEnabled)
+			// 指纹含 115 侧整理目录配置：那边改目录，这边派生目录跟着重算并重启流
+			key := fmt.Sprintf("%s|%s|%s|%s|%s|%v|%s|%s",
+				c.Endpoint, c.Username, c.Password, c.OrgPending, c.RootPath, c.OrgEnabled,
+				h.getSettingValue("org-basic"), h.getSettingValue("full"))
 			on := c.OrgEnabled && c.OrgPending != "" && c.RootPath != "" && c.Endpoint != ""
-			if !on {
+			if !on && !(c.OrgEnabled && c.RootPath != "" && c.Endpoint != "") {
 				if cancel != nil {
 					cancel()
 					cancel = nil
@@ -120,6 +123,18 @@ func StartCd2Watcher(db *gorm.DB, cfg *config.Config) {
 				cancel = nil
 				cd2Watch.setRunning(false)
 				log.Printf("[CD2监控] ↻ 配置变更，重启监控流")
+			}
+			// 监控/已存在目录从「自动整理 → 基础配置」的 115 目录派生
+			//（失败保留旧值，下轮重试）
+			if err := h.cd2RefreshOrgDirs(); err != nil {
+				log.Printf("[CD2监控] ○ 派生目录刷新失败（保留旧值，稍后重试）: %v", err)
+				c = h.loadCd2Cfg()
+				if c.OrgPending == "" {
+					cd2Watch.setErr(err.Error())
+					continue
+				}
+			} else {
+				c = h.loadCd2Cfg()
 			}
 			var ctx context.Context
 			ctx, cancel = context.WithCancel(context.Background())
@@ -213,6 +228,102 @@ func cd2Join(segs ...string) string {
 		}
 	}
 	return "/" + strings.Join(parts, "/")
+}
+
+// ==================== 目录派生（监控/已存在目录取自 115 整理配置） ====================
+
+// cd2DeriveMount 挂载根 = CD2 整理目标根 去掉 115 库完整路径尾段。
+// 例：目标根 /115网盘/影视库/媒体库，115 库路径 /影视库/媒体库 → 挂载根 /115网盘。
+// 目标根不以库路径结尾 = 配置不对应（CD2 目标根没指向 115 媒体库），报错
+func cd2DeriveMount(rootPath, lib115 string) (string, error) {
+	root, lib := cd2NormPath(rootPath), "/"+strings.Trim(lib115, "/")
+	if lib == "/" {
+		return "", fmt.Errorf("115 媒体库路径解析为空")
+	}
+	if root != lib && !strings.HasSuffix(root, lib) {
+		return "", fmt.Errorf("整理目标根 %s 与 115 媒体库路径 %s 不对应（请把目标根指向 CD2 挂载的 115 媒体库目录）", rootPath, lib)
+	}
+	mount := strings.TrimSuffix(root, lib)
+	if mount == "" {
+		mount = "/"
+	}
+	return mount, nil
+}
+
+// cd2RefreshOrgDirs 从「自动整理 → 基础配置」的 115 目录派生 CD2 侧的
+// 监控/已存在目录并写回 cd2 配置：
+//
+//	挂载根 = 整理目标根 - 115 库完整路径（库 cid 来自全量同步配置，absPathOf 解析）
+//	监控目录 = 挂载根 + 待整理目录的 115 路径（优先 org-basic 的 *_path 字段）
+//	已存在目录 = 挂载根 + 已存在目录的 115 路径
+//
+// 任一环节失败返回错误并保留旧派生值（调用方继续用旧值，稍后重试）。
+// 修改 115 整理目录后无需在 CD2 页做任何事，监控流自动按新目录重启
+func (h *Handler) cd2RefreshOrgDirs() error {
+	cfg := h.loadCd2Cfg()
+	if cfg.RootPath == "" {
+		return nil
+	}
+	var ob struct {
+		Pending      string `json:"pending"`
+		PendingPath  string `json:"pending_path"`
+		Existing     string `json:"existing"`
+		ExistingPath string `json:"existing_path"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("org-basic")), &ob)
+	if ob.Pending == "" {
+		return fmt.Errorf("请先在「自动整理 → 基础配置」配置 115 整理目录")
+	}
+	var fullCfg struct {
+		Cid string `json:"cid"`
+	}
+	_ = json.Unmarshal([]byte(h.getSettingValue("full")), &fullCfg)
+	if fullCfg.Cid == "" {
+		return fmt.Errorf("请先在「账号同步」配置全量同步的媒体库目录")
+	}
+	ops, err := h.newPan115Ops()
+	if err != nil {
+		return err
+	}
+	if ops.cookie == "" {
+		return fmt.Errorf("路径解析需要 115 Cookie 通道（OpenAPI 暂不支持目录路径反查）")
+	}
+	memo := map[string]dirInfo{}
+	resolve := func(cid, savedPath string) (string, error) {
+		p := strings.TrimSpace(savedPath)
+		if p == "" {
+			p = absPathOf(ops.cookie, cid, memo)
+		}
+		if p == "" {
+			return "", fmt.Errorf("115 目录路径解析失败（cid=%s，检查 Cookie 通道）", cid)
+		}
+		return "/" + strings.Trim(p, "/"), nil
+	}
+	pend115, err := resolve(ob.Pending, ob.PendingPath)
+	if err != nil {
+		return err
+	}
+	exist115 := ""
+	if ob.Existing != "" {
+		if exist115, err = resolve(ob.Existing, ob.ExistingPath); err != nil {
+			return err
+		}
+	}
+	lib115 := absPathOf(ops.cookie, fullCfg.Cid, memo)
+	if lib115 == "" {
+		return fmt.Errorf("115 媒体库路径解析失败（cid=%s，检查 Cookie 通道）", fullCfg.Cid)
+	}
+	mount, err := cd2DeriveMount(cfg.RootPath, lib115)
+	if err != nil {
+		return err
+	}
+	newPend, newExist := cd2Join(mount, pend115), cd2Join(mount, exist115)
+	if newPend != cfg.OrgPending || newExist != cfg.OrgExisting {
+		cfg.OrgPending, cfg.OrgExisting = newPend, newExist
+		h.saveCd2Cfg(cfg)
+		log.Printf("[CD2] ✓ 目录已按 115 整理配置派生：监控 %s，已存在 %s", newPend, newExist)
+	}
+	return nil
 }
 
 // ==================== 事件处理 ====================
@@ -324,8 +435,16 @@ func (h *Handler) Cd2OrgStatus(c *gin.Context) {
 // （事件驱动之外的兜底/重试入口）
 func (h *Handler) Cd2OrgRun(c *gin.Context) {
 	cfg := h.loadCd2Cfg()
+	if cfg.OrgPending == "" {
+		// 派生目录还没算出来（刚开启/115 刚恢复）：先刷新一次
+		if err := h.cd2RefreshOrgDirs(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		cfg = h.loadCd2Cfg()
+	}
 	if cfg.OrgPending == "" || cfg.RootPath == "" || cfg.Endpoint == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先配置监控目录与媒体库根"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先完成 115 整理目录与 CD2 整理目标根的配置"})
 		return
 	}
 	if !cd2OrgMu.TryLock() {
