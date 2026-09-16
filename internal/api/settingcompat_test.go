@@ -37,3 +37,36 @@ func TestSettingValueCompatYAMLFirst(t *testing.T) {
 	}
 	_ = os.RemoveAll(notifyConfigSource.DataDir)
 }
+
+func TestGetStrmConfigYAMLFirst(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := &config.Config{DataDir: tempDir, ConfigDir: tempDir}
+	h := &Handler{Config: cfg}
+
+	// 默认未配置时：返回默认兜底域名
+	domain, format, keepExt, skipExist := h.getStrmConfig()
+	if domain != "http://172.17.0.1:6086" || format != "pick_code_name" || !keepExt || skipExist {
+		t.Errorf("default getStrmConfig() = (%q, %q, %v, %v), want defaults", domain, format, keepExt, skipExist)
+	}
+
+	// 用户在前端通过 SaveSetting 保存到 YAML 中
+	strmJSON := `{"domain":"http://192.168.1.200:6086","format":"pick_code","keep_ext":false,"exist":"skip"}`
+	if err := cfg.SaveSetting("strm", strmJSON); err != nil {
+		t.Fatalf("SaveSetting: %v", err)
+	}
+
+	// 再次调用 getStrmConfig() 必须正确读取到 YAML 配置
+	domain, format, keepExt, skipExist = h.getStrmConfig()
+	if domain != "http://192.168.1.200:6086" {
+		t.Errorf("domain = %q, want http://192.168.1.200:6086", domain)
+	}
+	if format != "pick_code" {
+		t.Errorf("format = %q, want pick_code", format)
+	}
+	if keepExt {
+		t.Errorf("keepExt = true, want false")
+	}
+	if !skipExist {
+		t.Errorf("skipExist = false, want true")
+	}
+}
