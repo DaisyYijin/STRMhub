@@ -113,6 +113,7 @@ const PAGE_TITLES = {
   'config-extension': ['扩展功能', '签到 / TG 搜索 / 封面生成等插件'],
   'tgsub': ['订阅管理', 'TG 频道关键词订阅 / 命中通知 / 自动转存'],
   'logs': ['实时日志', '同步与整理操作的服务端与本地日志'],
+  'cd2': ['CloudDrive2', '多云盘聚合 · 跨网盘整理'],
 };
 
 // ==================== 前端路由（真实路径，与后端 NoRoute 回退 index.html 配合） ====================
@@ -129,6 +130,7 @@ const PAGE_PATHS = {
   'logs': '/logs',
   'config-extension': '/plugins',
   'tgsub': '/subscriptions',
+  'cd2': '/cd2',
 };
 const PATH_PAGES = Object.fromEntries(Object.entries(PAGE_PATHS).map(([p, path]) => [path, p]));
 
