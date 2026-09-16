@@ -1511,10 +1511,13 @@ func (h *Handler) GetSetting(c *gin.Context) {
 
 // settingValueRaw 通用配置读取（配置源 > 数据库回退）
 func (h *Handler) settingValueRaw(key string) string {
-	value := h.Config.GetSetting(key)
-	if value == "" {
+	var value string
+	if h.Config != nil {
+		value = h.Config.GetSetting(key)
+	}
+	if value == "" && h.DB != nil {
 		var s model.Setting
-		if err := h.DB.Where("key = ?", key).First(&s).Error; err == nil {
+		if err := h.DB.Where("`key` = ?", key).First(&s).Error; err == nil {
 			value = s.Value
 		}
 	}

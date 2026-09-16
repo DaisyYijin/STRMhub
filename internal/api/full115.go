@@ -552,14 +552,14 @@ func rename115Batch(cookie string, names map[string]string) error {
 	return nil
 }
 
-// getStrmConfig 读取 STRM 直链配置
+// getStrmConfig 读取 STRM 直链配置（YAML 优先，DB 回退）
 func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
 	domain = "http://172.17.0.1:6086"
 	format = "pick_code_name"
 	keepExt = true
 	exist = false // false=覆盖
-	var s model.Setting
-	if err := h.DB.Where("key = ?", "strm").First(&s).Error; err != nil {
+	raw := h.settingValueRaw("strm")
+	if raw == "" {
 		return
 	}
 	var cfg struct {
@@ -568,7 +568,7 @@ func (h *Handler) getStrmConfig() (domain, format string, keepExt, exist bool) {
 		KeepExt any    `json:"keep_ext"`
 		Exist   string `json:"exist"`
 	}
-	if json.Unmarshal([]byte(s.Value), &cfg) == nil {
+	if json.Unmarshal([]byte(raw), &cfg) == nil {
 		if cfg.Domain != "" {
 			domain = cfg.Domain
 		}
